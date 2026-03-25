@@ -1,0 +1,7 @@
+/build
+/.cache
+*.o
+*.ll
+*.out
+
+flake.lock
