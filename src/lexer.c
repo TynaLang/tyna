@@ -5,8 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-double get_error_loc(size_t line, size_t col)
-{
+double get_error_loc(size_t line, size_t col) {
   size_t integer_part = line;
   size_t decimal_part = col;
   double result = (double)integer_part;
@@ -17,14 +16,10 @@ double get_error_loc(size_t line, size_t col)
   double divisor = 1.0;
 
   // Count digits in decimal_part
-  if (temp == 0)
-  {
+  if (temp == 0) {
     divisor = 10.0;
-  }
-  else
-  {
-    while (temp > 0)
-    {
+  } else {
+    while (temp > 0) {
       divisor *= 10.0;
       temp /= 10;
     }
@@ -34,8 +29,7 @@ double get_error_loc(size_t line, size_t col)
   return result;
 }
 
-static char *copy_slice(const char *str, size_t start, size_t end)
-{
+static char *copy_slice(const char *str, size_t start, size_t end) {
   size_t len = end - start;
   char *out = malloc(len + 1);
   memcpy(out, str + start, len);
@@ -43,8 +37,7 @@ static char *copy_slice(const char *str, size_t start, size_t end)
   return out;
 }
 
-Lexer make_lexer(const char *src)
-{
+Lexer make_lexer(const char *src) {
   Lexer l;
   l.cursor = 0;
   l.col = 1;
@@ -54,241 +47,192 @@ Lexer make_lexer(const char *src)
   return l;
 }
 
-char peek(const Lexer *l) { return l->src[l->cursor]; }
-char advance(Lexer *l)
-{
-  char c = peek(l);
+char Lexer_peek(const Lexer *l) { return l->src[l->cursor]; }
+char Lexer_advance(Lexer *l) {
+  char c = Lexer_peek(l);
   l->cursor++;
 
-  if (c == '\n')
-  {
+  if (c == '\n') {
     l->line++;
     l->col = 1;
-  }
-  else
-  {
+  } else {
     l->col++;
   }
 
   return c;
 }
 
-Token next_token(Lexer *l)
-{
-  while (isspace(peek(l)))
-  {
-    advance(l);
+static void skip_whitespace(Lexer *l) {
+  while (isspace(Lexer_peek(l)))
+    Lexer_advance(l);
+}
+
+static Token read_identifier(Lexer *l) {
+  size_t start = l->cursor;
+  while (isalnum(Lexer_peek(l)))
+    Lexer_advance(l);
+
+  char *text = copy_slice(l->src, start, l->cursor);
+
+  Token t;
+  t.text = text;
+  t.line = l->line;
+  t.col = l->col;
+
+  if (strcmp(text, "let") == 0)
+    t.type = TOKEN_LET;
+  else if (strcmp(text, "print") == 0)
+    t.type = TOKEN_PRINT;
+  else if (strcmp(text, "int") == 0)
+    t.type = TOKEN_TYPE_INT;
+  else if (strcmp(text, "char") == 0)
+    t.type = TOKEN_TYPE_CHAR;
+  else if (strcmp(text, "str") == 0)
+    t.type = TOKEN_TYPE_STR;
+  else
+    t.type = TOKEN_IDENT;
+
+  return t;
+}
+
+static Token read_number(Lexer *l) {
+  size_t start = l->cursor;
+  while (isdigit(Lexer_peek(l)) || Lexer_peek(l) == '.')
+    Lexer_advance(l);
+
+  char *text = copy_slice(l->src, start, l->cursor);
+
+  Token t;
+  t.text = text;
+  t.number = strtod(text, NULL);
+  t.type = TOKEN_NUMBER;
+  t.line = l->line;
+  t.col = l->col;
+  return t;
+}
+
+static void skip_comment(Lexer *l) {
+  while (Lexer_peek(l) != '\0' && Lexer_peek(l) != '\n')
+    Lexer_advance(l);
+}
+
+static Token read_string(Lexer *l) {
+  Lexer_advance(l); // skip opening "
+  size_t start_content = l->cursor;
+
+  while (Lexer_peek(l) != '"' && Lexer_peek(l) != '\0' &&
+         Lexer_peek(l) != '\n') {
+    if (Lexer_peek(l) == '\\')
+      Lexer_advance(l); // skip escape
+    Lexer_advance(l);
   }
 
   Token t;
   t.line = l->line;
   t.col = l->col;
 
-  size_t start = l->cursor;
+  if (Lexer_peek(l) != '"') {
+    t.type = TOKEN_ERROR;
+    t.text = "unterminated string literal";
+    return t;
+  }
 
-  if (peek(l) == '\0')
-  {
+  char *text = copy_slice(l->src, start_content, l->cursor);
+  Lexer_advance(l); // skip closing "
+
+  t.text = text;
+  t.type = TOKEN_STRING;
+  return t;
+}
+
+static Token read_char(Lexer *l) {
+  Lexer_advance(l); // skip opening '
+  size_t start = l->cursor;
+  int len = 0;
+
+  while (Lexer_peek(l) != '\'' && Lexer_peek(l) != '\0' &&
+         Lexer_peek(l) != '\n') {
+    if (Lexer_peek(l) == '\\')
+      Lexer_advance(l); // skip escape
+    Lexer_advance(l);
+    len++;
+  }
+
+  Token t;
+  t.line = l->line;
+  t.col = l->col;
+
+  if (Lexer_peek(l) != '\'' || len != 1) {
+    t.type = TOKEN_ERROR;
+    t.text = "invalid char literal";
+    if (Lexer_peek(l) == '\'')
+      Lexer_advance(l);
+    return t;
+  }
+
+  char *text = copy_slice(l->src, start, start + len);
+  Lexer_advance(l); // skip closing '
+
+  t.text = text;
+  t.type = TOKEN_CHAR;
+  return t;
+}
+
+Token Token_advance(Lexer *l) {
+  skip_whitespace(l);
+
+  Token t;
+  t.line = l->line;
+  t.col = l->col;
+
+  char c = Lexer_peek(l);
+  if (c == '\0') {
     t.type = TOKEN_EOF;
     t.text = NULL;
     return t;
   }
 
-  if (isalpha(peek(l)))
-  {
-    while (isalnum(peek(l)))
-    {
-      advance(l);
+  if (isalpha(c))
+    return read_identifier(l);
+  if (isdigit(c) || c == '.')
+    return read_number(l);
+  if (c == '/') {
+    Lexer_advance(l);
+    if (Lexer_peek(l) == '/') {
+      skip_comment(l);
+      return Token_advance(l);
     }
-
-    t.text = copy_slice(l->src, start, l->cursor);
-
-    if (strcmp(t.text, "let") == 0)
-    {
-      t.type = TOKEN_LET;
-    }
-    else if (strcmp(t.text, "print") == 0)
-    {
-      t.type = TOKEN_PRINT;
-    }
-    else if (strcmp(t.text, "int") == 0)
-    {
-      t.type = TOKEN_TYPE_INT;
-    }
-    else if (strcmp(t.text, "char") == 0)
-    {
-      t.type = TOKEN_TYPE_CHAR;
-    }
-    else if (strcmp(t.text, "str") == 0)
-    {
-      t.type = TOKEN_TYPE_STR;
-    }
-    else
-    {
-      t.type = TOKEN_IDENT;
-    }
-
-    return t;
-  }
-
-  if (isdigit(peek(l)) || peek(l) == '.')
-  {
-    do
-    {
-      advance(l);
-    } while (isdigit(peek(l)) || peek(l) == '.');
-
-    t.text = copy_slice(l->src, start, l->cursor);
-    t.number = strtod(t.text, 0);
-    t.type = TOKEN_NUMBER;
-    return t;
-  }
-
-  if (peek(l) == '/')
-  {
-    advance(l);
-    if (peek(l) == '/')
-    {
-      do
-      {
-        advance(l);
-      } while (peek(l) != '\0' && peek(l) != '\n' && peek(l) != '\r');
-
-      if (peek(l) != '\0')
-      {
-        return next_token(l);
-      }
-    }
-
-    t.text = copy_slice(l->src, start, l->cursor);
     t.type = TOKEN_SLASH;
+    t.text = copy_slice(l->src, l->cursor - 1, l->cursor);
     return t;
   }
+  if (c == '"')
+    return read_string(l);
+  if (c == '\'')
+    return read_char(l);
 
-  if (peek(l) == '\'')
-  {
-
-    advance(l);
-
-    size_t len = 0;
-    while (peek(l) != '\0' && peek(l) != '\n' && peek(l) != '\r' &&
-           peek(l) != '\'')
-    {
-      if (peek(l) == '\\')
-      {
-        advance(l);
-        if (peek(l) == '\0' || peek(l) == '\n' || peek(l) == '\r')
-        {
-          t.type = TOKEN_ERROR;
-          t.text = "unterminated escape";
-          return t;
-        }
-        advance(l);
-        len += 1;
-      }
-      else
-      {
-        advance(l);
-        len += 1;
-      }
-    }
-
-    int did_close = peek(l) == '\'';
-    if (!did_close || len != 1)
-    {
-      t.type = TOKEN_ERROR;
-      t.text = "not a valid char";
-      if (did_close)
-        advance(l);
-      return t;
-    }
-
-    advance(l);
-    t.text = copy_slice(l->src, start + 1, start + 1 + len);
-    t.type = TOKEN_CHAR;
-    return t;
-  }
-
-  if (peek(l) == '"')
-  {
-    advance(l);
-
-    size_t start_content = l->cursor;
-    while (peek(l) != '\0' && peek(l) != '\n' && peek(l) != '\r' &&
-           peek(l) != '"')
-    {
-      if (peek(l) == '\\')
-      {
-        advance(l);
-        if (peek(l) == '\0' || peek(l) == '\n' || peek(l) == '\r')
-        {
-          t.type = TOKEN_ERROR;
-          t.text = "unterminated escape in string";
-          return t;
-        }
-        advance(l);
-      }
-      else
-      {
-        advance(l);
-      }
-    }
-
-    if (peek(l) != '"')
-    {
-      t.type = TOKEN_ERROR;
-      t.text = "unterminated string literal";
-      return t;
-    }
-
-    advance(l);
-
-    t.type = TOKEN_STRING;
-    t.text = copy_slice(l->src, start_content, l->cursor - 1);
-    return t;
-  }
-
-  if (peek(l) == ':')
-  {
-    advance(l);
-    t.text = copy_slice(l->src, start, l->cursor);
+  // Single-character tokens
+  Lexer_advance(l);
+  t.text = copy_slice(l->src, l->cursor - 1, l->cursor);
+  switch (c) {
+  case ':':
     t.type = TOKEN_COLON;
-    return t;
-  }
-
-  if (peek(l) == ';')
-  {
-    advance(l);
-    t.text = copy_slice(l->src, start, l->cursor);
+    break;
+  case ';':
     t.type = TOKEN_SEMI;
-    return t;
-  }
-
-  if (peek(l) == '=')
-  {
-    advance(l);
-    t.text = copy_slice(l->src, start, l->cursor);
+    break;
+  case '=':
     t.type = TOKEN_ASSIGN;
-    return t;
-  }
-
-  if (peek(l) == '(')
-  {
-    advance(l);
-    t.text = copy_slice(l->src, start, l->cursor);
+    break;
+  case '(':
     t.type = TOKEN_LPAREN;
-    return t;
-  }
-
-  if (peek(l) == ')')
-  {
-    advance(l);
-    t.text = copy_slice(l->src, start, l->cursor);
+    break;
+  case ')':
     t.type = TOKEN_RPAREN;
-    return t;
+    break;
+  default:
+    t.type = TOKEN_UNKNOWN;
+    break;
   }
-
-  t.type = TOKEN_UNKNOWN;
-  t.text = copy_slice(l->src, start, start + 1);
-  advance(l);
   return t;
 }

@@ -2,8 +2,74 @@
 #include <stdlib.h>
 
 #include "lexer.h"
+#include "parser.h"
+#include "semantic.h"
+#include "utils.h"
 
 char *read_file(const char *filepath);
+static void print_indent(int indent) {
+  for (int i = 0; i < indent; i++) {
+    printf("  ");
+  }
+}
+
+void Ast_print(AstNode *node, int indent) {
+  if (!node)
+    return;
+
+  print_indent(indent);
+
+  switch (node->tag) {
+
+  case NODE_PROGRAM:
+    printf("PROGRAM\n");
+    for (size_t i = 0; i < node->program.children.len; i++) {
+      AstNode *child = node->program.children.items[i];
+      Ast_print(child, indent + 1);
+    }
+    break;
+
+  case NODE_LET:
+    printf("LET (type=%d)\n", node->let.declared_type);
+
+    print_indent(indent + 1);
+    printf("NAME:\n");
+    Ast_print(node->let.name, indent + 2);
+
+    print_indent(indent + 1);
+    printf("VALUE:\n");
+    Ast_print(node->let.value, indent + 2);
+    break;
+
+  case NODE_PRINT:
+    printf("PRINT\n");
+
+    print_indent(indent + 1);
+    printf("VALUE:\n");
+    Ast_print(node->print.value, indent + 2);
+    break;
+
+  case NODE_NUMBER:
+    printf("NUMBER: %f\n", node->number.value);
+    break;
+
+  case NODE_CHAR:
+    printf("CHAR: '%c'\n", node->char_lit.value);
+    break;
+
+  case NODE_STRING:
+    printf("STRING: \"%s\"\n", node->string.value);
+    break;
+
+  case NODE_IDENT:
+    printf("IDENT: %s\n", node->ident.value);
+    break;
+
+  default:
+    printf("UNKNOWN NODE\n");
+    break;
+  }
+}
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -14,26 +80,15 @@ int main(int argc, char **argv) {
   const char *src = read_file(argv[1]);
 
   Lexer lexer = make_lexer(src);
+  AstNode *program = Parser_process(&lexer);
 
-  while (1) {
-    Token t = next_token(&lexer);
+  printf("\n=== AST ===\n");
+  Ast_print(program, 0);
 
-    printf("Token: type=%d, text='%s'", t.type, t.text ? t.text : "NULL");
+  SymbolTable table;
+  SymbolTable_init(&table);
 
-    if (t.type == TOKEN_NUMBER)
-      printf(", number=%le", t.number);
-
-    if (t.line || t.col)
-      printf(" [line=%zu, col=%zu]", t.line, t.col);
-
-    printf("\n");
-
-    if (t.text)
-      free(t.text);
-
-    if (t.type == TOKEN_EOF)
-      break;
-  }
+  analyze_program(program, &table);
 
   return 0;
 }

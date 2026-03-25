@@ -1,6 +1,6 @@
-let x: int = 5;
+let x:int = 5;
 let y:char = 't';
-let z:  str = "some text";
+let z:str = "some text";
 print(5);
 print(x);
 print(y);
