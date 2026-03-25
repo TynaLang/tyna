@@ -5,3 +5,6 @@
 *.out
 
 flake.lock
+.clangd
+
+output*

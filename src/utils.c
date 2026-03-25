@@ -44,3 +44,44 @@ void panic(const char *msg) {
   fprintf(stderr, "[PANIC] %s\n", msg);
   exit(1);
 }
+
+char *read_file(const char *filename) {
+  FILE *fp = fopen(filename, "rb");
+  if (!fp) {
+    perror("Error opening file");
+    return NULL;
+  }
+
+  if (fseek(fp, 0, SEEK_END) != 0) {
+    perror("fseek failed");
+    fclose(fp);
+    return NULL;
+  }
+
+  long filesize = ftell(fp);
+  if (filesize < 0) {
+    perror("ftell failed");
+    fclose(fp);
+    return NULL;
+  }
+  rewind(fp);
+
+  char *buffer = malloc(filesize + 1);
+  if (!buffer) {
+    perror("malloc failed");
+    fclose(fp);
+    return NULL;
+  }
+
+  size_t read = fread(buffer, 1, filesize, fp);
+  if (read != filesize) {
+    perror("fread failed");
+    free(buffer);
+    fclose(fp);
+    return NULL;
+  }
+
+  buffer[filesize] = '\0';
+  fclose(fp);
+  return buffer;
+}
