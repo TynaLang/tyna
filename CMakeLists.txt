@@ -17,7 +17,7 @@ message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
 # Source files
-file(GLOB SRC_FILES src/*.c)
+file(GLOB_RECURSE SRC_FILES src/*.c)
 
 add_executable(tyl ${SRC_FILES})
 
@@ -33,7 +33,7 @@ llvm_map_components_to_libnames(LLVM_LIBS
 )
 
 # Apply LLVM includes / defs safely after target exists
-target_include_directories(tyl PRIVATE ${LLVM_INCLUDE_DIRS})
+target_include_directories(tyl PRIVATE ${LLVM_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/include/tyl)
 target_compile_definitions(tyl PRIVATE ${LLVM_DEFINITIONS})
 target_link_libraries(tyl PRIVATE ${LLVM_LIBS})
 

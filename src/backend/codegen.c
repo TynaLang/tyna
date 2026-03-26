@@ -170,10 +170,14 @@ static void codegen_print(Codegen *cg, AstNode *node) {
 
   const char *fmt_str = "%d\n";
 
-  if (t == TYPE_CHAR)
+  if (t == TYPE_CHAR) {
     fmt_str = "%c\n";
-  else if (t == TYPE_STRING)
+    // varargs in C promote char to int for printf %c
+    value = LLVMBuildSExt(cg->builder, value, Codegen_type(cg, TYPE_INT),
+                          "char_to_int");
+  } else if (t == TYPE_STRING) {
     fmt_str = "%s\n";
+  }
 
   LLVMValueRef fmt = LLVMBuildGlobalStringPtr(cg->builder, fmt_str, "fmt");
 

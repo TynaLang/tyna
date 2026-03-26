@@ -82,6 +82,9 @@ void Runner_jit(Codegen *cg) {
     exit(1);
   }
 
+  // Ensure external symbols can be resolved by the MCJIT engine.
+  LLVMAddGlobalMapping(engine, cg->printf_func, (void *)&printf);
+
   // run main()
   LLVMValueRef main_func = LLVMGetNamedFunction(cg->module, "main");
 

@@ -3,14 +3,12 @@
 
 #include <stddef.h>
 
-typedef struct Lexer
-{
+typedef struct Lexer {
   size_t cursor, line, col;
   const char *src;
 } Lexer;
 
-typedef enum TokenType
-{
+typedef enum TokenType {
   // Keywords
   TOKEN_LET,
   TOKEN_PRINT,
@@ -41,8 +39,7 @@ typedef enum TokenType
   TOKEN_UNKNOWN,
 } TokenType;
 
-typedef struct Token
-{
+typedef struct Token {
   TokenType type;
   char *text;
   double number;
