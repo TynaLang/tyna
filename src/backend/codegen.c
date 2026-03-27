@@ -105,7 +105,7 @@ LLVMTypeRef Codegen_type(Codegen *cg, TypeKind t) {
 }
 
 static LLVMValueRef codegen_increment(Codegen *cg, AstNode *node,
-                                      int is_postfix) {
+                                      int is_postfix, int negate) {
   // must be identifier (you already enforce this)
   char *name = node->unary.expr->ident.value;
 
@@ -119,8 +119,11 @@ static LLVMValueRef codegen_increment(Codegen *cg, AstNode *node,
 
   LLVMValueRef old_val = LLVMBuildLoad2(cg->builder, ty, s->value, name);
 
-  // constant 1
-  LLVMValueRef one = LLVMConstInt(ty, 1, 0);
+  // constant 1 or -1
+  int onevar = 1;
+  if (negate)
+    onevar = -1;
+  LLVMValueRef one = LLVMConstInt(ty, onevar, 0);
 
   LLVMValueRef new_val = LLVMBuildAdd(cg->builder, old_val, one, "inc");
 
@@ -197,9 +200,13 @@ static LLVMValueRef codegen_expression(Codegen *cg, AstNode *node) {
   case NODE_UNARY: {
     switch (node->unary.op) {
     case OP_PRE_INC:
-      return codegen_increment(cg, node, 0);
+      return codegen_increment(cg, node, 0, 0);
     case OP_POST_INC:
-      return codegen_increment(cg, node, 1);
+      return codegen_increment(cg, node, 1, 0);
+    case OP_PRE_DEC:
+      return codegen_increment(cg, node, 0, 1);
+    case OP_POST_DEC:
+      return codegen_increment(cg, node, 1, 1);
     case OP_NEG: {
       LLVMValueRef val = codegen_expression(cg, node->unary.expr);
       return LLVMBuildNeg(cg->builder, val, "neg");

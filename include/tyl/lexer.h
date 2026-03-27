@@ -35,6 +35,7 @@ typedef enum TokenType {
   TOKEN_PLUS,
   TOKEN_PLUS_PLUS,
   TOKEN_MINUS,
+  TOKEN_MINUS_MINUS,
   TOKEN_STAR,
   TOKEN_POWER,
 

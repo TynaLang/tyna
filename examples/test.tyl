@@ -2,6 +2,6 @@ let x:int = 5;
 let y:int = 7;
 let z:str = "some text";
 print(5+5);
-print(x^x);
+print(--x-x);
 print(y);
 print(z);

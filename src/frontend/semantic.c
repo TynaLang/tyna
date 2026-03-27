@@ -86,6 +86,8 @@ TypeKind analyze_expression(AstNode *node, SymbolTable *table) {
     case OP_NEG:
     case OP_POST_INC:
     case OP_PRE_INC:
+    case OP_PRE_DEC:
+    case OP_POST_DEC:
       if (expr != TYPE_INT) {
         fprintf(stderr, "Operator only supports int, got %s\n",
                 type_to_name(expr));

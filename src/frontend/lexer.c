@@ -216,6 +216,11 @@ Token Token_advance(Lexer *l) {
     break;
   case '-':
     t.type = TOKEN_MINUS;
+    if (Lexer_peek(l) == '-') {
+      Lexer_advance(l);
+      t.text = copy_slice(l->src, l->cursor - 2, l->cursor);
+      t.type = TOKEN_MINUS_MINUS;
+    }
     break;
   case '*':
     t.type = TOKEN_STAR;

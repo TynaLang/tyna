@@ -187,6 +187,17 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     left = AstNode_new_unary(OP_PRE_INC, expr);
     break;
   }
+  case TOKEN_MINUS_MINUS: {
+    AstNode *expr = Parser_parse_expression(p, 100);
+
+    if (expr->tag != NODE_IDENT) {
+      fprintf(stderr, "-- requires an identifier\n");
+      exit(1);
+    }
+
+    left = AstNode_new_unary(OP_PRE_DEC, expr);
+    break;
+  }
   default:
     fprintf(stderr,
             "Unexpected token in expression got %d at line  %zu col %zu\n",
@@ -206,6 +217,18 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
       }
 
       left = AstNode_new_unary(OP_POST_INC, left);
+      continue;
+    }
+
+    if (op.type == TOKEN_MINUS_MINUS) {
+      Parser_token_advance(p);
+
+      if (left->tag != NODE_IDENT) {
+        fprintf(stderr, "postfix -- requires identifier\n");
+        exit(1);
+      }
+
+      left = AstNode_new_unary(OP_POST_DEC, left);
       continue;
     }
 
