@@ -73,6 +73,8 @@ int main(int argc, char **argv) {
   Lexer lexer = make_lexer(src);
   AstNode *program = Parser_process(&lexer);
 
+  // Ast_print(program, 2);
+
   SymbolTable table;
   SymbolTable_init(&table);
   analyze_program(program, &table);

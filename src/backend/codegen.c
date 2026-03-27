@@ -9,8 +9,9 @@
 #include <llvm-c/TargetMachine.h>
 
 #include "codegen.h"
+#include "lexer.h"
+#include "parser.h"
 
-static LLVMValueRef codegen_expression(Codegen *cg, AstNode *node);
 static void codegen_statement(Codegen *cg, AstNode *node);
 
 void CGSymbolTable_init(CGSymbolTable *t) { List_init(&t->symbols); }
@@ -71,6 +72,14 @@ Codegen *Codegen_new(const char *module_name) {
   cg->printf_func_type = printf_type;
   cg->printf_func = LLVMAddFunction(cg->module, "printf", printf_type);
 
+  // declare pow
+  LLVMTypeRef double_ty = LLVMDoubleTypeInContext(cg->context);
+  LLVMTypeRef pow_args[] = {double_ty, double_ty};
+  LLVMTypeRef pow_type = LLVMFunctionType(double_ty, pow_args, 2, 0);
+
+  cg->pow_func_type = pow_type;
+  cg->pow_func = LLVMAddFunction(cg->module, "pow", pow_type);
+
   return cg;
 }
 
@@ -93,6 +102,32 @@ LLVMTypeRef Codegen_type(Codegen *cg, TypeKind t) {
     fprintf(stderr, "Unknown type\n");
     exit(1);
   }
+}
+
+static LLVMValueRef codegen_increment(Codegen *cg, AstNode *node,
+                                      int is_postfix) {
+  // must be identifier (you already enforce this)
+  char *name = node->unary.expr->ident.value;
+
+  CGSymbol *s = CGSymbolTable_find(&cg->symbols, name);
+  if (!s) {
+    fprintf(stderr, "Undefined variable '%s'\n", name);
+    exit(1);
+  }
+
+  LLVMTypeRef ty = Codegen_type(cg, s->type);
+
+  LLVMValueRef old_val = LLVMBuildLoad2(cg->builder, ty, s->value, name);
+
+  // constant 1
+  LLVMValueRef one = LLVMConstInt(ty, 1, 0);
+
+  LLVMValueRef new_val = LLVMBuildAdd(cg->builder, old_val, one, "inc");
+
+  LLVMBuildStore(cg->builder, new_val, s->value);
+
+  // return depending on prefix/postfix
+  return is_postfix ? old_val : new_val;
 }
 
 static LLVMValueRef codegen_expression(Codegen *cg, AstNode *node) {
@@ -125,6 +160,55 @@ static LLVMValueRef codegen_expression(Codegen *cg, AstNode *node) {
     return LLVMBuildLoad2(cg->builder, ty, s->value, node->ident.value);
   }
 
+  case NODE_BINARY: {
+    LLVMValueRef left = codegen_expression(cg, node->binary.left);
+    LLVMValueRef right = codegen_expression(cg, node->binary.right);
+
+    switch (node->binary.op) {
+    case OP_ADD:
+      return LLVMBuildAdd(cg->builder, left, right, "addtmp");
+    case OP_SUB:
+      return LLVMBuildSub(cg->builder, left, right, "subtmp");
+    case OP_MUL:
+      return LLVMBuildMul(cg->builder, left, right, "multmp");
+    case OP_DIV:
+      return LLVMBuildSDiv(cg->builder, left, right, "divtmp");
+    case OP_POW: {
+      LLVMValueRef left = codegen_expression(cg, node->binary.left);
+      LLVMValueRef right = codegen_expression(cg, node->binary.right);
+
+      // int → double
+      left = LLVMBuildSIToFP(cg->builder, left,
+                             LLVMDoubleTypeInContext(cg->context), "");
+      right = LLVMBuildSIToFP(cg->builder, right,
+                              LLVMDoubleTypeInContext(cg->context), "");
+
+      LLVMValueRef args[] = {left, right};
+
+      LLVMValueRef res = LLVMBuildCall2(cg->builder, cg->pow_func_type,
+                                        cg->pow_func, args, 2, "pow");
+
+      // double → int
+      return LLVMBuildFPToSI(cg->builder, res,
+                             LLVMInt32TypeInContext(cg->context), "");
+    }
+    }
+  }
+  case NODE_UNARY: {
+    switch (node->unary.op) {
+    case OP_PRE_INC:
+      return codegen_increment(cg, node, 0);
+    case OP_POST_INC:
+      return codegen_increment(cg, node, 1);
+    case OP_NEG: {
+      LLVMValueRef val = codegen_expression(cg, node->unary.expr);
+      return LLVMBuildNeg(cg->builder, val, "neg");
+    }
+    default:
+      fprintf(stderr, "Unknown unary op\n");
+      exit(1);
+    }
+  }
   default:
     fprintf(stderr, "Unhandled expression node %d\n", node->tag);
     exit(1);
@@ -219,7 +303,6 @@ void codegen_program(Codegen *cg, AstNode *program) {
     }
 
     codegen_statement(cg, stmt);
-    printf("Generated code for statement %zu\n", i);
   }
 
   Codegen_return_zero(cg);

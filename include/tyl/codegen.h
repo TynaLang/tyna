@@ -31,6 +31,9 @@ struct Codegen {
   CGSymbolTable symbols;
   LLVMValueRef printf_func;
   LLVMTypeRef printf_func_type;
+
+  LLVMValueRef pow_func;
+  LLVMTypeRef pow_func_type;
 };
 
 Codegen *Codegen_new(const char *module_name);

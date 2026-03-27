@@ -43,7 +43,7 @@ TypeKind analyze_expression(AstNode *node, SymbolTable *table) {
     return TYPE_CHAR;
   case NODE_STRING:
     return TYPE_STRING;
-  case NODE_IDENT:
+  case NODE_IDENT: {
     s = SymbolTable_find(table, node->ident.value);
 
     if (!s) {
@@ -52,6 +52,51 @@ TypeKind analyze_expression(AstNode *node, SymbolTable *table) {
     }
 
     return s->type;
+  }
+  case NODE_BINARY: {
+    TypeKind left = analyze_expression(node->binary.left, table);
+    TypeKind right = analyze_expression(node->binary.right, table);
+
+    if (left != right) {
+      fprintf(stderr, "Type mismatch in binary operation: %s vs %s\n",
+              type_to_name(left), type_to_name(right));
+      exit(1);
+    }
+
+    switch (node->binary.op) {
+    case OP_ADD:
+    case OP_SUB:
+    case OP_MUL:
+    case OP_DIV:
+    case OP_POW:
+      if (left != TYPE_INT) {
+        fprintf(stderr, "Operator only supports int, got %s\n",
+                type_to_name(left));
+        exit(1);
+      }
+      return TYPE_INT;
+    default:
+      fprintf(stderr, "Unknown binary operator\n");
+      exit(1);
+    }
+  }
+  case NODE_UNARY: {
+    TypeKind expr = analyze_expression(node->unary.expr, table);
+    switch (node->unary.op) {
+    case OP_NEG:
+    case OP_POST_INC:
+    case OP_PRE_INC:
+      if (expr != TYPE_INT) {
+        fprintf(stderr, "Operator only supports int, got %s\n",
+                type_to_name(expr));
+        exit(1);
+      }
+      return TYPE_INT;
+    default:
+      fprintf(stderr, "Unknown unary operator\n");
+      exit(1);
+    }
+  }
   default:
     fprintf(stderr, "Unhandalable expression %s", node->ident.value);
     exit(1);

@@ -5,30 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-double get_error_loc(size_t line, size_t col) {
-  size_t integer_part = line;
-  size_t decimal_part = col;
-  double result = (double)integer_part;
-
-  // Add the decimal part by converting it to a fraction
-  // Determine how many digits are in the decimal part
-  size_t temp = decimal_part;
-  double divisor = 1.0;
-
-  // Count digits in decimal_part
-  if (temp == 0) {
-    divisor = 10.0;
-  } else {
-    while (temp > 0) {
-      divisor *= 10.0;
-      temp /= 10;
-    }
-  }
-
-  result += (double)decimal_part / divisor;
-  return result;
-}
-
 static char *copy_slice(const char *str, size_t start, size_t end) {
   size_t len = end - start;
   char *out = malloc(len + 1);
@@ -229,6 +205,23 @@ Token Token_advance(Lexer *l) {
     break;
   case ')':
     t.type = TOKEN_RPAREN;
+    break;
+  case '+':
+    t.type = TOKEN_PLUS;
+    if (Lexer_peek(l) == '+') {
+      Lexer_advance(l);
+      t.text = copy_slice(l->src, l->cursor - 2, l->cursor);
+      t.type = TOKEN_PLUS_PLUS;
+    }
+    break;
+  case '-':
+    t.type = TOKEN_MINUS;
+    break;
+  case '*':
+    t.type = TOKEN_STAR;
+    break;
+  case '^':
+    t.type = TOKEN_POWER;
     break;
   default:
     t.type = TOKEN_UNKNOWN;
