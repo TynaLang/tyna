@@ -1,13 +1,31 @@
-#include "parser.h"
-#include "lexer.h"
-#include "utils.h"
 #include <stdio.h>
 #include <unistd.h>
+
+#include "lexer.h"
+#include "parser.h"
+#include "utils.h"
 
 static Token *Parser_token_advance(Parser *p) {
   Token *prev_token = &p->current_token;
   p->current_token = Token_advance(p->lexer);
   return prev_token;
+}
+
+Token Parser_token_future_peek(Lexer *lexer, int n) {
+  size_t saved_cursor = lexer->cursor;
+  Location saved_loc = lexer->loc;
+
+  Token t;
+  for (int i = 0; i < n; i++) {
+    t = Token_advance(lexer);
+    if (t.type == TOKEN_EOF)
+      break;
+  }
+
+  lexer->cursor = saved_cursor;
+  lexer->loc = saved_loc;
+
+  return t;
 }
 
 static int Parser_expect(Parser *p, TokenType type, const char *msg) {
@@ -20,11 +38,13 @@ static int Parser_expect(Parser *p, TokenType type, const char *msg) {
   return 1;
 }
 
-static int Parser_check(AstNode *p, TokenType type) {
+static int Parser_check(AstNode *p, AstKind type) {
   if (!p)
     return 0;
   if (p->tag == type)
     return 1;
+
+  return 0;
 }
 
 static void Parser_sync(Parser *p) {
@@ -36,6 +56,7 @@ static void Parser_sync(Parser *p) {
 
     switch (p->current_token.type) {
     case TOKEN_LET:
+    case TOKEN_CONST:
     case TOKEN_PRINT:
       return; // start of new statement
     default:
@@ -78,6 +99,7 @@ static int is_binary_operator(TokenType t) {
 
 // ---------- PARSER BODY ------------ //
 static AstNode *Parser_parse_expression(Parser *p, int min_bp);
+static TypeKind Parser_parse_type(Parser *p);
 
 static BindingPower infix_binding_power(TokenType t) {
   switch (t) {
@@ -97,6 +119,12 @@ static BindingPower infix_binding_power(TokenType t) {
   }
 }
 
+static int is_type_token(TokenType t) {
+  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_F64) ||
+         t == TOKEN_TYPE_UNSIGNED || t == TOKEN_TYPE_SIGNED ||
+         t == TOKEN_TYPE_LONG || t == TOKEN_TYPE_SHORT;
+}
+
 static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
   Token t = p->current_token;
   Parser_token_advance(p);
@@ -105,11 +133,11 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
 
   switch (t.type) {
   case TOKEN_NUMBER:
-    left = AstNode_new_number(t.number, t.loc);
+    left = AstNode_new_number(t.number, t.text, t.loc);
     break;
 
   case TOKEN_IDENT:
-    left = AstNode_new_ident(t.text, t.loc);
+    left = AstNode_new_var(t.text, t.loc);
     break;
 
   case TOKEN_CHAR:
@@ -125,11 +153,20 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     return NULL;
 
   case TOKEN_LPAREN: {
-    left = Parser_parse_expression(p, 0);
+    Token peek = p->current_token; // We already advanced past '('
 
-    if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')'"))
-      return NULL;
+    if (is_type_token(peek.type)) {
+      TypeKind target_type = Parser_parse_type(p);
 
+      Parser_expect(p, TOKEN_RPAREN, "Expected ')' after cast");
+
+      AstNode *expr = Parser_parse_expression(p, 100);
+      left = AstNode_new_cast_expr(expr, target_type, t.loc);
+    } else {
+      // Parenthesized expression
+      left = Parser_parse_expression(p, 0);
+      Parser_expect(p, TOKEN_RPAREN, "Expected ')'");
+    }
     break;
   }
 
@@ -151,7 +188,7 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     const char *op_str = (t.type == TOKEN_PLUS_PLUS) ? "++" : "--";
     UnaryOp op = (t.type == TOKEN_PLUS_PLUS) ? OP_PRE_INC : OP_PRE_DEC;
 
-    if (!Parser_check(expr, NODE_IDENT)) {
+    if (!Parser_check(expr, NODE_VAR)) {
       ErrorHandler_report(p->eh, t.loc, "Operator '%s' requires an identifier",
                           op_str);
       return NULL;
@@ -181,7 +218,7 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
       UnaryOp unary_op =
           (op.type == TOKEN_PLUS_PLUS) ? OP_POST_INC : OP_POST_DEC;
 
-      if (!Parser_check(left, NODE_IDENT)) {
+      if (!Parser_check(left, NODE_VAR)) {
         ErrorHandler_report(p->eh, op.loc,
                             "Operator '%s' requires an identifier", op_str);
         return NULL;
@@ -207,20 +244,20 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
 
     if (op.type == TOKEN_ASSIGN) {
 
-      if (!Parser_check(left, NODE_IDENT)) {
+      if (!Parser_check(left, NODE_VAR)) {
         printf("Left-hand side of assignment must be an identifier, got %d ",
                left->tag);
         ErrorHandler_report(p->eh, op.loc, "Invalid assignment target");
         return NULL;
       }
 
-      if (Parser_check(right, NODE_ASSIGN)) {
+      if (Parser_check(right, NODE_ASSIGN_EXPR)) {
         ErrorHandler_report(p->eh, op.loc,
                             "Chained assignment is not supported");
         return NULL;
       }
 
-      left = AstNode_new_assign(left, right, op.loc);
+      left = AstNode_new_assign_expr(left, right, op.loc);
     }
 
     else {
@@ -231,40 +268,131 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
   return left;
 }
 
-static AstNode *Parser_build_let_statement(Parser *p) {
-  if (!Parser_expect(p, TOKEN_LET, "Expected 'let'"))
-    return NULL;
+static TypeKind Parser_parse_type(Parser *p) {
+  int is_unsigned = 0;
+  int is_long = 0;
+  int is_short = 0;
+  int has_int = 0;
 
-  Token ident = p->current_token;
-  if (!Parser_expect(p, TOKEN_IDENT, "Expected identifier after 'let'"))
-    return NULL;
+  while (1) {
+    TokenType type = p->current_token.type;
+    if (type == TOKEN_TYPE_UNSIGNED) {
+      is_unsigned = 1;
+      Parser_token_advance(p);
+    } else if (type == TOKEN_TYPE_SIGNED) {
+      Parser_token_advance(p);
+    } else if (type == TOKEN_TYPE_LONG) {
+      is_long++;
+      Parser_token_advance(p);
+    } else if (type == TOKEN_TYPE_SHORT) {
+      is_short = 1;
+      Parser_token_advance(p);
+    } else if (type == TOKEN_TYPE_INT) {
+      has_int = 1;
+      Parser_token_advance(p);
+    } else {
+      break;
+    }
+  }
 
-  AstNode *name = AstNode_new_ident(ident.text, ident.loc);
-
-  if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after identifier"))
-    return NULL;
+  if (is_unsigned || is_long || is_short || has_int) {
+    if (is_long == 2)
+      return is_unsigned ? TYPE_U64 : TYPE_I64;
+    if (is_long == 1)
+      return is_unsigned ? TYPE_U64 : TYPE_I64; // long is usually 64 bit here
+    if (is_short)
+      return is_unsigned ? TYPE_U16 : TYPE_I16;
+    return is_unsigned ? TYPE_U32 : TYPE_I32;
+  }
 
   Token type_tok = p->current_token;
-  TypeKind declared_type = TYPE_UNKNOWN;
-
+  TypeKind kind = TYPE_UNKNOWN;
   switch (type_tok.type) {
-  case TOKEN_TYPE_INT:
-    declared_type = TYPE_INT;
+  case TOKEN_TYPE_I8:
+    kind = TYPE_I8;
+    break;
+  case TOKEN_TYPE_I16:
+    kind = TYPE_I16;
+    break;
+  case TOKEN_TYPE_I32:
+    kind = TYPE_I32;
+    break;
+  case TOKEN_TYPE_I64:
+    kind = TYPE_I64;
+    break;
+  case TOKEN_TYPE_U8:
+    kind = TYPE_U8;
+    break;
+  case TOKEN_TYPE_U16:
+    kind = TYPE_U16;
+    break;
+  case TOKEN_TYPE_U32:
+    kind = TYPE_U32;
+    break;
+  case TOKEN_TYPE_U64:
+    kind = TYPE_U64;
+    break;
+  case TOKEN_TYPE_F32:
+    kind = TYPE_F32;
+    break;
+  case TOKEN_TYPE_F64:
+    kind = TYPE_F64;
+    break;
+  case TOKEN_TYPE_FLOAT:
+    kind = TYPE_FLOAT;
+    break;
+  case TOKEN_TYPE_DOUBLE:
+    kind = TYPE_DOUBLE;
     break;
   case TOKEN_TYPE_CHAR:
-    declared_type = TYPE_CHAR;
+    kind = TYPE_CHAR;
     break;
   case TOKEN_TYPE_STR:
-    declared_type = TYPE_STRING;
+    kind = TYPE_STRING;
     break;
   default:
-    ErrorHandler_report(p->eh, type_tok.loc, "Expected type after ':'");
+    break;
+  }
+
+  if (kind != TYPE_UNKNOWN) {
+    Parser_token_advance(p);
+  }
+  return kind;
+}
+
+static AstNode *Parser_build_var_decl_statement(Parser *p) {
+  int is_const = 0;
+  if (p->current_token.type == TOKEN_CONST) {
+    is_const = 1;
+    Parser_token_advance(p);
+  } else if (p->current_token.type == TOKEN_LET) {
+    Parser_token_advance(p);
+  } else {
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Expected 'let' or 'const'");
     return NULL;
   }
 
-  Parser_token_advance(p);
+  Token ident = p->current_token;
+  if (!Parser_expect(p, TOKEN_IDENT,
+                     "Expected identifier after 'let' or 'const'"))
+    return NULL;
 
-  if (!Parser_expect(p, TOKEN_ASSIGN, "Expected '=' after type"))
+  AstNode *name = AstNode_new_var(ident.text, ident.loc);
+
+  TypeKind declared_type = TYPE_UNKNOWN;
+
+  if (p->current_token.type == TOKEN_COLON) {
+    Parser_token_advance(p); // consume ':'
+    declared_type = Parser_parse_type(p);
+    if (declared_type == TYPE_UNKNOWN) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected type after ':'");
+      return NULL;
+    }
+  }
+
+  if (!Parser_expect(p, TOKEN_ASSIGN, "Expected '=' after identifier/type"))
     return NULL;
 
   AstNode *value = Parser_parse_expression(p, 0);
@@ -274,10 +402,10 @@ static AstNode *Parser_build_let_statement(Parser *p) {
   if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
     return NULL;
 
-  return AstNode_new_let(name, value, declared_type, ident.loc);
+  return AstNode_new_var_decl(name, value, declared_type, is_const, ident.loc);
 }
 
-static AstNode *Parser_build_print_statement(Parser *p) {
+static AstNode *Parser_build_print_stmt_statement(Parser *p) {
   if (!Parser_expect(p, TOKEN_PRINT, "Expected 'print'"))
     return NULL;
   if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after print"))
@@ -292,7 +420,7 @@ static AstNode *Parser_build_print_statement(Parser *p) {
   if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
     return NULL;
 
-  return AstNode_new_print(value, p->current_token.loc);
+  return AstNode_new_print_stmt(value, p->current_token.loc);
 }
 
 static AstNode *Parser_parse_statement(Parser *p) {
@@ -300,11 +428,12 @@ static AstNode *Parser_parse_statement(Parser *p) {
 
   switch (p->current_token.type) {
   case TOKEN_LET:
-    node = Parser_build_let_statement(p);
+  case TOKEN_CONST:
+    node = Parser_build_var_decl_statement(p);
     break;
 
   case TOKEN_PRINT:
-    node = Parser_build_print_statement(p);
+    node = Parser_build_print_stmt_statement(p);
     break;
 
   case TOKEN_EOF:

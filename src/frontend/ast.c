@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "semantic.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -19,24 +20,26 @@ AstNode *AstNode_new_program(Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_let(AstNode *name, AstNode *value, TypeKind type,
-                         Location loc) {
-  AstNode *node = AstNode_new(NODE_LET, loc);
-  node->let.name = name;
-  node->let.value = value;
-  node->let.declared_type = type;
+AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, TypeKind type,
+                              int is_const, Location loc) {
+  AstNode *node = AstNode_new(NODE_VAR_DECL, loc);
+  node->var_decl.name = name;
+  node->var_decl.value = value;
+  node->var_decl.declared_type = type;
+  node->var_decl.is_const = is_const;
   return node;
 }
 
-AstNode *AstNode_new_print(AstNode *value, Location loc) {
-  AstNode *node = AstNode_new(NODE_PRINT, loc);
-  node->print.value = value;
+AstNode *AstNode_new_print_stmt(AstNode *value, Location loc) {
+  AstNode *node = AstNode_new(NODE_PRINT_STMT, loc);
+  node->print_stmt.value = value;
   return node;
 }
 
-AstNode *AstNode_new_number(double value, Location loc) {
+AstNode *AstNode_new_number(double value, char *raw_text, Location loc) {
   AstNode *node = AstNode_new(NODE_NUMBER, loc);
   node->number.value = value;
+  node->number.raw_text = raw_text;
   return node;
 }
 
@@ -52,9 +55,9 @@ AstNode *AstNode_new_string(char *value, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_ident(char *value, Location loc) {
-  AstNode *node = AstNode_new(NODE_IDENT, loc);
-  node->ident.value = value;
+AstNode *AstNode_new_var(char *value, Location loc) {
+  AstNode *node = AstNode_new(NODE_VAR, loc);
+  node->var.value = value;
   return node;
 }
 
@@ -74,10 +77,18 @@ AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_assign(AstNode *target, AstNode *value, Location loc) {
-  AstNode *node = AstNode_new(NODE_ASSIGN, loc);
-  node->assign.target = target;
-  node->assign.value = value;
+AstNode *AstNode_new_cast_expr(AstNode *expr, TypeKind type, Location loc) {
+  AstNode *node = AstNode_new(NODE_CAST_EXPR, loc);
+  node->cast_expr.expr = expr;
+  node->cast_expr.target_type = type;
+  return node;
+}
+
+AstNode *AstNode_new_assign_expr(AstNode *target, AstNode *value,
+                                 Location loc) {
+  AstNode *node = AstNode_new(NODE_ASSIGN_EXPR, loc);
+  node->assign_expr.target = target;
+  node->assign_expr.value = value;
   return node;
 }
 
@@ -92,6 +103,40 @@ AstNode *AstNode_new_call(AstNode *func, AstNode *arg, Location loc) {
   node->call.func = func;
   node->call.arg = arg;
   return node;
+}
+
+TypeKind Token_token_to_type(TokenType t) {
+  switch (t) {
+  case TOKEN_TYPE_INT:
+  case TOKEN_TYPE_I32:
+    return TYPE_I32;
+  case TOKEN_TYPE_I8:
+    return TYPE_I8;
+  case TOKEN_TYPE_I16:
+    return TYPE_I16;
+  case TOKEN_TYPE_I64:
+    return TYPE_I64;
+  case TOKEN_TYPE_U8:
+    return TYPE_U8;
+  case TOKEN_TYPE_U16:
+    return TYPE_U16;
+  case TOKEN_TYPE_U32:
+    return TYPE_U32;
+  case TOKEN_TYPE_U64:
+    return TYPE_U64;
+  case TOKEN_TYPE_FLOAT:
+  case TOKEN_TYPE_F32:
+    return TYPE_F32;
+  case TOKEN_TYPE_DOUBLE:
+  case TOKEN_TYPE_F64:
+    return TYPE_F64;
+  case TOKEN_TYPE_CHAR:
+    return TYPE_CHAR;
+  case TOKEN_TYPE_STR:
+    return TYPE_STRING;
+  default:
+    return TYPE_UNKNOWN;
+  }
 }
 
 static void print_indent(int indent) {
@@ -114,18 +159,18 @@ void Ast_print(AstNode *node, int indent) {
       Ast_print(child, indent + 1);
     }
     break;
-  case NODE_LET:
-    printf("LET %s : %d\n", node->let.name->ident.value,
-           node->let.declared_type);
+  case NODE_VAR_DECL:
+    printf("%s %s : %d\n", node->var_decl.is_const ? "CONST" : "LET",
+           node->var_decl.name->var.value, node->var_decl.declared_type);
     print_indent(indent + 1);
     printf("VALUE:\n");
-    Ast_print(node->let.value, indent + 2);
+    Ast_print(node->var_decl.value, indent + 2);
     break;
-  case NODE_PRINT:
-    printf("PRINT\n");
+  case NODE_PRINT_STMT:
+    printf("PRINT_STMT\n");
     print_indent(indent + 1);
     printf("VALUE:\n");
-    Ast_print(node->print.value, indent + 2);
+    Ast_print(node->print_stmt.value, indent + 2);
     break;
   case NODE_NUMBER:
     printf("NUMBER: %f\n", node->number.value);
@@ -136,8 +181,8 @@ void Ast_print(AstNode *node, int indent) {
   case NODE_STRING:
     printf("STRING: %s\n", node->string.value);
     break;
-  case NODE_IDENT:
-    printf("IDENT: %s\n", node->ident.value);
+  case NODE_VAR:
+    printf("VAR: %s\n", node->var.value);
     break;
   case NODE_BINARY:
     printf("BINARY OP: %d\n", node->binary.op);
@@ -154,6 +199,10 @@ void Ast_print(AstNode *node, int indent) {
     printf("EXPR:\n");
     Ast_print(node->unary.expr, indent + 2);
     break;
+  case NODE_CAST_EXPR:
+    printf("CAST TO %s\n", type_to_name(node->cast_expr.target_type));
+    Ast_print(node->cast_expr.expr, indent + 1);
+    break;
   case NODE_CALL:
     printf("CALL:\n");
     print_indent(indent + 1);
@@ -167,14 +216,14 @@ void Ast_print(AstNode *node, int indent) {
     printf("EXPR_STMT\n");
     Ast_print(node->expr_stmt.expr, indent + 1);
     break;
-  case NODE_ASSIGN:
-    printf("ASSIGN\n");
+  case NODE_ASSIGN_EXPR:
+    printf("ASSIGN_EXPR\n");
     print_indent(indent + 1);
     printf("TARGET:\n");
-    Ast_print(node->assign.target, indent + 2);
+    Ast_print(node->assign_expr.target, indent + 2);
     print_indent(indent + 1);
     printf("VALUE:\n");
-    Ast_print(node->assign.value, indent + 2);
+    Ast_print(node->assign_expr.value, indent + 2);
     break;
   default:
     printf("UNKNOWN NODE\n");

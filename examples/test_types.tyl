@@ -1,0 +1,16 @@
+const v1: float = 3.14f;
+let v2: double = 2.718;
+const v3: unsigned long int = 1000;
+let v4: i8 = (i8)v1;
+
+print(v1);
+print(v2);
+print(v3);
+print(v4);
+
+let sum: double = v1 + v2;
+print(sum);
+
+// v3 = 2000; // This should fail semantic analysis if we ran it, as v3 is const
+print((int)v2);
+print((char)65);

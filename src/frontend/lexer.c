@@ -1,9 +1,11 @@
-#include "lexer.h"
 #include <ctype.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "ast.h"
+#include "lexer.h"
 
 static char *copy_slice(const char *str, size_t start, size_t end) {
   size_t len = end - start;
@@ -57,6 +59,8 @@ static Token read_identifier(Lexer *l) {
 
   if (strcmp(text, "let") == 0)
     t.type = TOKEN_LET;
+  else if (strcmp(text, "const") == 0)
+    t.type = TOKEN_CONST;
   else if (strcmp(text, "print") == 0)
     t.type = TOKEN_PRINT;
   else if (strcmp(text, "int") == 0)
@@ -65,6 +69,38 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_TYPE_CHAR;
   else if (strcmp(text, "str") == 0)
     t.type = TOKEN_TYPE_STR;
+  else if (strcmp(text, "float") == 0)
+    t.type = TOKEN_TYPE_FLOAT;
+  else if (strcmp(text, "double") == 0)
+    t.type = TOKEN_TYPE_DOUBLE;
+  else if (strcmp(text, "i8") == 0)
+    t.type = TOKEN_TYPE_I8;
+  else if (strcmp(text, "i16") == 0)
+    t.type = TOKEN_TYPE_I16;
+  else if (strcmp(text, "i32") == 0)
+    t.type = TOKEN_TYPE_I32;
+  else if (strcmp(text, "i64") == 0)
+    t.type = TOKEN_TYPE_I64;
+  else if (strcmp(text, "u8") == 0)
+    t.type = TOKEN_TYPE_U8;
+  else if (strcmp(text, "u16") == 0)
+    t.type = TOKEN_TYPE_U16;
+  else if (strcmp(text, "u32") == 0)
+    t.type = TOKEN_TYPE_U32;
+  else if (strcmp(text, "u64") == 0)
+    t.type = TOKEN_TYPE_U64;
+  else if (strcmp(text, "f32") == 0)
+    t.type = TOKEN_TYPE_F32;
+  else if (strcmp(text, "f64") == 0)
+    t.type = TOKEN_TYPE_F64;
+  else if (strcmp(text, "unsigned") == 0)
+    t.type = TOKEN_TYPE_UNSIGNED;
+  else if (strcmp(text, "signed") == 0)
+    t.type = TOKEN_TYPE_SIGNED;
+  else if (strcmp(text, "long") == 0)
+    t.type = TOKEN_TYPE_LONG;
+  else if (strcmp(text, "short") == 0)
+    t.type = TOKEN_TYPE_SHORT;
   else
     t.type = TOKEN_IDENT;
 
@@ -73,8 +109,21 @@ static Token read_identifier(Lexer *l) {
 
 static Token read_number(Lexer *l) {
   size_t start = l->cursor;
-  while (isdigit(Lexer_peek(l)) || Lexer_peek(l) == '.')
+  int has_dot = 0;
+
+  while (isdigit(Lexer_peek(l)) || Lexer_peek(l) == '.') {
+    if (Lexer_peek(l) == '.') {
+      if (has_dot)
+        break; // Only one dot allowed
+      has_dot = 1;
+    }
     Lexer_advance(l);
+  }
+
+  // Check for 'f' suffix for floats
+  if (Lexer_peek(l) == 'f' || Lexer_peek(l) == 'F') {
+    Lexer_advance(l);
+  }
 
   char *text = copy_slice(l->src, start, l->cursor);
 
