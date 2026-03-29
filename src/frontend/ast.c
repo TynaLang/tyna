@@ -36,7 +36,7 @@ AstNode *AstNode_new_print_stmt(AstNode *value, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_number(double value, char *raw_text, Location loc) {
+AstNode *AstNode_new_number(double value, StringView raw_text, Location loc) {
   AstNode *node = AstNode_new(NODE_NUMBER, loc);
   node->number.value = value;
   node->number.raw_text = raw_text;
@@ -49,13 +49,13 @@ AstNode *AstNode_new_char(char value, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_string(char *value, Location loc) {
+AstNode *AstNode_new_string(StringView value, Location loc) {
   AstNode *node = AstNode_new(NODE_STRING, loc);
   node->string.value = value;
   return node;
 }
 
-AstNode *AstNode_new_var(char *value, Location loc) {
+AstNode *AstNode_new_var(StringView value, Location loc) {
   AstNode *node = AstNode_new(NODE_VAR, loc);
   node->var.value = value;
   return node;
@@ -160,8 +160,9 @@ void Ast_print(AstNode *node, int indent) {
     }
     break;
   case NODE_VAR_DECL:
-    printf("%s %s : %d\n", node->var_decl.is_const ? "CONST" : "LET",
-           node->var_decl.name->var.value, node->var_decl.declared_type);
+    printf("%s " SV_FMT " : %d\n", node->var_decl.is_const ? "CONST" : "LET",
+           SV_ARG(node->var_decl.name->var.value),
+           node->var_decl.declared_type);
     print_indent(indent + 1);
     printf("VALUE:\n");
     Ast_print(node->var_decl.value, indent + 2);
@@ -173,16 +174,17 @@ void Ast_print(AstNode *node, int indent) {
     Ast_print(node->print_stmt.value, indent + 2);
     break;
   case NODE_NUMBER:
-    printf("NUMBER: %f\n", node->number.value);
+    printf("NUMBER: %f (raw: " SV_FMT ")\n", node->number.value,
+           SV_ARG(node->number.raw_text));
     break;
   case NODE_CHAR:
     printf("CHAR: %c\n", node->char_lit.value);
     break;
   case NODE_STRING:
-    printf("STRING: %s\n", node->string.value);
+    printf("STRING: " SV_FMT "\n", SV_ARG(node->string.value));
     break;
   case NODE_VAR:
-    printf("VAR: %s\n", node->var.value);
+    printf("VAR: " SV_FMT "\n", SV_ARG(node->var.value));
     break;
   case NODE_BINARY:
     printf("BINARY OP: %d\n", node->binary.op);

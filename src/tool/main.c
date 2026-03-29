@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
 
   SymbolTable table;
   SymbolTable_init(&table, &eh);
-  analyze_program(program, &table);
+  Semantic_analysis(program, &table);
 
   if (eh.has_errors) {
     ErrorHandler_show_all(&eh);

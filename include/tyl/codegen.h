@@ -14,7 +14,7 @@ typedef struct CGSymbol CGSymbol;
 typedef struct CGSymbolTable CGSymbolTable;
 
 struct CGSymbol {
-  char *name;
+  StringView name;
   TypeKind type;
   LLVMValueRef value;
 };
@@ -22,6 +22,11 @@ struct CGSymbol {
 struct CGSymbolTable {
   List symbols; // List<CGSymbol*>
 };
+
+void CGSymbolTable_init(CGSymbolTable *t);
+void CGSymbolTable_add(CGSymbolTable *t, StringView name, TypeKind type,
+                       LLVMValueRef value);
+CGSymbol *CGSymbolTable_find(CGSymbolTable *t, StringView name);
 
 struct Codegen {
   LLVMContextRef context;

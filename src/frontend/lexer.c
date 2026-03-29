@@ -7,14 +7,6 @@
 #include "ast.h"
 #include "lexer.h"
 
-static char *copy_slice(const char *str, size_t start, size_t end) {
-  size_t len = end - start;
-  char *out = malloc(len + 1);
-  memcpy(out, str + start, len);
-  out[len] = '\0';
-  return out;
-}
-
 Lexer make_lexer(const char *src, struct ErrorHandler *eh) {
   Lexer l;
   l.cursor = 0;
@@ -51,55 +43,55 @@ static Token read_identifier(Lexer *l) {
   while (isalnum(Lexer_peek(l)))
     Lexer_advance(l);
 
-  char *text = copy_slice(l->src, start, l->cursor);
+  StringView text = sv_from_parts(l->src + start, l->cursor - start);
 
   Token t;
   t.text = text;
   t.loc = l->loc;
 
-  if (strcmp(text, "let") == 0)
+  if (sv_eq_cstr(text, "let"))
     t.type = TOKEN_LET;
-  else if (strcmp(text, "const") == 0)
+  else if (sv_eq_cstr(text, "const"))
     t.type = TOKEN_CONST;
-  else if (strcmp(text, "print") == 0)
+  else if (sv_eq_cstr(text, "print"))
     t.type = TOKEN_PRINT;
-  else if (strcmp(text, "int") == 0)
+  else if (sv_eq_cstr(text, "int"))
     t.type = TOKEN_TYPE_INT;
-  else if (strcmp(text, "char") == 0)
+  else if (sv_eq_cstr(text, "char"))
     t.type = TOKEN_TYPE_CHAR;
-  else if (strcmp(text, "str") == 0)
+  else if (sv_eq_cstr(text, "str"))
     t.type = TOKEN_TYPE_STR;
-  else if (strcmp(text, "float") == 0)
+  else if (sv_eq_cstr(text, "float"))
     t.type = TOKEN_TYPE_FLOAT;
-  else if (strcmp(text, "double") == 0)
+  else if (sv_eq_cstr(text, "double"))
     t.type = TOKEN_TYPE_DOUBLE;
-  else if (strcmp(text, "i8") == 0)
+  else if (sv_eq_cstr(text, "i8"))
     t.type = TOKEN_TYPE_I8;
-  else if (strcmp(text, "i16") == 0)
+  else if (sv_eq_cstr(text, "i16"))
     t.type = TOKEN_TYPE_I16;
-  else if (strcmp(text, "i32") == 0)
+  else if (sv_eq_cstr(text, "i32"))
     t.type = TOKEN_TYPE_I32;
-  else if (strcmp(text, "i64") == 0)
+  else if (sv_eq_cstr(text, "i64"))
     t.type = TOKEN_TYPE_I64;
-  else if (strcmp(text, "u8") == 0)
+  else if (sv_eq_cstr(text, "u8"))
     t.type = TOKEN_TYPE_U8;
-  else if (strcmp(text, "u16") == 0)
+  else if (sv_eq_cstr(text, "u16"))
     t.type = TOKEN_TYPE_U16;
-  else if (strcmp(text, "u32") == 0)
+  else if (sv_eq_cstr(text, "u32"))
     t.type = TOKEN_TYPE_U32;
-  else if (strcmp(text, "u64") == 0)
+  else if (sv_eq_cstr(text, "u64"))
     t.type = TOKEN_TYPE_U64;
-  else if (strcmp(text, "f32") == 0)
+  else if (sv_eq_cstr(text, "f32"))
     t.type = TOKEN_TYPE_F32;
-  else if (strcmp(text, "f64") == 0)
+  else if (sv_eq_cstr(text, "f64"))
     t.type = TOKEN_TYPE_F64;
-  else if (strcmp(text, "unsigned") == 0)
+  else if (sv_eq_cstr(text, "unsigned"))
     t.type = TOKEN_TYPE_UNSIGNED;
-  else if (strcmp(text, "signed") == 0)
+  else if (sv_eq_cstr(text, "signed"))
     t.type = TOKEN_TYPE_SIGNED;
-  else if (strcmp(text, "long") == 0)
+  else if (sv_eq_cstr(text, "long"))
     t.type = TOKEN_TYPE_LONG;
-  else if (strcmp(text, "short") == 0)
+  else if (sv_eq_cstr(text, "short"))
     t.type = TOKEN_TYPE_SHORT;
   else
     t.type = TOKEN_IDENT;
@@ -125,11 +117,14 @@ static Token read_number(Lexer *l) {
     Lexer_advance(l);
   }
 
-  char *text = copy_slice(l->src, start, l->cursor);
+  StringView text = sv_from_parts(l->src + start, l->cursor - start);
+  char *tmp = sv_to_cstr(text);
+  double val = strtod(tmp, NULL);
+  free(tmp);
 
   Token t;
   t.text = text;
-  t.number = strtod(text, NULL);
+  t.number = val;
   t.type = TOKEN_NUMBER;
   t.loc = l->loc;
   return t;
@@ -156,11 +151,12 @@ static Token read_string(Lexer *l) {
 
   if (Lexer_peek(l) != '"') {
     t.type = TOKEN_ERROR;
-    t.text = "unterminated string literal";
+    t.text = sv_from_cstr("unterminated string literal");
     return t;
   }
 
-  char *text = copy_slice(l->src, start_content, l->cursor);
+  StringView text =
+      sv_from_parts(l->src + start_content, l->cursor - start_content);
   Lexer_advance(l); // skip closing "
 
   t.text = text;
@@ -186,13 +182,13 @@ static Token read_char(Lexer *l) {
 
   if (Lexer_peek(l) != '\'' || len != 1) {
     t.type = TOKEN_ERROR;
-    t.text = "invalid char literal";
+    t.text = sv_from_cstr("invalid char literal");
     if (Lexer_peek(l) == '\'')
       Lexer_advance(l);
     return t;
   }
 
-  char *text = copy_slice(l->src, start, start + len);
+  StringView text = sv_from_parts(l->src + start, len);
   Lexer_advance(l); // skip closing '
 
   t.text = text;
@@ -209,7 +205,7 @@ Token Token_advance(Lexer *l) {
   char c = Lexer_peek(l);
   if (c == '\0') {
     t.type = TOKEN_EOF;
-    t.text = NULL;
+    t.text = (StringView){NULL, 0};
     return t;
   }
 
@@ -224,7 +220,7 @@ Token Token_advance(Lexer *l) {
       return Token_advance(l);
     }
     t.type = TOKEN_SLASH;
-    t.text = copy_slice(l->src, l->cursor - 1, l->cursor);
+    t.text = sv_from_parts(l->src + l->cursor - 1, 1);
     return t;
   }
   if (c == '"')
@@ -234,7 +230,7 @@ Token Token_advance(Lexer *l) {
 
   // Single-character tokens
   Lexer_advance(l);
-  t.text = copy_slice(l->src, l->cursor - 1, l->cursor);
+  t.text = sv_from_parts(l->src + l->cursor - 1, 1);
   switch (c) {
   case ':':
     t.type = TOKEN_COLON;
@@ -255,7 +251,7 @@ Token Token_advance(Lexer *l) {
     t.type = TOKEN_PLUS;
     if (Lexer_peek(l) == '+') {
       Lexer_advance(l);
-      t.text = copy_slice(l->src, l->cursor - 2, l->cursor);
+      t.text = sv_from_parts(t.text.data, 2);
       t.type = TOKEN_PLUS_PLUS;
     }
     break;
@@ -263,7 +259,7 @@ Token Token_advance(Lexer *l) {
     t.type = TOKEN_MINUS;
     if (Lexer_peek(l) == '-') {
       Lexer_advance(l);
-      t.text = copy_slice(l->src, l->cursor - 2, l->cursor);
+      t.text = sv_from_parts(t.text.data, 2);
       t.type = TOKEN_MINUS_MINUS;
     }
     break;
@@ -275,7 +271,7 @@ Token Token_advance(Lexer *l) {
     break;
   default:
     t.type = TOKEN_ERROR;
-    t.text = "unknown character";
+    t.text = sv_from_cstr("unknown character");
     break;
   }
   return t;

@@ -141,7 +141,7 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     break;
 
   case TOKEN_CHAR:
-    left = AstNode_new_char(t.text[0], t.loc);
+    left = AstNode_new_char(t.text.data[0], t.loc);
     break;
 
   case TOKEN_STRING:

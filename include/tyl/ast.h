@@ -90,7 +90,7 @@ struct AstNode {
 
     struct {
       double value;
-      char *raw_text;
+      StringView raw_text;
     } number;
 
     struct {
@@ -98,11 +98,11 @@ struct AstNode {
     } char_lit;
 
     struct {
-      char *value;
+      StringView value;
     } string;
 
     struct {
-      char *value;
+      StringView value;
     } var;
 
     struct {
@@ -122,10 +122,10 @@ AstNode *AstNode_new_program(Location loc);
 AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, TypeKind type,
                               int is_const, Location loc);
 AstNode *AstNode_new_print_stmt(AstNode *value, Location loc);
-AstNode *AstNode_new_number(double value, char *raw_text, Location loc);
+AstNode *AstNode_new_number(double value, StringView raw_text, Location loc);
 AstNode *AstNode_new_char(char value, Location loc);
-AstNode *AstNode_new_string(char *value, Location loc);
-AstNode *AstNode_new_var(char *value, Location loc);
+AstNode *AstNode_new_string(StringView value, Location loc);
+AstNode *AstNode_new_var(StringView value, Location loc);
 AstNode *AstNode_new_binary(AstNode *left, AstNode *right, BinaryOp op,
                             Location loc);
 AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc);

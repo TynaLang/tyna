@@ -1,6 +1,7 @@
 #ifndef LEXER_H
 #define LEXER_H
 
+#include "utils.h"
 #include <stddef.h>
 
 struct ErrorHandler;
@@ -72,7 +73,7 @@ typedef enum TokenType {
 
 typedef struct Token {
   TokenType type;
-  char *text;
+  StringView text;
   double number;
   Location loc;
 } Token;

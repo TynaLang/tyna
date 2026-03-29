@@ -6,9 +6,9 @@
 #include "utils.h"
 
 typedef struct {
-  char *name;
+  StringView name;
   TypeKind type;
-  int is_immutable;
+  int is_const;
 } Symbol;
 
 typedef struct {
@@ -17,14 +17,11 @@ typedef struct {
 } SymbolTable;
 
 void SymbolTable_init(SymbolTable *table, ErrorHandler *eh);
-void SymbolTable_add(SymbolTable *table, char *name, TypeKind type,
-                     int is_immutable);
-Symbol *SymbolTable_find(SymbolTable *table, char *name);
+void SymbolTable_add(SymbolTable *table, StringView name, TypeKind type,
+                     int is_const);
+Symbol *SymbolTable_find(SymbolTable *table, StringView name);
 
-void analyze_program(AstNode *program, SymbolTable *table);
-TypeKind analyze_expression(AstNode *node, SymbolTable *table);
-void analyze_statement(AstNode *node, SymbolTable *table);
-
+void Semantic_analysis(AstNode *program, SymbolTable *table);
 char *type_to_name(TypeKind type);
 
 #endif // !SEMANTIC_H
