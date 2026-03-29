@@ -12,7 +12,6 @@ typedef enum BinaryOp BinaryOp;
 typedef enum UnaryOp UnaryOp;
 
 enum TypeKind {
-  TYPE_INT,
   TYPE_I8,
   TYPE_I16,
   TYPE_I32,
@@ -21,8 +20,6 @@ enum TypeKind {
   TYPE_U16,
   TYPE_U32,
   TYPE_U64,
-  TYPE_FLOAT,
-  TYPE_DOUBLE,
   TYPE_F32,
   TYPE_F64,
   TYPE_CHAR,

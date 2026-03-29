@@ -88,7 +88,6 @@ void Codegen_dump(Codegen *cg) { LLVMDumpModule(cg->module); }
 
 LLVMTypeRef Codegen_type(Codegen *cg, TypeKind t) {
   switch (t) {
-  case TYPE_INT:
   case TYPE_I32:
     return LLVMInt32TypeInContext(cg->context);
   case TYPE_I8:
@@ -103,10 +102,8 @@ LLVMTypeRef Codegen_type(Codegen *cg, TypeKind t) {
   case TYPE_I64:
   case TYPE_U64:
     return LLVMInt64TypeInContext(cg->context);
-  case TYPE_FLOAT:
   case TYPE_F32:
     return LLVMFloatTypeInContext(cg->context);
-  case TYPE_DOUBLE:
   case TYPE_F64:
     return LLVMDoubleTypeInContext(cg->context);
   case TYPE_STRING:
@@ -160,7 +157,7 @@ static LLVMValueRef codegen_increment(Codegen *cg, AstNode *node,
   LLVMValueRef one;
   LLVMValueRef new_val;
 
-  if (s->type == TYPE_FLOAT || s->type == TYPE_DOUBLE) {
+  if (s->type == TYPE_F32 || s->type == TYPE_F64) {
     one = LLVMConstReal(ty, negate ? -1.0 : 1.0);
     new_val = LLVMBuildFAdd(cg->builder, old_val, one, "finc");
   } else {
@@ -178,7 +175,8 @@ static LLVMValueRef codegen_expression(Codegen *cg, AstNode *node) {
     StringView text = node->number.raw_text;
     int has_dot = 0;
     for (size_t i = 0; i < text.len; i++) {
-        if (text.data[i] == '.') has_dot = 1;
+      if (text.data[i] == '.')
+        has_dot = 1;
     }
 
     if (has_dot) {
@@ -264,7 +262,7 @@ static LLVMValueRef codegen_expression(Codegen *cg, AstNode *node) {
           cast_to_type(cg, right, LLVMDoubleTypeInContext(cg->context));
       LLVMValueRef args[] = {left_d, right_d};
       LLVMValueRef res = LLVMBuildCall2(cg->builder, cg->pow_func_type,
-                                         cg->pow_func, args, 2, "pow");
+                                        cg->pow_func, args, 2, "pow");
       return cast_to_type(cg, res, res_ty);
     }
     default:
@@ -345,7 +343,7 @@ static void codegen_statement(Codegen *cg, AstNode *node) {
 
   case NODE_PRINT_STMT: {
     LLVMValueRef value = codegen_expression(cg, node->print_stmt.value);
-    TypeKind t = TYPE_INT;
+    TypeKind t = TYPE_I32;
 
     if (node->print_stmt.value->tag == NODE_VAR) {
       CGSymbol *s =
@@ -355,9 +353,9 @@ static void codegen_statement(Codegen *cg, AstNode *node) {
     } else if (node->print_stmt.value->tag == NODE_NUMBER) {
       LLVMTypeRef ty = LLVMTypeOf(value);
       if (LLVMGetTypeKind(ty) == LLVMFloatTypeKind)
-        t = TYPE_FLOAT;
+        t = TYPE_F32;
       else if (LLVMGetTypeKind(ty) == LLVMDoubleTypeKind)
-        t = TYPE_DOUBLE;
+        t = TYPE_F64;
     } else if (node->print_stmt.value->tag == NODE_CHAR) {
       t = TYPE_CHAR;
     } else if (node->print_stmt.value->tag == NODE_STRING) {
@@ -369,14 +367,13 @@ static void codegen_statement(Codegen *cg, AstNode *node) {
     const char *fmt_str = "%d\n";
     if (t == TYPE_CHAR) {
       fmt_str = "%c\n";
-      value = LLVMBuildSExt(cg->builder, value, Codegen_type(cg, TYPE_INT),
+      value = LLVMBuildSExt(cg->builder, value, Codegen_type(cg, TYPE_I32),
                             "char_to_int");
     } else if (t == TYPE_STRING) {
       fmt_str = "%s\n";
-    } else if (t == TYPE_FLOAT || t == TYPE_DOUBLE || t == TYPE_F32 ||
-               t == TYPE_F64) {
+    } else if (t == TYPE_F32 || t == TYPE_F64) {
       fmt_str = "%f\n";
-      value = LLVMBuildFPCast(cg->builder, value, Codegen_type(cg, TYPE_DOUBLE),
+      value = LLVMBuildFPCast(cg->builder, value, Codegen_type(cg, TYPE_F64),
                               "fptofp");
     } else if (t == TYPE_U32 || t == TYPE_U64 || t == TYPE_U16 ||
                t == TYPE_U8) {

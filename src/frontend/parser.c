@@ -120,9 +120,7 @@ static BindingPower infix_binding_power(TokenType t) {
 }
 
 static int is_type_token(TokenType t) {
-  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_F64) ||
-         t == TOKEN_TYPE_UNSIGNED || t == TOKEN_TYPE_SIGNED ||
-         t == TOKEN_TYPE_LONG || t == TOKEN_TYPE_SHORT;
+  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_F64);
 }
 
 static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
@@ -269,90 +267,8 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
 }
 
 static TypeKind Parser_parse_type(Parser *p) {
-  int is_unsigned = 0;
-  int is_long = 0;
-  int is_short = 0;
-  int has_int = 0;
-
-  while (1) {
-    TokenType type = p->current_token.type;
-    if (type == TOKEN_TYPE_UNSIGNED) {
-      is_unsigned = 1;
-      Parser_token_advance(p);
-    } else if (type == TOKEN_TYPE_SIGNED) {
-      Parser_token_advance(p);
-    } else if (type == TOKEN_TYPE_LONG) {
-      is_long++;
-      Parser_token_advance(p);
-    } else if (type == TOKEN_TYPE_SHORT) {
-      is_short = 1;
-      Parser_token_advance(p);
-    } else if (type == TOKEN_TYPE_INT) {
-      has_int = 1;
-      Parser_token_advance(p);
-    } else {
-      break;
-    }
-  }
-
-  if (is_unsigned || is_long || is_short || has_int) {
-    if (is_long == 2)
-      return is_unsigned ? TYPE_U64 : TYPE_I64;
-    if (is_long == 1)
-      return is_unsigned ? TYPE_U64 : TYPE_I64; // long is usually 64 bit here
-    if (is_short)
-      return is_unsigned ? TYPE_U16 : TYPE_I16;
-    return is_unsigned ? TYPE_U32 : TYPE_I32;
-  }
-
   Token type_tok = p->current_token;
-  TypeKind kind = TYPE_UNKNOWN;
-  switch (type_tok.type) {
-  case TOKEN_TYPE_I8:
-    kind = TYPE_I8;
-    break;
-  case TOKEN_TYPE_I16:
-    kind = TYPE_I16;
-    break;
-  case TOKEN_TYPE_I32:
-    kind = TYPE_I32;
-    break;
-  case TOKEN_TYPE_I64:
-    kind = TYPE_I64;
-    break;
-  case TOKEN_TYPE_U8:
-    kind = TYPE_U8;
-    break;
-  case TOKEN_TYPE_U16:
-    kind = TYPE_U16;
-    break;
-  case TOKEN_TYPE_U32:
-    kind = TYPE_U32;
-    break;
-  case TOKEN_TYPE_U64:
-    kind = TYPE_U64;
-    break;
-  case TOKEN_TYPE_F32:
-    kind = TYPE_F32;
-    break;
-  case TOKEN_TYPE_F64:
-    kind = TYPE_F64;
-    break;
-  case TOKEN_TYPE_FLOAT:
-    kind = TYPE_FLOAT;
-    break;
-  case TOKEN_TYPE_DOUBLE:
-    kind = TYPE_DOUBLE;
-    break;
-  case TOKEN_TYPE_CHAR:
-    kind = TYPE_CHAR;
-    break;
-  case TOKEN_TYPE_STR:
-    kind = TYPE_STRING;
-    break;
-  default:
-    break;
-  }
+  TypeKind kind = Token_token_to_type(type_tok.type);
 
   if (kind != TYPE_UNKNOWN) {
     Parser_token_advance(p);

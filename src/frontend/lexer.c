@@ -63,8 +63,6 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_TYPE_STR;
   else if (sv_eq_cstr(text, "float"))
     t.type = TOKEN_TYPE_FLOAT;
-  else if (sv_eq_cstr(text, "double"))
-    t.type = TOKEN_TYPE_DOUBLE;
   else if (sv_eq_cstr(text, "i8"))
     t.type = TOKEN_TYPE_I8;
   else if (sv_eq_cstr(text, "i16"))
@@ -85,14 +83,6 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_TYPE_F32;
   else if (sv_eq_cstr(text, "f64"))
     t.type = TOKEN_TYPE_F64;
-  else if (sv_eq_cstr(text, "unsigned"))
-    t.type = TOKEN_TYPE_UNSIGNED;
-  else if (sv_eq_cstr(text, "signed"))
-    t.type = TOKEN_TYPE_SIGNED;
-  else if (sv_eq_cstr(text, "long"))
-    t.type = TOKEN_TYPE_LONG;
-  else if (sv_eq_cstr(text, "short"))
-    t.type = TOKEN_TYPE_SHORT;
   else
     t.type = TOKEN_IDENT;
 

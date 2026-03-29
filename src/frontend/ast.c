@@ -127,7 +127,6 @@ TypeKind Token_token_to_type(TokenType t) {
   case TOKEN_TYPE_FLOAT:
   case TOKEN_TYPE_F32:
     return TYPE_F32;
-  case TOKEN_TYPE_DOUBLE:
   case TOKEN_TYPE_F64:
     return TYPE_F64;
   case TOKEN_TYPE_CHAR:
