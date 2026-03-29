@@ -7,7 +7,7 @@ build: configure
     cmake --build build
 
 # run tyl (optionally pass args)
-run *args:
+run *args: build
     ./build/tyl {{args}}
 
 # run with a test file

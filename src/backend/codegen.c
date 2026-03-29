@@ -216,6 +216,17 @@ static LLVMValueRef codegen_expression(Codegen *cg, AstNode *node) {
       exit(1);
     }
   }
+  case NODE_ASSIGN: {
+    char *name = node->assign.target->ident.value;
+    CGSymbol *s = CGSymbolTable_find(&cg->symbols, name);
+    if (!s) {
+      fprintf(stderr, "Undefined variable '%s'\n", name);
+      exit(1);
+    }
+    LLVMValueRef value = codegen_expression(cg, node->assign.value);
+    LLVMBuildStore(cg->builder, value, s->value);
+    return value;
+  }
   default:
     fprintf(stderr, "Unhandled expression node %d\n", node->tag);
     exit(1);
@@ -292,6 +303,10 @@ static void codegen_statement(Codegen *cg, AstNode *node) {
 
   case NODE_PRINT:
     codegen_print(cg, node);
+    break;
+
+  case NODE_EXPR_STMT:
+    codegen_expression(cg, node->expr_stmt.expr);
     break;
 
   default:

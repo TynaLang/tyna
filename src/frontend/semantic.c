@@ -99,6 +99,29 @@ TypeKind analyze_expression(AstNode *node, SymbolTable *table) {
       exit(1);
     }
   }
+  case NODE_ASSIGN: {
+    if (node->assign.target->tag != NODE_IDENT) {
+      fprintf(stderr, "Assignment target must be an identifier\n");
+      exit(1);
+    }
+    
+    char *name = node->assign.target->ident.value;
+    Symbol *target_sym = SymbolTable_find(table, name);
+    if (!target_sym) {
+      fprintf(stderr, "Assignment to undefined variable '%s'\n", name);
+      exit(1);
+    }
+
+    TypeKind value_type = analyze_expression(node->assign.value, table);
+
+    if (value_type != target_sym->type) {
+      fprintf(stderr, "Type mismatch in assignment to '%s': expected %s, got %s\n",
+              name, type_to_name(target_sym->type), type_to_name(value_type));
+      exit(1);
+    }
+
+    return target_sym->type;
+  }
   default:
     fprintf(stderr, "Unhandalable expression %s", node->ident.value);
     exit(1);
@@ -134,6 +157,11 @@ void analyze_statement(AstNode *node, SymbolTable *table) {
 
   case NODE_PRINT: {
     analyze_expression(node->print.value, table);
+    break;
+  }
+
+  case NODE_EXPR_STMT: {
+    analyze_expression(node->expr_stmt.expr, table);
     break;
   }
 

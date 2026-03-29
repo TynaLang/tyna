@@ -4,22 +4,22 @@
 #include <stdio.h>
 #include <unistd.h>
 
-static Token *Parser_token_advance(Parser *parser) {
-  Token *prev_token = &parser->current_token;
+static Token *Parser_token_advance(Parser *p) {
+  Token *prev_token = &p->current_token;
   printf("Consumed token: \'%s\'\n", prev_token->text);
-  parser->current_token = Token_advance(parser->lexer);
+  p->current_token = Token_advance(p->lexer);
   return prev_token;
 }
 
-static Token Parser_expect(Parser *parser, TokenType type, const char *msg) {
-  Token t = parser->current_token;
+static Token Parser_expect(Parser *p, TokenType type, const char *msg) {
+  Token t = p->current_token;
 
   if (t.type != type) {
     fprintf(stderr, "%s at line %zu col %zu\n", msg, t.line, t.col);
     exit(1); // for now, hard fail is fine
   }
 
-  Parser_token_advance(parser);
+  Parser_token_advance(p);
   return t;
 }
 
@@ -43,6 +43,7 @@ static BinaryOp token_to_op(TokenType type) {
 
 static int is_binary_operator(TokenType t) {
   switch (t) {
+  case TOKEN_ASSIGN:
   case TOKEN_PLUS:
   case TOKEN_MINUS:
   case TOKEN_STAR:
@@ -54,80 +55,13 @@ static int is_binary_operator(TokenType t) {
   }
 }
 
-static AstNode *AstNode_new(AstKind ast_kind) {
-  AstNode *node = malloc(sizeof(AstNode));
-  if (!node) {
-    fprintf(stderr, "Failed to allocate AST node\n");
-    exit(1);
-  }
-  node->tag = ast_kind;
-  return node;
-}
-
-static AstNode *AstNode_new_program() {
-  AstNode *node = AstNode_new(NODE_PROGRAM);
-  List_init(&node->program.children);
-  return node;
-}
-
-static AstNode *AstNode_new_let(AstNode *name, AstNode *value, TypeKind type) {
-  AstNode *node = AstNode_new(NODE_LET);
-  node->let.name = name;
-  node->let.value = value;
-  node->let.declared_type = type;
-  return node;
-}
-
-static AstNode *AstNode_new_print(AstNode *value) {
-  AstNode *node = AstNode_new(NODE_PRINT);
-  node->print.value = value;
-  return node;
-}
-
-static AstNode *AstNode_new_number(double value) {
-  AstNode *node = AstNode_new(NODE_NUMBER);
-  node->number.value = value;
-  return node;
-}
-
-static AstNode *AstNode_new_char(char value) {
-  AstNode *node = AstNode_new(NODE_CHAR);
-  node->char_lit.value = value;
-  return node;
-}
-
-static AstNode *AstNode_new_string(char *value) {
-  AstNode *node = AstNode_new(NODE_STRING);
-  node->string.value = value;
-  return node;
-}
-
-static AstNode *AstNode_new_ident(char *value) {
-  AstNode *node = AstNode_new(NODE_IDENT);
-  node->ident.value = value;
-  return node;
-}
-
-static AstNode *AstNode_new_binary(AstNode *left, AstNode *right, BinaryOp op) {
-  AstNode *node = AstNode_new(NODE_BINARY);
-  node->binary.left = left;
-  node->binary.right = right;
-  node->binary.op = op;
-  return node;
-}
-
-static AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr) {
-  AstNode *node = AstNode_new(NODE_UNARY);
-  node->unary.expr = expr;
-  node->unary.op = op;
-  return node;
-}
-
 // ---------- PARSER BODY ------------ //
 static AstNode *Parser_parse_expression(Parser *p, int min_bp);
 
 static BindingPower infix_binding_power(TokenType t) {
   switch (t) {
+  case TOKEN_ASSIGN:
+    return (BindingPower){2, 1};
   case TOKEN_PLUS:
   case TOKEN_MINUS:
     return (BindingPower){10, 11};
@@ -245,7 +179,15 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
 
     AstNode *right = Parser_parse_expression(p, bp.right_bp);
 
-    left = AstNode_new_binary(left, right, token_to_op(op.type));
+    if (op.type == TOKEN_ASSIGN) {
+      if (left->tag != NODE_IDENT) {
+        fprintf(stderr, "Invalid assignment target\n");
+        exit(1);
+      }
+      left = AstNode_new_assign(left, right);
+    } else {
+      left = AstNode_new_binary(left, right, token_to_op(op.type));
+    }
   }
 
   return left;
@@ -309,108 +251,44 @@ static AstNode *Parser_build_print_statement(Parser *p) {
   return AstNode_new_print(value);
 }
 
-static AstNode *Parser_parse_statement(Parser *parser) {
-  while (parser->current_token.type == TOKEN_SEMI) {
-    Parser_token_advance(parser);
+static AstNode *Parser_parse_statement(Parser *p) {
+  while (p->current_token.type == TOKEN_SEMI) {
+    Parser_token_advance(p);
   }
 
-  Token current_token = parser->current_token;
+  Token current_token = p->current_token;
 
   switch (current_token.type) {
   case TOKEN_LET:
-    return Parser_build_let_statement(parser);
+    return Parser_build_let_statement(p);
   case TOKEN_PRINT:
-    return Parser_build_print_statement(parser);
-  default:
-    fprintf(stderr, "Unexpected token %d at line %zu col %zu\n",
-            current_token.type, current_token.line, current_token.col);
-    return NULL;
+    return Parser_build_print_statement(p);
+  default: {
+    AstNode *expr = Parser_parse_expression(p, 0);
+    Parser_expect(p, TOKEN_SEMI, "Expected ';' after expression");
+    return AstNode_new_expr_stmt(expr);
+  }
   }
 }
 
 // ---------- PARSER BODY ------------ //
 
-AstNode *Parser_process(Lexer *lexer) {
-  Parser parser;
-  parser.lexer = lexer;
-  parser.current_token = Token_advance(lexer);
+AstNode *Parser_process(Lexer *l) {
+  Parser p;
+  p.lexer = l;
+  p.current_token = Token_advance(l);
 
   AstNode *program = AstNode_new_program();
 
-  while (parser.current_token.type != TOKEN_EOF) {
-    AstNode *node = Parser_parse_statement(&parser);
+  while (p.current_token.type != TOKEN_EOF) {
+    AstNode *node = Parser_parse_statement(&p);
     if (!node) {
-      fprintf(stderr, "Parse error at line %zu col %zu\n",
-              parser.current_token.line, parser.current_token.col);
+      fprintf(stderr, "Parse error at line %zu col %zu\n", p.current_token.line,
+              p.current_token.col);
       break;
     }
     List_push(&program->program.children, node);
   }
 
   return program;
-}
-
-static void print_indent(int indent) {
-  for (int i = 0; i < indent; i++) {
-    printf("  ");
-  }
-}
-void Ast_print(AstNode *node, int indent) {
-  if (!node)
-    return;
-
-  print_indent(indent);
-
-  switch (node->tag) {
-  case NODE_PROGRAM:
-    printf("PROGRAM\n");
-    for (size_t i = 0; i < node->program.children.len; i++) {
-      AstNode *child = node->program.children.items[i];
-      Ast_print(child, indent + 1);
-    }
-    break;
-  case NODE_LET:
-    printf("LET %s : %d\n", node->let.name->ident.value,
-           node->let.declared_type);
-    print_indent(indent + 1);
-    printf("VALUE:\n");
-    Ast_print(node->let.value, indent + 2);
-    break;
-  case NODE_PRINT:
-    printf("PRINT\n");
-    print_indent(indent + 1);
-    printf("VALUE:\n");
-    Ast_print(node->print.value, indent + 2);
-    break;
-  case NODE_NUMBER:
-    printf("NUMBER: %f\n", node->number.value);
-    break;
-  case NODE_CHAR:
-    printf("CHAR: %c\n", node->char_lit.value);
-    break;
-  case NODE_STRING:
-    printf("STRING: %s\n", node->string.value);
-    break;
-  case NODE_IDENT:
-    printf("IDENT: %s\n", node->ident.value);
-    break;
-  case NODE_BINARY:
-    printf("BINARY OP: %d\n", node->binary.op);
-    print_indent(indent + 1);
-    printf("LEFT:\n");
-    Ast_print(node->binary.left, indent + 2);
-    print_indent(indent + 1);
-    printf("RIGHT:\n");
-    Ast_print(node->binary.right, indent + 2);
-    break;
-  case NODE_UNARY:
-    printf("UNARY OP: %d\n", node->unary.op);
-    print_indent(indent + 1);
-    printf("EXPR:\n");
-    Ast_print(node->unary.expr, indent + 2);
-    break;
-  default:
-    printf("UNKNOWN NODE\n");
-    break;
-  }
 }
