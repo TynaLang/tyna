@@ -2,85 +2,95 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static AstNode *AstNode_new(AstKind ast_kind) {
+static AstNode *AstNode_new(AstKind ast_kind, Location loc) {
   AstNode *node = malloc(sizeof(AstNode));
   if (!node) {
     fprintf(stderr, "Failed to allocate AST node\n");
     exit(1);
   }
   node->tag = ast_kind;
+  node->loc = loc;
   return node;
 }
 
-AstNode *AstNode_new_program(void) {
-  AstNode *node = AstNode_new(NODE_PROGRAM);
+AstNode *AstNode_new_program(Location loc) {
+  AstNode *node = AstNode_new(NODE_PROGRAM, loc);
   List_init(&node->program.children);
   return node;
 }
 
-AstNode *AstNode_new_let(AstNode *name, AstNode *value, TypeKind type) {
-  AstNode *node = AstNode_new(NODE_LET);
+AstNode *AstNode_new_let(AstNode *name, AstNode *value, TypeKind type,
+                         Location loc) {
+  AstNode *node = AstNode_new(NODE_LET, loc);
   node->let.name = name;
   node->let.value = value;
   node->let.declared_type = type;
   return node;
 }
 
-AstNode *AstNode_new_print(AstNode *value) {
-  AstNode *node = AstNode_new(NODE_PRINT);
+AstNode *AstNode_new_print(AstNode *value, Location loc) {
+  AstNode *node = AstNode_new(NODE_PRINT, loc);
   node->print.value = value;
   return node;
 }
 
-AstNode *AstNode_new_number(double value) {
-  AstNode *node = AstNode_new(NODE_NUMBER);
+AstNode *AstNode_new_number(double value, Location loc) {
+  AstNode *node = AstNode_new(NODE_NUMBER, loc);
   node->number.value = value;
   return node;
 }
 
-AstNode *AstNode_new_char(char value) {
-  AstNode *node = AstNode_new(NODE_CHAR);
+AstNode *AstNode_new_char(char value, Location loc) {
+  AstNode *node = AstNode_new(NODE_CHAR, loc);
   node->char_lit.value = value;
   return node;
 }
 
-AstNode *AstNode_new_string(char *value) {
-  AstNode *node = AstNode_new(NODE_STRING);
+AstNode *AstNode_new_string(char *value, Location loc) {
+  AstNode *node = AstNode_new(NODE_STRING, loc);
   node->string.value = value;
   return node;
 }
 
-AstNode *AstNode_new_ident(char *value) {
-  AstNode *node = AstNode_new(NODE_IDENT);
+AstNode *AstNode_new_ident(char *value, Location loc) {
+  AstNode *node = AstNode_new(NODE_IDENT, loc);
   node->ident.value = value;
   return node;
 }
 
-AstNode *AstNode_new_binary(AstNode *left, AstNode *right, BinaryOp op) {
-  AstNode *node = AstNode_new(NODE_BINARY);
+AstNode *AstNode_new_binary(AstNode *left, AstNode *right, BinaryOp op,
+                            Location loc) {
+  AstNode *node = AstNode_new(NODE_BINARY, loc);
   node->binary.left = left;
   node->binary.right = right;
   node->binary.op = op;
   return node;
 }
 
-AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr) {
-  AstNode *node = AstNode_new(NODE_UNARY);
+AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc) {
+  AstNode *node = AstNode_new(NODE_UNARY, loc);
   node->unary.expr = expr;
   node->unary.op = op;
   return node;
 }
 
-AstNode *AstNode_new_assign(AstNode *target, AstNode *value) {
-  AstNode *node = AstNode_new(NODE_ASSIGN);
+AstNode *AstNode_new_assign(AstNode *target, AstNode *value, Location loc) {
+  AstNode *node = AstNode_new(NODE_ASSIGN, loc);
   node->assign.target = target;
   node->assign.value = value;
   return node;
 }
 
-AstNode *AstNode_new_expr_stmt(AstNode *expr) {
-  AstNode *node = AstNode_new(NODE_EXPR_STMT);
+AstNode *AstNode_new_expr_stmt(AstNode *expr, Location loc) {
+  AstNode *node = AstNode_new(NODE_EXPR_STMT, loc);
   node->expr_stmt.expr = expr;
+  return node;
+}
+
+AstNode *AstNode_new_call(AstNode *func, AstNode *arg, Location loc) {
+  AstNode *node = AstNode_new(NODE_CALL, loc);
+  node->call.func = func;
+  node->call.arg = arg;
   return node;
 }
 
@@ -143,6 +153,15 @@ void Ast_print(AstNode *node, int indent) {
     print_indent(indent + 1);
     printf("EXPR:\n");
     Ast_print(node->unary.expr, indent + 2);
+    break;
+  case NODE_CALL:
+    printf("CALL:\n");
+    print_indent(indent + 1);
+    printf("FUNC:\n");
+    Ast_print(node->call.func, indent + 2);
+    print_indent(indent + 1);
+    printf("ARG:\n");
+    Ast_print(node->call.arg, indent + 2);
     break;
   case NODE_EXPR_STMT:
     printf("EXPR_STMT\n");

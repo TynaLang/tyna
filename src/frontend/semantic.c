@@ -17,7 +17,11 @@ char *type_to_name(TypeKind type) {
   }
 }
 
-void SymbolTable_init(SymbolTable *table) { List_init(&table->symbols); }
+void SymbolTable_init(SymbolTable *table, struct ErrorHandler *eh) {
+  table->eh = eh;
+  List_init(&table->symbols);
+}
+
 void SymbolTable_add(SymbolTable *table, char *name, TypeKind type) {
   Symbol *s = malloc(sizeof(Symbol));
   s->type = type;
@@ -104,7 +108,7 @@ TypeKind analyze_expression(AstNode *node, SymbolTable *table) {
       fprintf(stderr, "Assignment target must be an identifier\n");
       exit(1);
     }
-    
+
     char *name = node->assign.target->ident.value;
     Symbol *target_sym = SymbolTable_find(table, name);
     if (!target_sym) {
@@ -115,7 +119,8 @@ TypeKind analyze_expression(AstNode *node, SymbolTable *table) {
     TypeKind value_type = analyze_expression(node->assign.value, table);
 
     if (value_type != target_sym->type) {
-      fprintf(stderr, "Type mismatch in assignment to '%s': expected %s, got %s\n",
+      fprintf(stderr,
+              "Type mismatch in assignment to '%s': expected %s, got %s\n",
               name, type_to_name(target_sym->type), type_to_name(value_type));
       exit(1);
     }

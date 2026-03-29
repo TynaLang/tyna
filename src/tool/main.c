@@ -70,14 +70,26 @@ int main(int argc, char **argv) {
   }
 
   // Frontend
-  Lexer lexer = make_lexer(src);
-  AstNode *program = Parser_process(&lexer);
+  ErrorHandler eh;
+  ErrorHandler_init(&eh, src);
+  Lexer lexer = make_lexer(src, &eh);
+  AstNode *program = Parser_process(&lexer, &eh);
 
   // Ast_print(program, 2);
+  // if (eh.has_errors) {
+  //   ErrorHandler_show_all(&eh);
+  //   return 1;
+  // }
+  // return 0;
 
   SymbolTable table;
-  SymbolTable_init(&table);
+  SymbolTable_init(&table, &eh);
   analyze_program(program, &table);
+
+  if (eh.has_errors) {
+    ErrorHandler_show_all(&eh);
+    return 1;
+  }
 
   // Backend
   Codegen *cg = Codegen_new("tyl_module");

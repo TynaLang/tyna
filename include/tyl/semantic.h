@@ -1,6 +1,7 @@
 #ifndef SEMANTIC_H
 #define SEMANTIC_H
 
+#include "errors.h"
 #include "parser.h"
 #include "utils.h"
 
@@ -11,9 +12,10 @@ typedef struct {
 
 typedef struct {
   List symbols; // List<Symbol*>
+  ErrorHandler *eh;
 } SymbolTable;
 
-void SymbolTable_init(SymbolTable *table);
+void SymbolTable_init(SymbolTable *table, ErrorHandler *eh);
 void SymbolTable_add(SymbolTable *table, char *name, TypeKind type);
 Symbol *SymbolTable_find(SymbolTable *table, char *name);
 

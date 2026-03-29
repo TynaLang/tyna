@@ -13,12 +13,13 @@ static char *copy_slice(const char *str, size_t start, size_t end) {
   return out;
 }
 
-Lexer make_lexer(const char *src) {
+Lexer make_lexer(const char *src, struct ErrorHandler *eh) {
   Lexer l;
   l.cursor = 0;
-  l.col = 1;
-  l.line = 1;
+  l.loc.line = 1;
+  l.loc.col = 1;
   l.src = src;
+  l.eh = eh;
 
   return l;
 }
@@ -29,10 +30,10 @@ char Lexer_advance(Lexer *l) {
   l->cursor++;
 
   if (c == '\n') {
-    l->line++;
-    l->col = 1;
+    l->loc.line++;
+    l->loc.col = 1;
   } else {
-    l->col++;
+    l->loc.col++;
   }
 
   return c;
@@ -52,8 +53,7 @@ static Token read_identifier(Lexer *l) {
 
   Token t;
   t.text = text;
-  t.line = l->line;
-  t.col = l->col;
+  t.loc = l->loc;
 
   if (strcmp(text, "let") == 0)
     t.type = TOKEN_LET;
@@ -82,8 +82,7 @@ static Token read_number(Lexer *l) {
   t.text = text;
   t.number = strtod(text, NULL);
   t.type = TOKEN_NUMBER;
-  t.line = l->line;
-  t.col = l->col;
+  t.loc = l->loc;
   return t;
 }
 
@@ -104,8 +103,7 @@ static Token read_string(Lexer *l) {
   }
 
   Token t;
-  t.line = l->line;
-  t.col = l->col;
+  t.loc = l->loc;
 
   if (Lexer_peek(l) != '"') {
     t.type = TOKEN_ERROR;
@@ -135,8 +133,7 @@ static Token read_char(Lexer *l) {
   }
 
   Token t;
-  t.line = l->line;
-  t.col = l->col;
+  t.loc = l->loc;
 
   if (Lexer_peek(l) != '\'' || len != 1) {
     t.type = TOKEN_ERROR;
@@ -158,8 +155,7 @@ Token Token_advance(Lexer *l) {
   skip_whitespace(l);
 
   Token t;
-  t.line = l->line;
-  t.col = l->col;
+  t.loc = l->loc;
 
   char c = Lexer_peek(l);
   if (c == '\0') {
@@ -229,7 +225,8 @@ Token Token_advance(Lexer *l) {
     t.type = TOKEN_POWER;
     break;
   default:
-    t.type = TOKEN_UNKNOWN;
+    t.type = TOKEN_ERROR;
+    t.text = "unknown character";
     break;
   }
   return t;

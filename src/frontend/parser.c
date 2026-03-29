@@ -6,21 +6,42 @@
 
 static Token *Parser_token_advance(Parser *p) {
   Token *prev_token = &p->current_token;
-  printf("Consumed token: \'%s\'\n", prev_token->text);
   p->current_token = Token_advance(p->lexer);
   return prev_token;
 }
 
-static Token Parser_expect(Parser *p, TokenType type, const char *msg) {
-  Token t = p->current_token;
-
-  if (t.type != type) {
-    fprintf(stderr, "%s at line %zu col %zu\n", msg, t.line, t.col);
-    exit(1); // for now, hard fail is fine
+static int Parser_expect(Parser *p, TokenType type, const char *msg) {
+  if (p->current_token.type != type) {
+    ErrorHandler_report(p->eh, p->current_token.loc, "%s", msg);
+    return 0;
   }
 
   Parser_token_advance(p);
-  return t;
+  return 1;
+}
+
+static int Parser_check(AstNode *p, TokenType type) {
+  if (!p)
+    return 0;
+  if (p->tag == type)
+    return 1;
+}
+
+static void Parser_sync(Parser *p) {
+  while (p->current_token.type != TOKEN_EOF) {
+    if (p->current_token.type == TOKEN_SEMI) {
+      Parser_token_advance(p);
+      return;
+    }
+
+    switch (p->current_token.type) {
+    case TOKEN_LET:
+    case TOKEN_PRINT:
+      return; // start of new statement
+    default:
+      Parser_token_advance(p);
+    }
+  }
 }
 
 static BinaryOp token_to_op(TokenType type) {
@@ -80,95 +101,98 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
   Token t = p->current_token;
   Parser_token_advance(p);
 
-  printf("Progressing to token: \'%s\'\n", t.text);
-  AstNode *left;
+  AstNode *left = NULL;
 
   switch (t.type) {
   case TOKEN_NUMBER:
-    left = AstNode_new_number(t.number);
+    left = AstNode_new_number(t.number, t.loc);
     break;
 
   case TOKEN_IDENT:
-    left = AstNode_new_ident(t.text);
+    left = AstNode_new_ident(t.text, t.loc);
     break;
 
   case TOKEN_CHAR:
-    left = AstNode_new_char(t.text[0]);
+    left = AstNode_new_char(t.text[0], t.loc);
     break;
 
   case TOKEN_STRING:
-    left = AstNode_new_string(t.text);
+    left = AstNode_new_string(t.text, t.loc);
     break;
+
+  case TOKEN_ERROR:
+    ErrorHandler_report(p->eh, t.loc, "%s", t.text);
+    return NULL;
 
   case TOKEN_LPAREN: {
     left = Parser_parse_expression(p, 0);
-    Parser_expect(p, TOKEN_RPAREN, "Expected ')'");
+
+    if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')'"))
+      return NULL;
+
     break;
   }
+
   case TOKEN_MINUS: {
     AstNode *expr = Parser_parse_expression(p, 100);
-    left = AstNode_new_unary(OP_NEG, expr);
+    if (!expr)
+      return NULL;
+
+    left = AstNode_new_unary(OP_NEG, expr, t.loc);
     break;
   }
-  case TOKEN_PLUS_PLUS: {
-    AstNode *expr = Parser_parse_expression(p, 100);
 
-    if (expr->tag != NODE_IDENT) {
-      fprintf(stderr, "++ requires an identifier\n");
-      exit(1);
-    }
-
-    left = AstNode_new_unary(OP_PRE_INC, expr);
-    break;
-  }
+  case TOKEN_PLUS_PLUS:
   case TOKEN_MINUS_MINUS: {
     AstNode *expr = Parser_parse_expression(p, 100);
+    if (!expr)
+      return NULL;
 
-    if (expr->tag != NODE_IDENT) {
-      fprintf(stderr, "-- requires an identifier\n");
-      exit(1);
+    const char *op_str = (t.type == TOKEN_PLUS_PLUS) ? "++" : "--";
+    UnaryOp op = (t.type == TOKEN_PLUS_PLUS) ? OP_PRE_INC : OP_PRE_DEC;
+
+    if (!Parser_check(expr, NODE_IDENT)) {
+      ErrorHandler_report(p->eh, t.loc, "Operator '%s' requires an identifier",
+                          op_str);
+      return NULL;
     }
 
-    left = AstNode_new_unary(OP_PRE_DEC, expr);
+    left = AstNode_new_unary(op, expr, t.loc);
     break;
   }
+
   default:
-    fprintf(stderr,
-            "Unexpected token in expression got %d at line  %zu col %zu\n",
-            t.type, t.line, t.col);
-    exit(1);
+    ErrorHandler_report(p->eh, t.loc, "Unexpected token in expression");
+    return NULL;
   }
 
   while (1) {
     Token op = p->current_token;
 
-    if (op.type == TOKEN_PLUS_PLUS) {
+    if (op.type == TOKEN_PLUS_PLUS || op.type == TOKEN_MINUS_MINUS) {
+      int POSTFIX_BP = 100;
+
+      if (POSTFIX_BP < min_bp)
+        break;
+
       Parser_token_advance(p);
 
-      if (left->tag != NODE_IDENT) {
-        fprintf(stderr, "postfix ++ requires identifier\n");
-        exit(1);
+      const char *op_str = (op.type == TOKEN_PLUS_PLUS) ? "++" : "--";
+      UnaryOp unary_op =
+          (op.type == TOKEN_PLUS_PLUS) ? OP_POST_INC : OP_POST_DEC;
+
+      if (!Parser_check(left, NODE_IDENT)) {
+        ErrorHandler_report(p->eh, op.loc,
+                            "Operator '%s' requires an identifier", op_str);
+        return NULL;
       }
 
-      left = AstNode_new_unary(OP_POST_INC, left);
+      left = AstNode_new_unary(unary_op, left, op.loc);
       continue;
     }
 
-    if (op.type == TOKEN_MINUS_MINUS) {
-      Parser_token_advance(p);
-
-      if (left->tag != NODE_IDENT) {
-        fprintf(stderr, "postfix -- requires identifier\n");
-        exit(1);
-      }
-
-      left = AstNode_new_unary(OP_POST_DEC, left);
-      continue;
-    }
-
-    if (!is_binary_operator(op.type)) {
+    if (!is_binary_operator(op.type))
       break;
-    }
 
     BindingPower bp = infix_binding_power(op.type);
 
@@ -178,15 +202,29 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     Parser_token_advance(p);
 
     AstNode *right = Parser_parse_expression(p, bp.right_bp);
+    if (!right)
+      return NULL;
 
     if (op.type == TOKEN_ASSIGN) {
-      if (left->tag != NODE_IDENT) {
-        fprintf(stderr, "Invalid assignment target\n");
-        exit(1);
+
+      if (!Parser_check(left, NODE_IDENT)) {
+        printf("Left-hand side of assignment must be an identifier, got %d ",
+               left->tag);
+        ErrorHandler_report(p->eh, op.loc, "Invalid assignment target");
+        return NULL;
       }
-      left = AstNode_new_assign(left, right);
-    } else {
-      left = AstNode_new_binary(left, right, token_to_op(op.type));
+
+      if (Parser_check(right, NODE_ASSIGN)) {
+        ErrorHandler_report(p->eh, op.loc,
+                            "Chained assignment is not supported");
+        return NULL;
+      }
+
+      left = AstNode_new_assign(left, right, op.loc);
+    }
+
+    else {
+      left = AstNode_new_binary(left, right, token_to_op(op.type), op.loc);
     }
   }
 
@@ -194,16 +232,17 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
 }
 
 static AstNode *Parser_build_let_statement(Parser *p) {
-  printf("building let statement\n");
-  Parser_expect(p, TOKEN_LET, "Expected 'let'");
+  if (!Parser_expect(p, TOKEN_LET, "Expected 'let'"))
+    return NULL;
 
-  Token ident =
-      Parser_expect(p, TOKEN_IDENT, "Expected identifier after 'let'");
-  AstNode *name = AstNode_new_ident(ident.text);
+  Token ident = p->current_token;
+  if (!Parser_expect(p, TOKEN_IDENT, "Expected identifier after 'let'"))
+    return NULL;
 
-  Parser_expect(p, TOKEN_COLON, "Expected ':' after identifier");
+  AstNode *name = AstNode_new_ident(ident.text, ident.loc);
 
-  printf("building let expression\n");
+  if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after identifier"))
+    return NULL;
 
   Token type_tok = p->current_token;
   TypeKind declared_type = TYPE_UNKNOWN;
@@ -219,73 +258,91 @@ static AstNode *Parser_build_let_statement(Parser *p) {
     declared_type = TYPE_STRING;
     break;
   default:
-    fprintf(stderr, "Expected type after ':' at line %zu col %zu\n",
-            type_tok.line, type_tok.col);
-    exit(1);
+    ErrorHandler_report(p->eh, type_tok.loc, "Expected type after ':'");
+    return NULL;
   }
 
   Parser_token_advance(p);
 
-  Parser_expect(p, TOKEN_ASSIGN, "Expected '=' after type");
+  if (!Parser_expect(p, TOKEN_ASSIGN, "Expected '=' after type"))
+    return NULL;
 
   AstNode *value = Parser_parse_expression(p, 0);
   if (!value)
     return NULL;
 
-  Parser_expect(p, TOKEN_SEMI, "Expected ';' after value");
+  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
+    return NULL;
 
-  return AstNode_new_let(name, value, declared_type);
+  return AstNode_new_let(name, value, declared_type, ident.loc);
 }
 
 static AstNode *Parser_build_print_statement(Parser *p) {
-  Parser_expect(p, TOKEN_PRINT, "Expected 'print'");
-  Parser_expect(p, TOKEN_LPAREN, "Expected '(' after print");
+  if (!Parser_expect(p, TOKEN_PRINT, "Expected 'print'"))
+    return NULL;
+  if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after print"))
+    return NULL;
 
   AstNode *value = Parser_parse_expression(p, 0);
   if (!value)
     return NULL;
 
-  Parser_expect(p, TOKEN_RPAREN, "Expected ')' after value");
-  Parser_expect(p, TOKEN_SEMI, "Expected ';' after value");
+  if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after value"))
+    return NULL;
+  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
+    return NULL;
 
-  return AstNode_new_print(value);
+  return AstNode_new_print(value, p->current_token.loc);
 }
 
 static AstNode *Parser_parse_statement(Parser *p) {
-  while (p->current_token.type == TOKEN_SEMI) {
-    Parser_token_advance(p);
-  }
+  AstNode *node = NULL;
 
-  Token current_token = p->current_token;
-
-  switch (current_token.type) {
+  switch (p->current_token.type) {
   case TOKEN_LET:
-    return Parser_build_let_statement(p);
+    node = Parser_build_let_statement(p);
+    break;
+
   case TOKEN_PRINT:
-    return Parser_build_print_statement(p);
+    node = Parser_build_print_statement(p);
+    break;
+
+  case TOKEN_EOF:
+    return NULL;
+
   default: {
     AstNode *expr = Parser_parse_expression(p, 0);
-    Parser_expect(p, TOKEN_SEMI, "Expected ';' after expression");
-    return AstNode_new_expr_stmt(expr);
+
+    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after expression")) {
+      Parser_sync(p);
+      return NULL;
+    }
+
+    node = AstNode_new_expr_stmt(expr, p->current_token.loc);
   }
   }
+
+  if (!node) {
+    Parser_sync(p);
+  }
+
+  return node;
 }
 
 // ---------- PARSER BODY ------------ //
 
-AstNode *Parser_process(Lexer *l) {
+AstNode *Parser_process(Lexer *l, ErrorHandler *eh) {
   Parser p;
   p.lexer = l;
   p.current_token = Token_advance(l);
+  p.eh = eh;
 
-  AstNode *program = AstNode_new_program();
+  AstNode *program = AstNode_new_program(p.current_token.loc);
 
   while (p.current_token.type != TOKEN_EOF) {
     AstNode *node = Parser_parse_statement(&p);
     if (!node) {
-      fprintf(stderr, "Parse error at line %zu col %zu\n", p.current_token.line,
-              p.current_token.col);
-      break;
+      continue;
     }
     List_push(&program->program.children, node);
   }

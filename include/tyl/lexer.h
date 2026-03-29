@@ -3,9 +3,18 @@
 
 #include <stddef.h>
 
+struct ErrorHandler;
+
+typedef struct Location {
+  size_t line;
+  size_t col;
+} Location;
+
 typedef struct Lexer {
-  size_t cursor, line, col;
+  size_t cursor;
+  Location loc;
   const char *src;
+  struct ErrorHandler *eh;
 } Lexer;
 
 typedef enum TokenType {
@@ -49,11 +58,10 @@ typedef struct Token {
   TokenType type;
   char *text;
   double number;
-  size_t line;
-  size_t col;
+  Location loc;
 } Token;
 
-Lexer make_lexer(const char *src);
+Lexer make_lexer(const char *src, struct ErrorHandler *eh);
 
 char Lexer_peek(const Lexer *l);
 char Lexer_advance(Lexer *l);
