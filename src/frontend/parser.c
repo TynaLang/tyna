@@ -322,21 +322,36 @@ static AstNode *Parser_build_var_decl_statement(Parser *p) {
 }
 
 static AstNode *Parser_build_print_stmt_statement(Parser *p) {
-  if (!Parser_expect(p, TOKEN_PRINT, "Expected 'print'"))
-    return NULL;
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'print'
+
   if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after print"))
     return NULL;
 
-  AstNode *value = Parser_parse_expression(p, 0);
-  if (!value)
-    return NULL;
+  List values;
+  List_init(&values);
+
+  if (p->current_token.type != TOKEN_RPAREN) {
+    while (1) {
+      AstNode *value = Parser_parse_expression(p, 0);
+      if (!value)
+        return NULL;
+      List_push(&values, value);
+
+      if (p->current_token.type == TOKEN_COMMA) {
+        Parser_token_advance(p);
+      } else {
+        break;
+      }
+    }
+  }
 
   if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after value"))
     return NULL;
-  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
+  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after statement"))
     return NULL;
 
-  return AstNode_new_print_stmt(value, p->current_token.loc);
+  return AstNode_new_print_stmt(values, loc);
 }
 
 static AstNode *Parser_parse_statement(Parser *p) {

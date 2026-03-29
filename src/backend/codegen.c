@@ -109,7 +109,7 @@ LLVMTypeRef Codegen_type(Codegen *cg, TypeKind t) {
   case TYPE_STRING:
     return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
   default:
-    fprintf(stderr, "Unknown type\n");
+    fprintf(stderr, "Unknown type for %d\n", t);
     exit(1);
   }
 }
@@ -342,52 +342,61 @@ static void codegen_statement(Codegen *cg, AstNode *node) {
   }
 
   case NODE_PRINT_STMT: {
-    LLVMValueRef value = codegen_expression(cg, node->print_stmt.value);
-    TypeKind t = TYPE_I32;
+    for (size_t i = 0; i < node->print_stmt.values.len; i++) {
+      AstNode *val_node = node->print_stmt.values.items[i];
+      LLVMValueRef value = codegen_expression(cg, val_node);
 
-    if (node->print_stmt.value->tag == NODE_VAR) {
-      CGSymbol *s =
-          CGSymbolTable_find(&cg->symbols, node->print_stmt.value->var.value);
-      if (s)
-        t = s->type;
-    } else if (node->print_stmt.value->tag == NODE_NUMBER) {
-      LLVMTypeRef ty = LLVMTypeOf(value);
-      if (LLVMGetTypeKind(ty) == LLVMFloatTypeKind)
-        t = TYPE_F32;
-      else if (LLVMGetTypeKind(ty) == LLVMDoubleTypeKind)
-        t = TYPE_F64;
-    } else if (node->print_stmt.value->tag == NODE_CHAR) {
-      t = TYPE_CHAR;
-    } else if (node->print_stmt.value->tag == NODE_STRING) {
-      t = TYPE_STRING;
-    } else if (node->print_stmt.value->tag == NODE_CAST_EXPR) {
-      t = node->print_stmt.value->cast_expr.target_type;
+      // Determine type for format string
+      TypeKind t = TYPE_I32;
+      if (val_node->tag == NODE_VAR) {
+        CGSymbol *s = CGSymbolTable_find(&cg->symbols, val_node->var.value);
+        if (s)
+          t = s->type;
+      } else if (val_node->tag == NODE_NUMBER) {
+        LLVMTypeRef ty = LLVMTypeOf(value);
+        if (LLVMGetTypeKind(ty) == LLVMFloatTypeKind)
+          t = TYPE_F32;
+        else if (LLVMGetTypeKind(ty) == LLVMDoubleTypeKind)
+          t = TYPE_F64;
+      } else if (val_node->tag == NODE_CHAR) {
+        t = TYPE_CHAR;
+      } else if (val_node->tag == NODE_STRING) {
+        t = TYPE_STRING;
+      } else if (val_node->tag == NODE_CAST_EXPR) {
+        t = val_node->cast_expr.target_type;
+      }
+
+      const char *fmt_str = "%d";
+      if (t == TYPE_CHAR) {
+        fmt_str = "%c";
+        value = LLVMBuildSExt(cg->builder, value, Codegen_type(cg, TYPE_I32),
+                              "char_to_int");
+      } else if (t == TYPE_STRING) {
+        fmt_str = "%s";
+      } else if (t == TYPE_F32 || t == TYPE_F64) {
+        fmt_str = "%f";
+        value = LLVMBuildFPCast(cg->builder, value, Codegen_type(cg, TYPE_F64),
+                                "fptofp");
+      } else if (t == TYPE_U32 || t == TYPE_U64 || t == TYPE_U16 ||
+                 t == TYPE_U8) {
+        fmt_str = "%u";
+        if (t == TYPE_U64)
+          fmt_str = "%lu";
+      } else if (t == TYPE_I64) {
+        fmt_str = "%ld";
+      }
+
+      LLVMValueRef fmt = LLVMBuildGlobalStringPtr(cg->builder, fmt_str, "fmt");
+      LLVMValueRef args[] = {fmt, value};
+      LLVMBuildCall2(cg->builder, cg->printf_func_type, cg->printf_func, args,
+                     2, "");
     }
 
-    const char *fmt_str = "%d\n";
-    if (t == TYPE_CHAR) {
-      fmt_str = "%c\n";
-      value = LLVMBuildSExt(cg->builder, value, Codegen_type(cg, TYPE_I32),
-                            "char_to_int");
-    } else if (t == TYPE_STRING) {
-      fmt_str = "%s\n";
-    } else if (t == TYPE_F32 || t == TYPE_F64) {
-      fmt_str = "%f\n";
-      value = LLVMBuildFPCast(cg->builder, value, Codegen_type(cg, TYPE_F64),
-                              "fptofp");
-    } else if (t == TYPE_U32 || t == TYPE_U64 || t == TYPE_U16 ||
-               t == TYPE_U8) {
-      fmt_str = "%u\n";
-      if (t == TYPE_U64)
-        fmt_str = "%lu\n";
-    } else if (t == TYPE_I64) {
-      fmt_str = "%ld\n";
-    }
-
-    LLVMValueRef fmt = LLVMBuildGlobalStringPtr(cg->builder, fmt_str, "fmt");
-    LLVMValueRef args[] = {fmt, value};
-    LLVMBuildCall2(cg->builder, cg->printf_func_type, cg->printf_func, args, 2,
-                   "");
+    // Print newline at the end
+    LLVMValueRef nl_fmt = LLVMBuildGlobalStringPtr(cg->builder, "\n", "nl");
+    LLVMValueRef nl_args[] = {nl_fmt};
+    LLVMBuildCall2(cg->builder, cg->printf_func_type, cg->printf_func, nl_args,
+                   1, "");
     break;
   }
 

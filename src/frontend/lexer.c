@@ -40,7 +40,7 @@ static void skip_whitespace(Lexer *l) {
 
 static Token read_identifier(Lexer *l) {
   size_t start = l->cursor;
-  while (isalnum(Lexer_peek(l)))
+  while (isalnum(Lexer_peek(l)) || Lexer_peek(l) == '_')
     Lexer_advance(l);
 
   StringView text = sv_from_parts(l->src + start, l->cursor - start);
@@ -199,7 +199,7 @@ Token Token_advance(Lexer *l) {
     return t;
   }
 
-  if (isalpha(c))
+  if (isalpha(c) || c == '_')
     return read_identifier(l);
   if (isdigit(c) || c == '.')
     return read_number(l);
@@ -258,6 +258,9 @@ Token Token_advance(Lexer *l) {
     break;
   case '^':
     t.type = TOKEN_POWER;
+    break;
+  case ',':
+    t.type = TOKEN_COMMA;
     break;
   default:
     t.type = TOKEN_ERROR;

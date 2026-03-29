@@ -30,9 +30,9 @@ AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, TypeKind type,
   return node;
 }
 
-AstNode *AstNode_new_print_stmt(AstNode *value, Location loc) {
+AstNode *AstNode_new_print_stmt(List values, Location loc) {
   AstNode *node = AstNode_new(NODE_PRINT_STMT, loc);
-  node->print_stmt.value = value;
+  node->print_stmt.values = values;
   return node;
 }
 
@@ -168,9 +168,10 @@ void Ast_print(AstNode *node, int indent) {
     break;
   case NODE_PRINT_STMT:
     printf("PRINT_STMT\n");
-    print_indent(indent + 1);
-    printf("VALUE:\n");
-    Ast_print(node->print_stmt.value, indent + 2);
+    for (size_t i = 0; i < node->print_stmt.values.len; i++) {
+      AstNode *val = node->print_stmt.values.items[i];
+      Ast_print(val, indent + 1);
+    }
     break;
   case NODE_NUMBER:
     printf("NUMBER: %f (raw: " SV_FMT ")\n", node->number.value,

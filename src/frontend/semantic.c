@@ -1,3 +1,4 @@
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,28 +33,46 @@ Symbol *SymbolTable_find(SymbolTable *table, StringView name) {
   return NULL;
 }
 
-static void semantic_error(SymbolTable *table, AstNode *node, const char *msg) {
-  ErrorHandler_report(table->eh, node->loc, "%s", msg);
+static void semantic_error(SymbolTable *t, AstNode *n, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+
+  char msg_buf[1024];
+  vsnprintf(msg_buf, sizeof(msg_buf), fmt, args);
+
+  va_end(args);
+
+  ErrorHandler_report(t->eh, n->loc, "%s", msg_buf);
 }
 
+// Helper macro for StringView formatting
+#undef SV_ARG
+#define SV_ARG(sv) (int)(sv).len, (sv).data
+
 static TypeKind check_expression(SymbolTable *table, AstNode *node) {
+  if (!node)
+    return TYPE_UNKNOWN;
+
   switch (node->tag) {
   case NODE_NUMBER:
     return TYPE_I32;
+
   case NODE_CHAR:
     return TYPE_CHAR;
+
   case NODE_STRING:
     return TYPE_STRING;
+
   case NODE_VAR: {
-    Symbol *symbol = SymbolTable_find(table, node->var.value);
-    if (!symbol) {
-      ErrorHandler_report(table->eh, node->loc,
-                          "Undefined variable '" SV_FMT "'",
-                          SV_ARG(node->var.value));
+    Symbol *s = SymbolTable_find(table, node->var.value);
+    if (!s) {
+      semantic_error(table, node, "Undefined variable '" SV_FMT "'",
+                     SV_ARG(node->var.value));
       return TYPE_UNKNOWN;
     }
-    return symbol->type;
+    return s->type;
   }
+
   case NODE_BINARY: {
     TypeKind left = check_expression(table, node->binary.left);
     TypeKind right = check_expression(table, node->binary.right);
@@ -61,14 +80,20 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
     if (left == TYPE_UNKNOWN || right == TYPE_UNKNOWN)
       return TYPE_UNKNOWN;
 
-    if (left != right) {
-      if ((left == TYPE_F32 || left == TYPE_F64) ||
-          (right == TYPE_F32 || right == TYPE_F64)) {
-        return (left == TYPE_F64 || right == TYPE_F64) ? TYPE_F64 : TYPE_F32;
-      }
+    // Promote to float if either side is float/double
+    if ((left == TYPE_F32 || left == TYPE_F64) ||
+        (right == TYPE_F32 || right == TYPE_F64)) {
+      return (left == TYPE_F64 || right == TYPE_F64) ? TYPE_F64 : TYPE_F32;
     }
+
+    // Otherwise promote to largest int type
+    if (left != right) {
+      return left > right ? left : right; // crude but works for I8/I16/I32/I64
+    }
+
     return left;
   }
+
   case NODE_UNARY: {
     TypeKind t = check_expression(table, node->unary.expr);
     if (t == TYPE_UNKNOWN)
@@ -88,31 +113,35 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
         return TYPE_UNKNOWN;
       }
     }
+
     return t;
   }
+
   case NODE_ASSIGN_EXPR: {
-    Symbol *symbol =
-        SymbolTable_find(table, node->assign_expr.target->var.value);
-    if (!symbol) {
-      ErrorHandler_report(table->eh, node->loc,
-                          "Undefined variable '" SV_FMT "'",
-                          SV_ARG(node->assign_expr.target->var.value));
+    Symbol *s = SymbolTable_find(table, node->assign_expr.target->var.value);
+    if (!s) {
+      semantic_error(table, node, "Undefined variable '" SV_FMT "'",
+                     SV_ARG(node->assign_expr.target->var.value));
       return TYPE_UNKNOWN;
     }
-    if (symbol->is_const) {
-      ErrorHandler_report(table->eh, node->loc,
-                          "Cannot reassign constant '" SV_FMT "'",
-                          SV_ARG(symbol->name));
+    if (s->is_const) {
+      semantic_error(table, node, "Cannot assign to constant '" SV_FMT "'",
+                     SV_ARG(s->name));
       return TYPE_UNKNOWN;
     }
-    check_expression(table, node->assign_expr.value);
-    return symbol->type;
+
+    TypeKind rhs = check_expression(table, node->assign_expr.value);
+    // Optional: enforce implicit conversion / cast rules here
+    return s->type;
   }
-  case NODE_CAST_EXPR:
-    check_expression(table, node->cast_expr.expr);
+
+  case NODE_CAST_EXPR: {
+    check_expression(table, node->cast_expr.expr); // validate expr
     return node->cast_expr.target_type;
+  }
+
   default:
-    return TYPE_I32;
+    return TYPE_UNKNOWN;
   }
 }
 
@@ -122,16 +151,15 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
 
   switch (node->tag) {
   case NODE_PROGRAM:
-    for (size_t i = 0; i < node->program.children.len; i++) {
+    for (size_t i = 0; i < node->program.children.len; i++)
       Semantic_analysis(node->program.children.items[i], table);
-    }
     break;
 
   case NODE_VAR_DECL: {
     StringView name = node->var_decl.name->var.value;
     if (SymbolTable_find(table, name)) {
-      ErrorHandler_report(table->eh, node->loc,
-                          "Duplicate variable '" SV_FMT "'", SV_ARG(name));
+      semantic_error(table, node, "Duplicate variable '" SV_FMT "'",
+                     SV_ARG(name));
       return;
     }
 
@@ -140,6 +168,7 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
 
     if (decl_type == TYPE_UNKNOWN) {
       decl_type = val_type;
+      node->var_decl.declared_type = decl_type;
     }
 
     SymbolTable_add(table, name, decl_type, node->var_decl.is_const);
@@ -147,7 +176,8 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
   }
 
   case NODE_PRINT_STMT:
-    check_expression(table, node->print_stmt.value);
+    for (size_t i = 0; i < node->print_stmt.values.len; i++)
+      check_expression(table, node->print_stmt.values.items[i]);
     break;
 
   case NODE_EXPR_STMT:

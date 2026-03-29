@@ -59,6 +59,7 @@ typedef enum TokenType {
   TOKEN_MINUS_MINUS,
   TOKEN_STAR,
   TOKEN_POWER,
+  TOKEN_COMMA,
 
   // ETC
   TOKEN_ERROR,

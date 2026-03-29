@@ -73,7 +73,7 @@ struct AstNode {
     } var_decl;
 
     struct {
-      AstNode *value;
+      List values;
     } print_stmt;
 
     struct {
@@ -118,7 +118,7 @@ struct AstNode {
 AstNode *AstNode_new_program(Location loc);
 AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, TypeKind type,
                               int is_const, Location loc);
-AstNode *AstNode_new_print_stmt(AstNode *value, Location loc);
+AstNode *AstNode_new_print_stmt(List values, Location loc);
 AstNode *AstNode_new_number(double value, StringView raw_text, Location loc);
 AstNode *AstNode_new_char(char value, Location loc);
 AstNode *AstNode_new_string(StringView value, Location loc);
