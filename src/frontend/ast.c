@@ -98,10 +98,33 @@ AstNode *AstNode_new_expr_stmt(AstNode *expr, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_call(AstNode *func, AstNode *arg, Location loc) {
+AstNode *AstNode_new_call(AstNode *func, List args, Location loc) {
   AstNode *node = AstNode_new(NODE_CALL, loc);
   node->call.func = func;
-  node->call.arg = arg;
+  node->call.args = args;
+  return node;
+}
+
+AstNode *AstNode_new_func_decl(StringView name, List params, TypeKind ret_type,
+                               AstNode *body, Location loc) {
+  AstNode *node = AstNode_new(NODE_FUNC_DECL, loc);
+  node->func_decl.name = name;
+  node->func_decl.params = params;
+  node->func_decl.return_type = ret_type;
+  node->func_decl.body = body;
+  return node;
+}
+
+AstNode *AstNode_new_return(AstNode *expr, Location loc) {
+  AstNode *node = AstNode_new(NODE_RETURN_STMT, loc);
+  node->return_stmt.expr = expr;
+  return node;
+}
+
+AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc) {
+  AstNode *node = AstNode_new(NODE_PARAM, loc);
+  node->param.name = name;
+  node->param.type = type;
   return node;
 }
 
@@ -212,7 +235,35 @@ void Ast_print(AstNode *node, int indent) {
     Ast_print(node->call.func, indent + 2);
     print_indent(indent + 1);
     printf("ARG:\n");
-    Ast_print(node->call.arg, indent + 2);
+    for (size_t i = 0; i < node->call.args.len; i++) {
+      AstNode *arg = node->call.args.items[i];
+      Ast_print(arg, indent + 2);
+    }
+    break;
+  case NODE_FUNC_DECL:
+    printf("FUNC DECL: " SV_FMT " RETURNS %s\n", SV_ARG(node->func_decl.name),
+           type_to_name(node->func_decl.return_type));
+    print_indent(indent + 1);
+    printf("PARAMS:\n");
+    for (size_t i = 0; i < node->func_decl.params.len; i++) {
+      AstNode *param = node->func_decl.params.items[i];
+      Ast_print(param, indent + 2);
+    }
+    print_indent(indent + 1);
+    printf("BODY:\n");
+    Ast_print(node->func_decl.body, indent + 2);
+    break;
+  case NODE_RETURN_STMT:
+    printf("RETURN_STMT\n");
+    if (node->return_stmt.expr) {
+      print_indent(indent + 1);
+      printf("EXPR:\n");
+      Ast_print(node->return_stmt.expr, indent + 2);
+    }
+    break;
+  case NODE_PARAM:
+    printf("PARAM: " SV_FMT " : %s\n", SV_ARG(node->param.name),
+           type_to_name(node->param.type));
     break;
   case NODE_EXPR_STMT:
     printf("EXPR_STMT\n");

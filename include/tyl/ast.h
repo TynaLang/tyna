@@ -44,7 +44,10 @@ enum AstKind {
   NODE_CAST_EXPR,
   NODE_ASSIGN_EXPR,
   NODE_EXPR_STMT,
-  NODE_CALL
+  NODE_CALL,
+  NODE_FUNC_DECL,
+  NODE_RETURN_STMT,
+  NODE_PARAM
 };
 
 struct AstNode {
@@ -59,11 +62,6 @@ struct AstNode {
       AstNode *expr;
       TypeKind target_type;
     } cast_expr;
-
-    struct {
-      AstNode *func;
-      AstNode *arg;
-    } call;
 
     struct {
       AstNode *name;
@@ -112,6 +110,27 @@ struct AstNode {
       AstNode *expr;
       UnaryOp op;
     } unary;
+
+    struct {
+      AstNode *func;
+      List args; // List<AstNode*> for call arguments
+    } call;
+
+    struct {
+      StringView name;
+      List params; // List<AstNode*> NODE_PARAM
+      TypeKind return_type;
+      AstNode *body; // NODE_PROGRAM
+    } func_decl;
+
+    struct {
+      AstNode *expr; // optional return expression
+    } return_stmt;
+
+    struct {
+      StringView name;
+      TypeKind type;
+    } param;
   };
 };
 
@@ -129,7 +148,11 @@ AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc);
 AstNode *AstNode_new_cast_expr(AstNode *expr, TypeKind type, Location loc);
 AstNode *AstNode_new_assign_expr(AstNode *target, AstNode *value, Location loc);
 AstNode *AstNode_new_expr_stmt(AstNode *expr, Location loc);
-AstNode *AstNode_new_call(AstNode *func, AstNode *arg, Location loc);
+AstNode *AstNode_new_call(AstNode *func, List args, Location loc);
+AstNode *AstNode_new_func_decl(StringView name, List params, TypeKind ret_type,
+                               AstNode *body, Location loc);
+AstNode *AstNode_new_return(AstNode *expr, Location loc);
+AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc);
 
 TypeKind Token_token_to_type(TokenType t);
 

@@ -9,9 +9,12 @@ typedef struct {
   StringView name;
   TypeKind type;
   int is_const;
+  AstNode *value;            // For constant initializers or function bodies
+  struct SymbolTable *scope; // For functions: inner scope
 } Symbol;
 
 typedef struct {
+  struct SymbolTable *parent;
   List symbols; // List<Symbol*>
   ErrorHandler *eh;
 } SymbolTable;
