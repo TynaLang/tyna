@@ -53,6 +53,10 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_LET;
   else if (sv_eq_cstr(text, "const"))
     t.type = TOKEN_CONST;
+  else if (sv_eq_cstr(text, "fn"))
+    t.type = TOKEN_FN;
+  else if (sv_eq_cstr(text, "return"))
+    t.type = TOKEN_RETURN;
   else if (sv_eq_cstr(text, "print"))
     t.type = TOKEN_PRINT;
   else if (sv_eq_cstr(text, "int"))
@@ -83,6 +87,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_TYPE_F32;
   else if (sv_eq_cstr(text, "f64"))
     t.type = TOKEN_TYPE_F64;
+  else if (sv_eq_cstr(text, "void"))
+    t.type = TOKEN_TYPE_VOID;
   else
     t.type = TOKEN_IDENT;
 
@@ -237,6 +243,19 @@ Token Token_advance(Lexer *l) {
   case ')':
     t.type = TOKEN_RPAREN;
     break;
+    ;
+  case '{':
+    t.type = TOKEN_LBRACE;
+    break;
+  case '}':
+    t.type = TOKEN_RBRACE;
+    break;
+  case '[':
+    t.type = TOKEN_LBRACKET;
+    break;
+  case ']':
+    t.type = TOKEN_RBRACKET;
+    break;
   case '+':
     t.type = TOKEN_PLUS;
     if (Lexer_peek(l) == '+') {
@@ -261,6 +280,9 @@ Token Token_advance(Lexer *l) {
     break;
   case ',':
     t.type = TOKEN_COMMA;
+    break;
+  case '.':
+    t.type = TOKEN_DOT;
     break;
   default:
     t.type = TOKEN_ERROR;

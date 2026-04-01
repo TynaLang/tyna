@@ -82,8 +82,19 @@ void Runner_jit(Codegen *cg) {
     exit(1);
   }
 
-  // Ensure external symbols can be resolved by the MCJIT engine.
-  LLVMAddGlobalMapping(engine, cg->printf_func, (void *)&printf);
+  CGFunction *printf_func = NULL;
+  for (size_t i = 0; i < cg->system_functions.len; i++) {
+    CGFunction *f = cg->system_functions.items[i];
+    if (sv_eq(f->name, sv_from_parts("print", 5))) {
+      printf_func = f;
+      break;
+    }
+  }
+  if (printf_func) {
+    LLVMAddGlobalMapping(engine, printf_func->value, (void *)&printf);
+  } else {
+    fprintf(stderr, "Warning: printf function not found for JIT mapping\n");
+  }
 
   // run main()
   LLVMValueRef main_func = LLVMGetNamedFunction(cg->module, "main");

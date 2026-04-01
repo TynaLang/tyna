@@ -1,17 +1,16 @@
 #ifndef CODEGEN_H
 #define CODEGEN_H
 
-#include "parser.h"
+#include "ast.h"
+#include "utils.h"
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
 #include <llvm-c/Core.h>
-#include <llvm-c/ExecutionEngine.h>
-#include <llvm-c/Target.h>
-#include <llvm-c/TargetMachine.h>
 
 typedef struct Codegen Codegen;
 typedef struct CGSymbol CGSymbol;
 typedef struct CGSymbolTable CGSymbolTable;
+typedef struct CGFunction CGFunction;
 
 struct CGSymbol {
   StringView name;
@@ -20,29 +19,39 @@ struct CGSymbol {
 };
 
 struct CGSymbolTable {
+  CGSymbolTable *parent;
   List symbols; // List<CGSymbol*>
 };
 
-void CGSymbolTable_init(CGSymbolTable *t);
-void CGSymbolTable_add(CGSymbolTable *t, StringView name, TypeKind type,
-                       LLVMValueRef value);
-CGSymbol *CGSymbolTable_find(CGSymbolTable *t, StringView name);
+struct CGFunction {
+  StringView name;
+  LLVMValueRef value;
+  LLVMTypeRef type;
+  TypeKind return_type;
+  List params; // List<TypeKind>
+  bool is_system;
+};
 
 struct Codegen {
   LLVMContextRef context;
   LLVMModuleRef module;
   LLVMBuilderRef builder;
 
-  CGSymbolTable symbols;
-  LLVMValueRef printf_func;
-  LLVMTypeRef printf_func_type;
+  CGSymbolTable *current_scope;
+  LLVMValueRef current_function;
 
-  LLVMValueRef pow_func;
-  LLVMTypeRef pow_func_type;
+  List functions;        // List<CGFunction*>
+  List system_functions; // List<CGFunction*>
 };
 
-Codegen *Codegen_new(const char *module_name);
-void codegen_program(Codegen *cg, AstNode *program);
-void Codegen_dump(Codegen *cg);
+void CGSymbolTable_init(CGSymbolTable *t, CGSymbolTable *parent);
+void CGSymbolTable_add(CGSymbolTable *t, StringView name, TypeKind type,
+                       LLVMValueRef value);
+CGSymbol *CGSymbolTable_find(CGSymbolTable *t, StringView name);
 
-#endif // !CODEGEN_H
+Codegen *Codegen_new(const char *module_name);
+void Codegen_program(Codegen *cg, AstNode *program);
+void Codegen_dump(Codegen *cg);
+void Codegen_free(Codegen *cg);
+
+#endif

@@ -128,6 +128,20 @@ AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc) {
+  AstNode *node = AstNode_new(NODE_FIELD, loc);
+  node->index.array = expr;
+  node->index.index = index;
+  return node;
+}
+
+AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc) {
+  AstNode *node = AstNode_new(NODE_FIELD, loc);
+  node->field.object = expr;
+  node->field.field = field;
+  return node;
+}
+
 TypeKind Token_token_to_type(TokenType t) {
   switch (t) {
   case TOKEN_TYPE_INT:
@@ -156,6 +170,8 @@ TypeKind Token_token_to_type(TokenType t) {
     return TYPE_CHAR;
   case TOKEN_TYPE_STR:
     return TYPE_STRING;
+  case TOKEN_TYPE_VOID:
+    return TYPE_VOID;
   default:
     return TYPE_UNKNOWN;
   }

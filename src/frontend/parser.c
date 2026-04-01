@@ -1,6 +1,8 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
+#include "ast.h"
 #include "lexer.h"
 #include "parser.h"
 #include "utils.h"
@@ -47,6 +49,13 @@ static int Parser_check(AstNode *p, AstKind type) {
   return 0;
 }
 
+static void Parser_sync_param(Parser *p) {
+  while (p->current_token.type != TOKEN_RPAREN &&
+         p->current_token.type != TOKEN_EOF) {
+    Parser_token_advance(p);
+  }
+}
+
 static void Parser_sync(Parser *p) {
   while (p->current_token.type != TOKEN_EOF) {
     if (p->current_token.type == TOKEN_SEMI) {
@@ -58,7 +67,8 @@ static void Parser_sync(Parser *p) {
     case TOKEN_LET:
     case TOKEN_CONST:
     case TOKEN_PRINT:
-      return; // start of new statement
+    case TOKEN_FN:
+      return;
     default:
       Parser_token_advance(p);
     }
@@ -97,9 +107,11 @@ static int is_binary_operator(TokenType t) {
   }
 }
 
-// ---------- PARSER BODY ------------ //
-static AstNode *Parser_parse_expression(Parser *p, int min_bp);
-static TypeKind Parser_parse_type(Parser *p);
+static int is_postfix(Token t) {
+  return t.type == TOKEN_LPAREN || t.type == TOKEN_LBRACKET ||
+         t.type == TOKEN_DOT || t.type == TOKEN_PLUS_PLUS ||
+         t.type == TOKEN_MINUS_MINUS;
+}
 
 static BindingPower infix_binding_power(TokenType t) {
   switch (t) {
@@ -120,7 +132,109 @@ static BindingPower infix_binding_power(TokenType t) {
 }
 
 static int is_type_token(TokenType t) {
-  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_F64);
+  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_VOID);
+}
+
+static void skip_to_next_param(Parser *p) {
+  Parser_sync_param(p);
+  if (p->current_token.type == TOKEN_COMMA)
+    Parser_token_advance(p);
+}
+
+// ---------- PARSER BODY ------------ //
+static AstNode *Parser_parse_expression(Parser *p, int min_bp);
+static AstNode *Parser_parse_statement(Parser *p);
+static TypeKind Parser_parse_type(Parser *p);
+
+static AstNode *Parser_parse_call(Parser *p, AstNode *expr) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume '('
+
+  List values;
+  List_init(&values);
+
+  if (p->current_token.type != TOKEN_RPAREN) {
+    while (1) {
+      AstNode *value = Parser_parse_expression(p, 0);
+      if (!value)
+        return NULL;
+      List_push(&values, value);
+
+      if (p->current_token.type == TOKEN_COMMA) {
+        Parser_token_advance(p);
+      } else {
+        break;
+      }
+    }
+  }
+
+  if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after arguments"))
+    return NULL;
+
+  return AstNode_new_call(expr, values, loc);
+}
+
+static AstNode *Parser_parse_index(Parser *p, AstNode *expr) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume '['
+
+  AstNode *index = Parser_parse_expression(p, 0);
+  if (!index)
+    return NULL;
+
+  if (!Parser_expect(p, TOKEN_RBRACKET, "Expected ']'"))
+    return NULL;
+
+  return AstNode_new_index(expr, index, loc);
+}
+
+static AstNode *Parser_parse_field(Parser *p, AstNode *expr) {
+  Parser_token_advance(p); // consume '.'
+
+  Token ident = p->current_token;
+
+  if (!Parser_expect(p, TOKEN_IDENT, "Expected field name after '.'"))
+    return NULL;
+
+  return AstNode_new_field(expr, ident.text, ident.loc);
+}
+
+static AstNode *Parser_parse_postfix_inc(Parser *p, AstNode *expr) {
+  Token op = p->current_token;
+  Parser_token_advance(p);
+
+  const char *op_str = (op.type == TOKEN_PLUS_PLUS) ? "++" : "--";
+  UnaryOp unary_op = (op.type == TOKEN_PLUS_PLUS) ? OP_POST_INC : OP_POST_DEC;
+
+  if (!Parser_check(expr, NODE_VAR)) {
+    ErrorHandler_report(p->eh, op.loc, "Operator '%s' requires an identifier",
+                        op_str);
+    return NULL;
+  }
+
+  return AstNode_new_unary(unary_op, expr, op.loc);
+}
+
+static AstNode *Parser_make_postfix(Parser *p, AstNode *expr) {
+  Token t = p->current_token;
+
+  switch (t.type) {
+  case TOKEN_LPAREN:
+    return Parser_parse_call(p, expr);
+
+  case TOKEN_LBRACKET:
+    return Parser_parse_index(p, expr);
+
+  case TOKEN_DOT:
+    return Parser_parse_field(p, expr);
+
+  case TOKEN_PLUS_PLUS:
+  case TOKEN_MINUS_MINUS:
+    return Parser_parse_postfix_inc(p, expr);
+
+  default:
+    return expr; // should not happen if caller checks is_postfix
+  }
 }
 
 static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
@@ -204,25 +318,13 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
   while (1) {
     Token op = p->current_token;
 
-    if (op.type == TOKEN_PLUS_PLUS || op.type == TOKEN_MINUS_MINUS) {
-      int POSTFIX_BP = 100;
+    if (is_postfix(op)) {
+      int bp = 100;
 
-      if (POSTFIX_BP < min_bp)
+      if (bp < min_bp)
         break;
 
-      Parser_token_advance(p);
-
-      const char *op_str = (op.type == TOKEN_PLUS_PLUS) ? "++" : "--";
-      UnaryOp unary_op =
-          (op.type == TOKEN_PLUS_PLUS) ? OP_POST_INC : OP_POST_DEC;
-
-      if (!Parser_check(left, NODE_VAR)) {
-        ErrorHandler_report(p->eh, op.loc,
-                            "Operator '%s' requires an identifier", op_str);
-        return NULL;
-      }
-
-      left = AstNode_new_unary(unary_op, left, op.loc);
+      left = Parser_make_postfix(p, left);
       continue;
     }
 
@@ -243,8 +345,6 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     if (op.type == TOKEN_ASSIGN) {
 
       if (!Parser_check(left, NODE_VAR)) {
-        printf("Left-hand side of assignment must be an identifier, got %d ",
-               left->tag);
         ErrorHandler_report(p->eh, op.loc, "Invalid assignment target");
         return NULL;
       }
@@ -256,9 +356,7 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
       }
 
       left = AstNode_new_assign_expr(left, right, op.loc);
-    }
-
-    else {
+    } else {
       left = AstNode_new_binary(left, right, token_to_op(op.type), op.loc);
     }
   }
@@ -354,6 +452,96 @@ static AstNode *Parser_build_print_stmt_statement(Parser *p) {
   return AstNode_new_print_stmt(values, loc);
 }
 
+static AstNode *Parser_build_fn_decl_statement(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'fn'
+
+  Token ident = p->current_token;
+  if (!Parser_expect(p, TOKEN_IDENT, "Expected identifier after 'fn'"))
+    return NULL;
+
+  if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after print"))
+    return NULL;
+
+  List params;
+  List_init(&params);
+
+  if (p->current_token.type != TOKEN_RPAREN) {
+    while (1) {
+      Location loc = p->current_token.loc;
+
+      StringView param_name = p->current_token.text;
+      if (!Parser_expect(p, TOKEN_IDENT, "Expected parameter name")) {
+        skip_to_next_param(p);
+        continue;
+      }
+
+      if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after parameter name")) {
+        skip_to_next_param(p);
+        continue;
+      }
+
+      TypeKind param_type = Parser_parse_type(p);
+      if (param_type == TYPE_UNKNOWN) {
+        skip_to_next_param(p);
+        continue;
+      }
+
+      AstNode *param = AstNode_new_param(param_name, param_type, loc);
+
+      if (!param)
+        return NULL;
+      List_push(&params, param);
+
+      if (p->current_token.type == TOKEN_COMMA) {
+        Parser_token_advance(p);
+      } else {
+        break;
+      }
+    }
+  }
+
+  if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after value"))
+    return NULL;
+
+  TypeKind ret_type = TYPE_UNKNOWN;
+  if (p->current_token.type == TOKEN_COLON) {
+    Parser_token_advance(p); // consume ':'
+    ret_type = Parser_parse_type(p);
+    if (ret_type == TYPE_UNKNOWN) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected type after ':'");
+      return NULL;
+    }
+  }
+
+  AstNode *body = NULL;
+  if (p->current_token.type == TOKEN_LBRACE) {
+    Parser_token_advance(p); // consume '{'
+    body = AstNode_new_program(loc);
+    while (p->current_token.type != TOKEN_EOF &&
+           p->current_token.type != TOKEN_RBRACE) {
+      AstNode *node = Parser_parse_statement(p);
+      if (!node) {
+        Parser_sync(p);
+        continue;
+      }
+      List_push(&body->program.children, node);
+    }
+
+    if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after function body"))
+      return NULL;
+  } else if (p->current_token.type == TOKEN_SEMI) {
+    Parser_token_advance(p);
+  } else {
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Expected '{' or ';' after function declaration");
+    Parser_sync(p);
+  }
+
+  return AstNode_new_func_decl(ident.text, params, ret_type, body, loc);
+}
+
 static AstNode *Parser_parse_statement(Parser *p) {
   AstNode *node = NULL;
 
@@ -363,6 +551,10 @@ static AstNode *Parser_parse_statement(Parser *p) {
     node = Parser_build_var_decl_statement(p);
     break;
 
+  case TOKEN_FN:
+    node = Parser_build_fn_decl_statement(p);
+    break;
+
   case TOKEN_PRINT:
     node = Parser_build_print_stmt_statement(p);
     break;
@@ -370,7 +562,20 @@ static AstNode *Parser_parse_statement(Parser *p) {
   case TOKEN_EOF:
     return NULL;
 
+  case TOKEN_RETURN: {
+    Parser_token_advance(p);
+
+    Location loc = p->current_token.loc;
+    AstNode *expr = Parser_parse_expression(p, 0);
+    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after return statement")) {
+      Parser_sync(p);
+      return NULL;
+    }
+    return AstNode_new_return(expr, loc);
+  }
+
   default: {
+    Location loc = p->current_token.loc;
     AstNode *expr = Parser_parse_expression(p, 0);
 
     if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after expression")) {
@@ -378,7 +583,7 @@ static AstNode *Parser_parse_statement(Parser *p) {
       return NULL;
     }
 
-    node = AstNode_new_expr_stmt(expr, p->current_token.loc);
+    node = AstNode_new_expr_stmt(expr, loc);
   }
   }
 

@@ -24,6 +24,7 @@ enum TypeKind {
   TYPE_F64,
   TYPE_CHAR,
   TYPE_STRING,
+  TYPE_VOID,
   TYPE_UNKNOWN
 };
 
@@ -47,7 +48,9 @@ enum AstKind {
   NODE_CALL,
   NODE_FUNC_DECL,
   NODE_RETURN_STMT,
-  NODE_PARAM
+  NODE_PARAM,
+  NODE_FIELD,
+  NODE_INDEX,
 };
 
 struct AstNode {
@@ -131,6 +134,16 @@ struct AstNode {
       StringView name;
       TypeKind type;
     } param;
+
+    struct {
+      AstNode *object;
+      StringView field;
+    } field;
+
+    struct {
+      AstNode *array;
+      AstNode *index;
+    } index;
   };
 };
 
@@ -153,6 +166,8 @@ AstNode *AstNode_new_func_decl(StringView name, List params, TypeKind ret_type,
                                AstNode *body, Location loc);
 AstNode *AstNode_new_return(AstNode *expr, Location loc);
 AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc);
+AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc);
+AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc);
 
 TypeKind Token_token_to_type(TokenType t);
 

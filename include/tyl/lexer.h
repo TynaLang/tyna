@@ -23,6 +23,8 @@ typedef enum TokenType {
   TOKEN_LET,
   TOKEN_CONST,
   TOKEN_PRINT,
+  TOKEN_FN,
+  TOKEN_RETURN,
 
   // Identifier
   TOKEN_IDENT,
@@ -42,6 +44,7 @@ typedef enum TokenType {
   TOKEN_TYPE_U64,
   TOKEN_TYPE_F32,
   TOKEN_TYPE_F64,
+  TOKEN_TYPE_VOID,
   TOKEN_NUMBER,
   TOKEN_CHAR,
   TOKEN_STRING,
@@ -52,6 +55,10 @@ typedef enum TokenType {
   TOKEN_SEMI,
   TOKEN_LPAREN,
   TOKEN_RPAREN,
+  TOKEN_LBRACE,
+  TOKEN_RBRACE,
+  TOKEN_LBRACKET,
+  TOKEN_RBRACKET,
   TOKEN_SLASH,
   TOKEN_PLUS,
   TOKEN_PLUS_PLUS,
@@ -60,6 +67,7 @@ typedef enum TokenType {
   TOKEN_STAR,
   TOKEN_POWER,
   TOKEN_COMMA,
+  TOKEN_DOT,
 
   // ETC
   TOKEN_ERROR,

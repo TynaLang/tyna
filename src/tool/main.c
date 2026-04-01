@@ -14,8 +14,8 @@ typedef enum { MODE_COMPILE, MODE_JIT, MODE_EMIT_IR, MODE_DUMP } RunMode;
 void print_usage(const char *prog_name) {
   printf("Usage: %s [options] <file>\n", prog_name);
   printf("Options:\n");
-  printf("  -c, --compile   Compile to executable (default)\n");
-  printf("  -j, --jit       JIT compile and run\n");
+  printf("  -c, --compile   Compile to executable\n");
+  printf("  -j, --jit       JIT compile and run (default)\n");
   printf("  -e, --emit-ir   Emit LLVM IR to file\n");
   printf("  -d, --dump      Dump AST and LLVM IR to stdout\n");
   printf("  -h, --help      Show this help message\n");
@@ -75,12 +75,12 @@ int main(int argc, char **argv) {
   Lexer lexer = make_lexer(src, &eh);
   AstNode *program = Parser_process(&lexer, &eh);
 
-  // Ast_print(program, 2);
-  // if (eh.has_errors) {
-  //   ErrorHandler_show_all(&eh);
-  //   return 1;
-  // }
-  // return 0;
+  Ast_print(program, 2);
+  /* if (eh.has_errors) { */
+  /*   ErrorHandler_show_all(&eh); */
+  /*   return 1; */
+  /* } */
+  /* return 0; */
 
   SymbolTable table;
   SymbolTable_init(&table, &eh);
@@ -93,7 +93,7 @@ int main(int argc, char **argv) {
 
   // Backend
   Codegen *cg = Codegen_new("tyl_module");
-  codegen_program(cg, program);
+  Codegen_program(cg, program);
 
   // Verification
   Runner_verify(cg);
