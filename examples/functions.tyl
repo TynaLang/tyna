@@ -1,5 +1,5 @@
 fn sum (x1:int, x2: int) :float {
-  return (float)(x1 + x2);
+  return x1 + x2;
 }
 
 fn printNr (nr: int){

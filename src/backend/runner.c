@@ -5,6 +5,9 @@
 #include <llvm-c/BitWriter.h>
 #include <llvm-c/Core.h>
 #include <llvm-c/ExecutionEngine.h>
+#include <llvm-c/LLJIT.h>
+#include <llvm-c/Orc.h>
+#include <llvm-c/OrcEE.h>
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
 
@@ -70,45 +73,53 @@ void Runner_link_executable(const char *obj, const char *out) {
 void Runner_jit(Codegen *cg) {
   LLVMInitializeNativeTarget();
   LLVMInitializeNativeAsmPrinter();
+  LLVMInitializeNativeAsmParser();
 
-  LLVMLinkInMCJIT();
+  LLVMOrcLLJITRef lljit;
+  LLVMOrcLLJITBuilderRef builder = LLVMOrcCreateLLJITBuilder();
+  LLVMErrorRef err = LLVMOrcCreateLLJIT(&lljit, builder);
 
-  LLVMExecutionEngineRef engine;
-  char *error = NULL;
-
-  if (LLVMCreateExecutionEngineForModule(&engine, cg->module, &error) != 0) {
-    fprintf(stderr, "Failed to create execution engine: %s\n", error);
-    LLVMDisposeMessage(error);
+  if (err) {
+    char *msg = LLVMGetErrorMessage(err);
+    fprintf(stderr, "Failed to create ORC LLJIT: %s\n", msg);
+    LLVMDisposeErrorMessage(msg);
     exit(1);
   }
 
-  CGFunction *printf_func = NULL;
-  for (size_t i = 0; i < cg->system_functions.len; i++) {
-    CGFunction *f = cg->system_functions.items[i];
-    if (sv_eq(f->name, sv_from_parts("print", 5))) {
-      printf_func = f;
-      break;
-    }
-  }
-  if (printf_func) {
-    LLVMAddGlobalMapping(engine, printf_func->value, (void *)&printf);
-  } else {
-    fprintf(stderr, "Warning: printf function not found for JIT mapping\n");
+  LLVMOrcJITDylibRef main_jd = LLVMOrcLLJITGetMainJITDylib(lljit);
+
+  LLVMOrcDefinitionGeneratorRef dg;
+  if (LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(
+          &dg, LLVMOrcLLJITGetGlobalPrefix(lljit), 0, 0)) {
+    LLVMOrcJITDylibAddGenerator(main_jd, dg);
   }
 
-  // run main()
-  LLVMValueRef main_func = LLVMGetNamedFunction(cg->module, "main");
+  LLVMOrcThreadSafeContextRef ts_ctx = LLVMOrcCreateNewThreadSafeContext();
+  LLVMOrcThreadSafeModuleRef ts_mod =
+      LLVMOrcCreateNewThreadSafeModule(cg->module, ts_ctx);
 
-  if (!main_func) {
-    fprintf(stderr, "No main function found\n");
+  err = LLVMOrcLLJITAddLLVMIRModule(lljit, main_jd, ts_mod);
+  if (err) {
+    char *msg = LLVMGetErrorMessage(err);
+    fprintf(stderr, "Failed to add module to ORC: %s\n", msg);
+    LLVMDisposeErrorMessage(msg);
     exit(1);
   }
 
-  LLVMGenericValueRef result = LLVMRunFunction(engine, main_func, 0, NULL);
+  LLVMOrcExecutorAddress main_addr;
+  err = LLVMOrcLLJITLookup(lljit, &main_addr, "main");
+  if (err) {
+    char *msg = LLVMGetErrorMessage(err);
+    fprintf(stderr, "Failed to lookup main: %s\n", msg);
+    LLVMDisposeErrorMessage(msg);
+    exit(1);
+  }
 
-  int exit_code = LLVMGenericValueToInt(result, 0);
+  int (*main_func)() = (int (*)())(uintptr_t)main_addr;
+  int exit_code = main_func();
 
   printf("\n[program exited with code %d]\n", exit_code);
 
-  LLVMDisposeExecutionEngine(engine);
+  LLVMOrcDisposeLLJIT(lljit);
+  LLVMOrcDisposeThreadSafeContext(ts_ctx);
 }

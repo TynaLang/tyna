@@ -9,8 +9,24 @@
 #include <llvm-c/TargetMachine.h>
 
 #include "codegen.h"
-#include "lexer.h"
-#include "parser.h"
+
+static int is_numeric(TypeKind t) {
+  switch (t) {
+  case TYPE_I8:
+  case TYPE_U8:
+  case TYPE_I16:
+  case TYPE_U16:
+  case TYPE_I32:
+  case TYPE_U32:
+  case TYPE_I64:
+  case TYPE_U64:
+  case TYPE_F32:
+  case TYPE_F64:
+    return 1;
+  default:
+    return 0;
+  }
+}
 
 static LLVMTypeRef cg_get_llvm_type(Codegen *cg, TypeKind t) {
   switch (t) {
@@ -374,6 +390,11 @@ static void cg_statement(Codegen *cg, AstNode *node) {
   case NODE_RETURN_STMT: {
     if (node->return_stmt.expr) {
       LLVMValueRef val = cg_expression(cg, node->return_stmt.expr);
+      if (cg->current_function_ref) {
+        val = cg_cast_value(
+            cg, val,
+            cg_get_llvm_type(cg, cg->current_function_ref->return_type));
+      }
       LLVMBuildRet(cg->builder, val);
     } else {
       LLVMBuildRetVoid(cg->builder);
@@ -397,6 +418,7 @@ Codegen *Codegen_new(const char *module_name) {
   cg->builder = LLVMCreateBuilderInContext(cg->context);
   cg->current_scope = malloc(sizeof(CGSymbolTable));
   CGSymbolTable_init(cg->current_scope, NULL);
+  cg->current_function_ref = NULL;
 
   List_init(&cg->functions);
   List_init(&cg->system_functions);
@@ -461,6 +483,8 @@ static void cg_define_function(Codegen *cg, AstNode *node) {
 
 static void cg_emit_function_body(Codegen *cg, AstNode *node) {
   CGFunction *f = cg_find_function(cg, node->func_decl.name);
+  CGFunction *old_func_ref = cg->current_function_ref;
+  cg->current_function_ref = f;
   cg->current_function = f->value;
 
   LLVMBasicBlockRef entry =
@@ -489,14 +513,20 @@ static void cg_emit_function_body(Codegen *cg, AstNode *node) {
   }
 
   if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
-    if (f->return_type == TYPE_UNKNOWN || f->return_type == TYPE_I32) {
-      LLVMBuildRet(cg->builder,
-                   LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0));
-    } else {
+    if (f->return_type == TYPE_UNKNOWN || f->return_type == TYPE_VOID) {
       LLVMBuildRetVoid(cg->builder);
+    } else {
+      LLVMValueRef zero =
+          LLVMConstInt(cg_get_llvm_type(cg, f->return_type), 0, 0);
+      if (is_numeric(f->return_type) &&
+          (f->return_type == TYPE_F32 || f->return_type == TYPE_F64)) {
+        zero = LLVMConstReal(cg_get_llvm_type(cg, f->return_type), 0.0);
+      }
+      LLVMBuildRet(cg->builder, zero);
     }
   }
 
+  cg->current_function_ref = old_func_ref;
   cg->current_scope = old_scope;
 }
 
@@ -534,6 +564,8 @@ void Codegen_program(Codegen *cg, AstNode *program) {
   // We don't change cg->current_function yet, or rather, the global entry is
   // this func.
   LLVMValueRef outer_func = entry_func;
+  cg->current_function = outer_func;
+  cg->current_function_ref = NULL; // Globals are not in a regular function
 
   for (size_t i = 0; i < program->program.children.len; i++) {
     AstNode *node = program->program.children.items[i];

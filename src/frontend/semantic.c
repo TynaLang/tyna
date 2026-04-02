@@ -53,6 +53,41 @@ static int is_lvalue(AstNode *node) {
          node->tag == NODE_INDEX;
 }
 
+static int type_rank(TypeKind t) {
+  switch (t) {
+  case TYPE_I8:
+  case TYPE_U8:
+    return 1;
+  case TYPE_I16:
+  case TYPE_U16:
+    return 2;
+  case TYPE_I32:
+  case TYPE_U32:
+    return 3;
+  case TYPE_I64:
+  case TYPE_U64:
+    return 4;
+  case TYPE_F32:
+    return 5;
+  case TYPE_F64:
+    return 6;
+  default:
+    return 0;
+  }
+}
+
+static int is_numeric(TypeKind t) { return type_rank(t) > 0; }
+
+static int can_implicitly_cast(TypeKind to, TypeKind from) {
+  if (to == from)
+    return 1;
+  if (!is_numeric(to) || !is_numeric(from))
+    return 0;
+
+  // Only allow implicit casting "up" (to a higher or equal rank)
+  return type_rank(to) >= type_rank(from);
+}
+
 static TypeKind check_expression(SymbolTable *table, AstNode *node) {
   if (!node)
     return TYPE_UNKNOWN;
@@ -84,9 +119,8 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
     if (left == TYPE_UNKNOWN || right == TYPE_UNKNOWN)
       return TYPE_UNKNOWN;
 
-    if ((left == TYPE_F32 || left == TYPE_F64) ||
-        (right == TYPE_F32 || right == TYPE_F64)) {
-      return (left == TYPE_F64 || right == TYPE_F64) ? TYPE_F64 : TYPE_F32;
+    if (is_numeric(left) && is_numeric(right)) {
+      return type_rank(left) >= type_rank(right) ? left : right;
     }
 
     if (left != right) {
@@ -151,7 +185,8 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
     TypeKind lhs = s->type;
     TypeKind rhs = check_expression(table, node->assign_expr.value);
 
-    if (lhs != TYPE_UNKNOWN && rhs != TYPE_UNKNOWN && lhs != rhs) {
+    if (lhs != TYPE_UNKNOWN && rhs != TYPE_UNKNOWN &&
+        !can_implicitly_cast(lhs, rhs)) {
       semantic_error(table, node,
                      "Type mismatch in assignment: expected %s, got %s",
                      type_to_name(lhs), type_to_name(rhs));
@@ -188,8 +223,8 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
       if (s->scope && i < s->scope->symbols.len) {
         Symbol *param = s->scope->symbols.items[i];
 
-        if (arg_type != TYPE_UNKNOWN && param->type != TYPE_UNKNOWN &&
-            arg_type != param->type) {
+        if (!can_implicitly_cast(param->type, arg_type) &&
+            param->type != TYPE_UNKNOWN && arg_type != param->type) {
           semantic_error(table, node,
                          "Argument %zu type mismatch: expected %s, got %s", i,
                          type_to_name(param->type), type_to_name(arg_type));
@@ -310,7 +345,7 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
                              (int)fn_name.len, fn_name.data);
             }
           } else if (node->func_decl.return_type != TYPE_UNKNOWN &&
-                     t != node->func_decl.return_type) {
+                     !can_implicitly_cast(node->func_decl.return_type, t)) {
             semantic_error(fn_symbol->scope, stmt,
                            "Type mismatch in return: expected %s, got %s in "
                            "function '%.*s'",

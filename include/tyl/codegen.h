@@ -39,6 +39,7 @@ struct Codegen {
 
   CGSymbolTable *current_scope;
   LLVMValueRef current_function;
+  CGFunction *current_function_ref;
 
   List functions;        // List<CGFunction*>
   List system_functions; // List<CGFunction*>
