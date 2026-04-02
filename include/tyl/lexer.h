@@ -32,6 +32,7 @@ typedef enum TokenType {
   // Data Types
   TOKEN_TYPE_INT,
   TOKEN_TYPE_STR,
+  TOKEN_TYPE_BOOLEAN,
   TOKEN_TYPE_CHAR,
   TOKEN_TYPE_FLOAT,
   TOKEN_TYPE_I8,
@@ -48,6 +49,8 @@ typedef enum TokenType {
   TOKEN_NUMBER,
   TOKEN_CHAR,
   TOKEN_STRING,
+  TOKEN_TRUE,
+  TOKEN_FALSE,
 
   // Symbols
   TOKEN_COLON,
@@ -68,6 +71,7 @@ typedef enum TokenType {
   TOKEN_POWER,
   TOKEN_COMMA,
   TOKEN_DOT,
+  TOKEN_MOD,
 
   // ETC
   TOKEN_ERROR,

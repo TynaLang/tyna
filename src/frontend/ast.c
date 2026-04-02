@@ -43,6 +43,12 @@ AstNode *AstNode_new_number(double value, StringView raw_text, Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_bool(int value, Location loc) {
+  AstNode *node = AstNode_new(NODE_BOOL, loc);
+  node->boolean.value = value;
+  return node;
+}
+
 AstNode *AstNode_new_char(char value, Location loc) {
   AstNode *node = AstNode_new(NODE_CHAR, loc);
   node->char_lit.value = value;
@@ -172,6 +178,8 @@ TypeKind Token_token_to_type(TokenType t) {
     return TYPE_STRING;
   case TOKEN_TYPE_VOID:
     return TYPE_VOID;
+  case TOKEN_TYPE_BOOLEAN:
+    return TYPE_BOOL;
   default:
     return TYPE_UNKNOWN;
   }
@@ -218,6 +226,9 @@ void Ast_print(AstNode *node, int indent) {
     break;
   case NODE_CHAR:
     printf("CHAR: %c\n", node->char_lit.value);
+    break;
+  case NODE_BOOL:
+    printf("BOOL: %s\n", node->boolean.value ? "true" : "false");
     break;
   case NODE_STRING:
     printf("STRING: " SV_FMT "\n", SV_ARG(node->string.value));

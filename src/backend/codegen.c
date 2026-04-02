@@ -50,6 +50,8 @@ static LLVMTypeRef cg_get_llvm_type(Codegen *cg, TypeKind t) {
     return LLVMDoubleTypeInContext(cg->context);
   case TYPE_STRING:
     return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+  case TYPE_BOOL:
+    return LLVMInt1TypeInContext(cg->context);
   default:
     return LLVMVoidTypeInContext(cg->context);
   }
@@ -68,15 +70,30 @@ static LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value,
     return LLVMBuildSIToFP(cg->builder, value, to_ty, "itofp");
   if (from_kind == LLVMIntegerTypeKind && to_kind == LLVMDoubleTypeKind)
     return LLVMBuildSIToFP(cg->builder, value, to_ty, "itofp");
-  if (from_kind == LLVMIntegerTypeKind && to_kind == LLVMIntegerTypeKind)
+  if (from_kind == LLVMIntegerTypeKind && to_kind == LLVMIntegerTypeKind) {
+    if (LLVMGetIntTypeWidth(from_ty) == 1)
+      return LLVMBuildZExt(cg->builder, value, to_ty, "booltoint");
     return LLVMBuildIntCast(cg->builder, value, to_ty, "intcast");
+  }
   if ((from_kind == LLVMFloatTypeKind || from_kind == LLVMDoubleTypeKind) &&
       to_kind == LLVMIntegerTypeKind)
     return LLVMBuildFPToSI(cg->builder, value, to_ty, "fptosi");
   if ((from_kind == LLVMFloatTypeKind || from_kind == LLVMDoubleTypeKind) &&
       (to_kind == LLVMFloatTypeKind || to_kind == LLVMDoubleTypeKind))
     return LLVMBuildFPCast(cg->builder, value, to_ty, "fpcast");
-
+  if (from_kind == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(from_ty) != 1 &&
+      LLVMGetTypeKind(to_ty) == LLVMIntegerTypeKind &&
+      LLVMGetIntTypeWidth(to_ty) == 1) {
+    // int -> bool
+    LLVMValueRef zero = LLVMConstInt(from_ty, 0, 0);
+    return LLVMBuildICmp(cg->builder, LLVMIntNE, value, zero, "tobool");
+  }
+  if (LLVMGetIntTypeWidth(from_ty) == 1 &&
+      LLVMGetTypeKind(to_ty) == LLVMIntegerTypeKind &&
+      LLVMGetIntTypeWidth(to_ty) > 1) {
+    // bool -> int
+    return LLVMBuildZExt(cg->builder, value, to_ty, "booltoint");
+  }
   return value;
 }
 
@@ -247,6 +264,39 @@ static LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
                                         pow_func->value, args, 2, "pow");
       return cg_cast_value(cg, res, res_ty);
     }
+    case OP_MOD:
+      if (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind) {
+        // floating point modulo: fmod
+        LLVMValueRef left_d =
+            cg_cast_value(cg, left, LLVMDoubleTypeInContext(cg->context));
+        LLVMValueRef right_d =
+            cg_cast_value(cg, right, LLVMDoubleTypeInContext(cg->context));
+        CGFunction *fmod_func = cg_find_function(cg, sv_from_parts("fmod", 4));
+        if (!fmod_func) {
+          // declare fmod if not already declared
+          LLVMTypeRef fmod_args[] = {LLVMDoubleTypeInContext(cg->context),
+                                     LLVMDoubleTypeInContext(cg->context)};
+          LLVMTypeRef fmod_type = LLVMFunctionType(
+              LLVMDoubleTypeInContext(cg->context), fmod_args, 2, 0);
+          LLVMValueRef fmod_val =
+              LLVMAddFunction(cg->module, "fmod", fmod_type);
+          fmod_func = malloc(sizeof(CGFunction));
+          fmod_func->name = sv_from_parts("fmod", 4);
+          fmod_func->value = fmod_val;
+          fmod_func->type = fmod_type;
+          fmod_func->is_system = true;
+          List_push(&cg->system_functions, fmod_func);
+        }
+        LLVMValueRef args[] = {left_d, right_d};
+        LLVMValueRef res = LLVMBuildCall2(cg->builder, fmod_func->type,
+                                          fmod_func->value, args, 2, "fmod");
+        return cg_cast_value(cg, res, res_ty);
+      } else {
+        // integer modulo: srem for signed, urem for unsigned
+        int is_signed = 1; // or detect type from node->binary.left type
+        return is_signed ? LLVMBuildSRem(cg->builder, left, right, "mod")
+                         : LLVMBuildURem(cg->builder, left, right, "mod");
+      }
     default:
       fprintf(stderr, "Unknown binary op\n");
       exit(1);
@@ -327,6 +377,10 @@ static LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
     return res;
   }
 
+  case NODE_BOOL:
+    return LLVMConstInt(LLVMInt1TypeInContext(cg->context), node->boolean.value,
+                        0);
+
   default:
     fprintf(stderr, "Unhandled expression node %d\n", node->tag);
     exit(1);
@@ -367,6 +421,18 @@ static void cg_statement(Codegen *cg, AstNode *node) {
         value = cg_cast_value(cg, value, LLVMDoubleTypeInContext(cg->context));
       } else if (vkind == LLVMPointerTypeKind) {
         fmt_str = "%s";
+      } else if (vkind == LLVMIntegerTypeKind &&
+                 LLVMGetIntTypeWidth(vty) == 1) {
+        fmt_str = "%s";
+
+        LLVMValueRef true_str =
+            LLVMBuildGlobalStringPtr(cg->builder, "true", "true");
+        LLVMValueRef false_str =
+            LLVMBuildGlobalStringPtr(cg->builder, "false", "false");
+        LLVMValueRef is_true = LLVMBuildICmp(
+            cg->builder, LLVMIntEQ, value, LLVMConstInt(vty, 1, 0), "is_true");
+        value = LLVMBuildSelect(cg->builder, is_true, true_str, false_str,
+                                "boolstr");
       }
 
       LLVMValueRef fmt = LLVMBuildGlobalStringPtr(cg->builder, fmt_str, "fmt");

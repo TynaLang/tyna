@@ -23,12 +23,13 @@ enum TypeKind {
   TYPE_F32,
   TYPE_F64,
   TYPE_CHAR,
+  TYPE_BOOL,
   TYPE_STRING,
   TYPE_VOID,
   TYPE_UNKNOWN
 };
 
-enum BinaryOp { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POW };
+enum BinaryOp { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POW, OP_MOD };
 
 enum UnaryOp { OP_NEG, OP_PRE_INC, OP_POST_INC, OP_PRE_DEC, OP_POST_DEC };
 
@@ -38,6 +39,7 @@ enum AstKind {
   NODE_PRINT_STMT,
   NODE_NUMBER,
   NODE_CHAR,
+  NODE_BOOL,
   NODE_STRING,
   NODE_VAR,
   NODE_BINARY,
@@ -90,6 +92,10 @@ struct AstNode {
       double value;
       StringView raw_text;
     } number;
+
+    struct {
+      int value;
+    } boolean;
 
     struct {
       char value;
@@ -153,6 +159,7 @@ AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, TypeKind type,
 AstNode *AstNode_new_print_stmt(List values, Location loc);
 AstNode *AstNode_new_number(double value, StringView raw_text, Location loc);
 AstNode *AstNode_new_char(char value, Location loc);
+AstNode *AstNode_new_bool(int value, Location loc);
 AstNode *AstNode_new_string(StringView value, Location loc);
 AstNode *AstNode_new_var(StringView value, Location loc);
 AstNode *AstNode_new_binary(AstNode *left, AstNode *right, BinaryOp op,

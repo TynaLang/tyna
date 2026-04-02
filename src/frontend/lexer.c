@@ -89,6 +89,12 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_TYPE_F64;
   else if (sv_eq_cstr(text, "void"))
     t.type = TOKEN_TYPE_VOID;
+  else if (sv_eq_cstr(text, "bool"))
+    t.type = TOKEN_TYPE_BOOLEAN;
+  else if (sv_eq_cstr(text, "true"))
+    t.type = TOKEN_TRUE;
+  else if (sv_eq_cstr(text, "false"))
+    t.type = TOKEN_FALSE;
   else
     t.type = TOKEN_IDENT;
 
@@ -277,6 +283,9 @@ Token Token_advance(Lexer *l) {
     break;
   case '^':
     t.type = TOKEN_POWER;
+    break;
+  case '%':
+    t.type = TOKEN_MOD;
     break;
   case ',':
     t.type = TOKEN_COMMA;

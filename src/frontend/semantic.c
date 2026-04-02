@@ -57,6 +57,7 @@ static int type_rank(TypeKind t) {
   switch (t) {
   case TYPE_I8:
   case TYPE_U8:
+  case TYPE_CHAR:
     return 1;
   case TYPE_I16:
   case TYPE_U16:
@@ -78,14 +79,22 @@ static int type_rank(TypeKind t) {
 
 static int is_numeric(TypeKind t) { return type_rank(t) > 0; }
 
+int is_bool(TypeKind t) { return t == TYPE_BOOL; }
+
 static int can_implicitly_cast(TypeKind to, TypeKind from) {
   if (to == from)
     return 1;
-  if (!is_numeric(to) || !is_numeric(from))
+
+  if (to == TYPE_VOID || from == TYPE_VOID)
     return 0;
 
-  // Only allow implicit casting "up" (to a higher or equal rank)
-  return type_rank(to) >= type_rank(from);
+  if (is_bool(to) || is_bool(from))
+    return 0;
+
+  if (is_numeric(to) && is_numeric(from))
+    return type_rank(to) >= type_rank(from);
+
+  return 0;
 }
 
 static TypeKind check_expression(SymbolTable *table, AstNode *node) {
@@ -123,11 +132,8 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
       return type_rank(left) >= type_rank(right) ? left : right;
     }
 
-    if (left != right) {
-      return left > right ? left : right;
-    }
-
-    return left;
+    semantic_error(table, node, "Binary operator on non-numeric types");
+    return TYPE_UNKNOWN;
   }
 
   case NODE_UNARY: {
@@ -137,9 +143,9 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
 
     if (node->unary.op == OP_PRE_INC || node->unary.op == OP_POST_INC ||
         node->unary.op == OP_PRE_DEC || node->unary.op == OP_POST_DEC) {
-      if (node->unary.expr->tag != NODE_VAR) {
+      if (!is_lvalue(node->unary.expr)) {
         semantic_error(table, node,
-                       "Increment/decrement operand must be a variable");
+                       "Increment/decrement operand must be an lvalue");
         return TYPE_UNKNOWN;
       }
       Symbol *s = SymbolTable_find(table, node->unary.expr->var.value);
@@ -163,7 +169,6 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
 
     check_expression(table, target);
 
-    // Only variables for now, pending expansion after arrays and maps
     if (target->tag != NODE_VAR) {
       semantic_error(table, node, "Only variable assignment supported for now");
       return TYPE_UNKNOWN;
@@ -201,7 +206,6 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
   }
 
   case NODE_CALL: {
-    TypeKind fn_type = TYPE_UNKNOWN;
     Symbol *s = SymbolTable_find(table, node->call.func->var.value);
     if (!s) {
       semantic_error(table, node, "Call to undefined function '%.*s'",
@@ -223,8 +227,7 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
       if (s->scope && i < s->scope->symbols.len) {
         Symbol *param = s->scope->symbols.items[i];
 
-        if (!can_implicitly_cast(param->type, arg_type) &&
-            param->type != TYPE_UNKNOWN && arg_type != param->type) {
+        if (!can_implicitly_cast(param->type, arg_type)) {
           semantic_error(table, node,
                          "Argument %zu type mismatch: expected %s, got %s", i,
                          type_to_name(param->type), type_to_name(arg_type));
@@ -269,6 +272,7 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
     SymbolTable_add(table, name, decl_type, node->var_decl.is_const);
     break;
   }
+
   case NODE_FUNC_DECL: {
     StringView fn_name = node->func_decl.name;
 
@@ -302,6 +306,7 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
     if (node->func_decl.body)
       Semantic_analysis(node->func_decl.body, fn_symbol->scope);
 
+    // Infer return type if unknown
     if (node->func_decl.return_type == TYPE_UNKNOWN) {
       TypeKind inferred = TYPE_VOID;
       bool set = false;
@@ -309,15 +314,14 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
         for (size_t i = 0; i < node->func_decl.body->program.children.len;
              i++) {
           AstNode *stmt = node->func_decl.body->program.children.items[i];
-          if (stmt->tag == NODE_RETURN_STMT) {
+          if (stmt->tag == NODE_RETURN_STMT && stmt->return_stmt.expr) {
             TypeKind t =
                 check_expression(fn_symbol->scope, stmt->return_stmt.expr);
             if (!set) {
               inferred = t;
               set = true;
             } else if (inferred != t) {
-              inferred =
-                  TYPE_UNKNOWN; // return unknown for multiple return types
+              inferred = TYPE_UNKNOWN; // multiple inconsistent returns
             }
           }
         }
@@ -325,13 +329,12 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
       node->func_decl.return_type = inferred;
       fn_symbol->type = inferred;
 
-      // Update the symbol we just added to current table
       Symbol *added = SymbolTable_find(table, fn_name);
       if (added)
         added->type = inferred;
     }
 
-    // Now validate return statements against the final return type
+    // Validate return statements
     if (node->func_decl.body) {
       for (size_t i = 0; i < node->func_decl.body->program.children.len; i++) {
         AstNode *stmt = node->func_decl.body->program.children.items[i];
@@ -396,6 +399,8 @@ char *type_to_name(TypeKind type) {
     return "f64";
   case TYPE_CHAR:
     return "char";
+  case TYPE_BOOL:
+    return "bool";
   case TYPE_STRING:
     return "string";
   case TYPE_VOID:
