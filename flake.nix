@@ -18,6 +18,7 @@
             pkgs.llvmPackages_latest.llvm
             pkgs.cmake
             pkgs.lld
+            pkgs.ninja
             pkgs.pkg-config
             pkgs.gdb
             pkgs.just
