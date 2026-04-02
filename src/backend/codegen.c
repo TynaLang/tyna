@@ -140,6 +140,156 @@ static CGFunction *cg_find_function(Codegen *cg, StringView name) {
   return NULL;
 }
 
+static void cg_coerce_numeric_operands(Codegen *cg, LLVMValueRef *left,
+                                       LLVMValueRef *right) {
+  LLVMTypeRef left_ty = LLVMTypeOf(*left);
+  LLVMTypeRef right_ty = LLVMTypeOf(*right);
+  if (left_ty == right_ty)
+    return;
+
+  LLVMTypeKind left_kind = LLVMGetTypeKind(left_ty);
+  LLVMTypeKind right_kind = LLVMGetTypeKind(right_ty);
+
+  if (left_kind == LLVMDoubleTypeKind || right_kind == LLVMDoubleTypeKind) {
+    *left = cg_cast_value(cg, *left, LLVMDoubleTypeInContext(cg->context));
+    *right = cg_cast_value(cg, *right, LLVMDoubleTypeInContext(cg->context));
+  } else if (left_kind == LLVMFloatTypeKind ||
+             right_kind == LLVMFloatTypeKind) {
+    *left = cg_cast_value(cg, *left, LLVMFloatTypeInContext(cg->context));
+    *right = cg_cast_value(cg, *right, LLVMFloatTypeInContext(cg->context));
+  }
+}
+
+static LLVMValueRef cg_binary_arith(Codegen *cg, AstNode *node) {
+  LLVMValueRef left = cg_expression(cg, node->binary_arith.left);
+  LLVMValueRef right = cg_expression(cg, node->binary_arith.right);
+
+  cg_coerce_numeric_operands(cg, &left, &right);
+
+  LLVMTypeRef res_ty = LLVMTypeOf(left);
+  LLVMTypeKind res_kind = LLVMGetTypeKind(res_ty);
+
+  switch (node->binary_arith.op) {
+  case OP_ADD:
+    return (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind)
+               ? LLVMBuildFAdd(cg->builder, left, right, "fadd")
+               : LLVMBuildAdd(cg->builder, left, right, "add");
+  case OP_SUB:
+    return (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind)
+               ? LLVMBuildFSub(cg->builder, left, right, "fsub")
+               : LLVMBuildSub(cg->builder, left, right, "sub");
+  case OP_MUL:
+    return (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind)
+               ? LLVMBuildFMul(cg->builder, left, right, "fmul")
+               : LLVMBuildMul(cg->builder, left, right, "mul");
+  case OP_DIV:
+    return (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind)
+               ? LLVMBuildFDiv(cg->builder, left, right, "fdiv")
+               : LLVMBuildSDiv(cg->builder, left, right, "div");
+  case OP_POW: {
+    LLVMValueRef left_d =
+        cg_cast_value(cg, left, LLVMDoubleTypeInContext(cg->context));
+    LLVMValueRef right_d =
+        cg_cast_value(cg, right, LLVMDoubleTypeInContext(cg->context));
+    LLVMValueRef args[] = {left_d, right_d};
+    CGFunction *pow_func = cg_find_function(cg, sv_from_parts("pow", 3));
+    LLVMValueRef res = LLVMBuildCall2(cg->builder, pow_func->type,
+                                      pow_func->value, args, 2, "pow");
+    return cg_cast_value(cg, res, res_ty);
+  }
+  case OP_MOD:
+    if (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind) {
+      LLVMValueRef left_d =
+          cg_cast_value(cg, left, LLVMDoubleTypeInContext(cg->context));
+      LLVMValueRef right_d =
+          cg_cast_value(cg, right, LLVMDoubleTypeInContext(cg->context));
+      CGFunction *fmod_func = cg_find_function(cg, sv_from_parts("fmod", 4));
+      if (!fmod_func) {
+        LLVMTypeRef fmod_args[] = {LLVMDoubleTypeInContext(cg->context),
+                                   LLVMDoubleTypeInContext(cg->context)};
+        LLVMTypeRef fmod_type = LLVMFunctionType(
+            LLVMDoubleTypeInContext(cg->context), fmod_args, 2, 0);
+        LLVMValueRef fmod_val = LLVMAddFunction(cg->module, "fmod", fmod_type);
+        fmod_func = malloc(sizeof(CGFunction));
+        fmod_func->name = sv_from_parts("fmod", 4);
+        fmod_func->value = fmod_val;
+        fmod_func->type = fmod_type;
+        fmod_func->is_system = true;
+        List_push(&cg->system_functions, fmod_func);
+      }
+      LLVMValueRef args[] = {left_d, right_d};
+      LLVMValueRef res = LLVMBuildCall2(cg->builder, fmod_func->type,
+                                        fmod_func->value, args, 2, "fmod");
+      return cg_cast_value(cg, res, res_ty);
+    } else {
+      return LLVMBuildSRem(cg->builder, left, right, "mod");
+    }
+  default:
+    fprintf(stderr, "Unknown binary arithmetic operation\n");
+    exit(1);
+  }
+}
+
+static LLVMValueRef cg_binary_compare(Codegen *cg, AstNode *node) {
+  LLVMValueRef left = cg_expression(cg, node->binary_compare.left);
+  LLVMValueRef right = cg_expression(cg, node->binary_compare.right);
+
+  cg_coerce_numeric_operands(cg, &left, &right);
+
+  LLVMTypeKind kind = LLVMGetTypeKind(LLVMTypeOf(left));
+  switch (node->binary_compare.op) {
+  case OP_LT:
+    return (kind == LLVMFloatTypeKind || kind == LLVMDoubleTypeKind)
+               ? LLVMBuildFCmp(cg->builder, LLVMRealOLT, left, right, "lt")
+               : LLVMBuildICmp(cg->builder, LLVMIntSLT, left, right, "lt");
+  case OP_GT:
+    return (kind == LLVMFloatTypeKind || kind == LLVMDoubleTypeKind)
+               ? LLVMBuildFCmp(cg->builder, LLVMRealOGT, left, right, "gt")
+               : LLVMBuildICmp(cg->builder, LLVMIntSGT, left, right, "gt");
+  case OP_LE:
+    return (kind == LLVMFloatTypeKind || kind == LLVMDoubleTypeKind)
+               ? LLVMBuildFCmp(cg->builder, LLVMRealOLE, left, right, "le")
+               : LLVMBuildICmp(cg->builder, LLVMIntSLE, left, right, "le");
+  case OP_GE:
+    return (kind == LLVMFloatTypeKind || kind == LLVMDoubleTypeKind)
+               ? LLVMBuildFCmp(cg->builder, LLVMRealOGE, left, right, "ge")
+               : LLVMBuildICmp(cg->builder, LLVMIntSGE, left, right, "ge");
+  }
+
+  fprintf(stderr, "Unknown binary compare operation\n");
+  exit(1);
+}
+
+static LLVMValueRef cg_binary_equality(Codegen *cg, AstNode *node) {
+  LLVMValueRef left = cg_expression(cg, node->binary_equality.left);
+  LLVMValueRef right = cg_expression(cg, node->binary_equality.right);
+
+  cg_coerce_numeric_operands(cg, &left, &right);
+
+  LLVMTypeKind kind = LLVMGetTypeKind(LLVMTypeOf(left));
+  if (kind == LLVMFloatTypeKind || kind == LLVMDoubleTypeKind) {
+    if (node->binary_equality.op == OP_EQ)
+      return LLVMBuildFCmp(cg->builder, LLVMRealOEQ, left, right, "eq");
+    return LLVMBuildFCmp(cg->builder, LLVMRealONE, left, right, "ne");
+  }
+
+  if (node->binary_equality.op == OP_EQ)
+    return LLVMBuildICmp(cg->builder, LLVMIntEQ, left, right, "eq");
+  return LLVMBuildICmp(cg->builder, LLVMIntNE, left, right, "ne");
+}
+
+static LLVMValueRef cg_binary_logical(Codegen *cg, AstNode *node) {
+  LLVMValueRef left = cg_expression(cg, node->binary_logical.left);
+  LLVMValueRef right = cg_expression(cg, node->binary_logical.right);
+
+  left = cg_cast_value(cg, left, LLVMInt1TypeInContext(cg->context));
+  right = cg_cast_value(cg, right, LLVMInt1TypeInContext(cg->context));
+
+  if (node->binary_logical.op == OP_AND)
+    return LLVMBuildAnd(cg->builder, left, right, "and");
+  return LLVMBuildOr(cg->builder, left, right, "or");
+}
+
 static LLVMValueRef cg_increment(Codegen *cg, AstNode *node, int is_postfix,
                                  int negate) {
   StringView name = node->unary.expr->var.value;
@@ -212,96 +362,17 @@ static LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
     return val;
   }
 
-  case NODE_BINARY: {
-    LLVMValueRef left = cg_expression(cg, node->binary.left);
-    LLVMValueRef right = cg_expression(cg, node->binary.right);
+  case NODE_BINARY_ARITH:
+    return cg_binary_arith(cg, node);
 
-    LLVMTypeRef left_ty = LLVMTypeOf(left);
-    LLVMTypeRef right_ty = LLVMTypeOf(right);
+  case NODE_BINARY_COMPARE:
+    return cg_binary_compare(cg, node);
 
-    if (left_ty != right_ty) {
-      LLVMTypeKind left_kind = LLVMGetTypeKind(left_ty);
-      LLVMTypeKind right_kind = LLVMGetTypeKind(right_ty);
+  case NODE_BINARY_EQUALITY:
+    return cg_binary_equality(cg, node);
 
-      if (left_kind == LLVMDoubleTypeKind || right_kind == LLVMDoubleTypeKind) {
-        left = cg_cast_value(cg, left, LLVMDoubleTypeInContext(cg->context));
-        right = cg_cast_value(cg, right, LLVMDoubleTypeInContext(cg->context));
-      } else if (left_kind == LLVMFloatTypeKind ||
-                 right_kind == LLVMFloatTypeKind) {
-        left = cg_cast_value(cg, left, LLVMFloatTypeInContext(cg->context));
-        right = cg_cast_value(cg, right, LLVMFloatTypeInContext(cg->context));
-      }
-    }
-
-    LLVMTypeRef res_ty = LLVMTypeOf(left);
-    LLVMTypeKind res_kind = LLVMGetTypeKind(res_ty);
-
-    switch (node->binary.op) {
-    case OP_ADD:
-      return (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind)
-                 ? LLVMBuildFAdd(cg->builder, left, right, "fadd")
-                 : LLVMBuildAdd(cg->builder, left, right, "add");
-    case OP_SUB:
-      return (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind)
-                 ? LLVMBuildFSub(cg->builder, left, right, "fsub")
-                 : LLVMBuildSub(cg->builder, left, right, "sub");
-    case OP_MUL:
-      return (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind)
-                 ? LLVMBuildFMul(cg->builder, left, right, "fmul")
-                 : LLVMBuildMul(cg->builder, left, right, "mul");
-    case OP_DIV:
-      return (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind)
-                 ? LLVMBuildFDiv(cg->builder, left, right, "fdiv")
-                 : LLVMBuildSDiv(cg->builder, left, right, "div");
-    case OP_POW: {
-      LLVMValueRef left_d =
-          cg_cast_value(cg, left, LLVMDoubleTypeInContext(cg->context));
-      LLVMValueRef right_d =
-          cg_cast_value(cg, right, LLVMDoubleTypeInContext(cg->context));
-      LLVMValueRef args[] = {left_d, right_d};
-      CGFunction *pow_func = cg_find_function(cg, sv_from_parts("pow", 3));
-      LLVMValueRef res = LLVMBuildCall2(cg->builder, pow_func->type,
-                                        pow_func->value, args, 2, "pow");
-      return cg_cast_value(cg, res, res_ty);
-    }
-    case OP_MOD:
-      if (res_kind == LLVMFloatTypeKind || res_kind == LLVMDoubleTypeKind) {
-        // floating point modulo: fmod
-        LLVMValueRef left_d =
-            cg_cast_value(cg, left, LLVMDoubleTypeInContext(cg->context));
-        LLVMValueRef right_d =
-            cg_cast_value(cg, right, LLVMDoubleTypeInContext(cg->context));
-        CGFunction *fmod_func = cg_find_function(cg, sv_from_parts("fmod", 4));
-        if (!fmod_func) {
-          // declare fmod if not already declared
-          LLVMTypeRef fmod_args[] = {LLVMDoubleTypeInContext(cg->context),
-                                     LLVMDoubleTypeInContext(cg->context)};
-          LLVMTypeRef fmod_type = LLVMFunctionType(
-              LLVMDoubleTypeInContext(cg->context), fmod_args, 2, 0);
-          LLVMValueRef fmod_val =
-              LLVMAddFunction(cg->module, "fmod", fmod_type);
-          fmod_func = malloc(sizeof(CGFunction));
-          fmod_func->name = sv_from_parts("fmod", 4);
-          fmod_func->value = fmod_val;
-          fmod_func->type = fmod_type;
-          fmod_func->is_system = true;
-          List_push(&cg->system_functions, fmod_func);
-        }
-        LLVMValueRef args[] = {left_d, right_d};
-        LLVMValueRef res = LLVMBuildCall2(cg->builder, fmod_func->type,
-                                          fmod_func->value, args, 2, "fmod");
-        return cg_cast_value(cg, res, res_ty);
-      } else {
-        // integer modulo: srem for signed, urem for unsigned
-        int is_signed = 1; // or detect type from node->binary.left type
-        return is_signed ? LLVMBuildSRem(cg->builder, left, right, "mod")
-                         : LLVMBuildURem(cg->builder, left, right, "mod");
-      }
-    default:
-      fprintf(stderr, "Unknown binary op\n");
-      exit(1);
-    }
-  }
+  case NODE_BINARY_LOGICAL:
+    return cg_binary_logical(cg, node);
 
   case NODE_CAST_EXPR: {
     LLVMValueRef val = cg_expression(cg, node->cast_expr.expr);

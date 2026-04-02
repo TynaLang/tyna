@@ -40,12 +40,8 @@ static int Parser_expect(Parser *p, TokenType type, const char *msg) {
   return 1;
 }
 
-static int Parser_check(AstNode *p, AstKind type) {
-  if (!p)
-    return 0;
-  if (p->tag == type)
-    return 1;
-  return 0;
+static inline int Parser_is(AstNode *node, AstKind kind) {
+  return node && node->tag == kind;
 }
 
 static void Parser_sync(Parser *p) {
@@ -73,6 +69,17 @@ static void Parser_sync_param(Parser *p) {
     Parser_token_advance(p);
 }
 
+static void skip_to_next_param(Parser *p) {
+  Parser_sync_param(p);
+  if (p->current_token.type == TOKEN_COMMA)
+    Parser_token_advance(p);
+}
+
+static int is_type_token(TokenType t) {
+  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_VOID) ||
+         t == TOKEN_TYPE_BOOLEAN;
+}
+
 static int is_binary_operator(TokenType t) {
   switch (t) {
   case TOKEN_ASSIGN:
@@ -82,6 +89,14 @@ static int is_binary_operator(TokenType t) {
   case TOKEN_SLASH:
   case TOKEN_POWER:
   case TOKEN_MOD:
+  case TOKEN_LT:
+  case TOKEN_GT:
+  case TOKEN_LE:
+  case TOKEN_GE:
+  case TOKEN_EQ:
+  case TOKEN_NE:
+  case TOKEN_AND:
+  case TOKEN_OR:
     return 1;
   default:
     return 0;
@@ -94,7 +109,7 @@ static int is_postfix(Token t) {
          t.type == TOKEN_MINUS_MINUS;
 }
 
-static BinaryOp token_to_op(TokenType type) {
+static ArithmOp token_to_arithm_op(TokenType type) {
   switch (type) {
   case TOKEN_PLUS:
     return OP_ADD;
@@ -109,7 +124,47 @@ static BinaryOp token_to_op(TokenType type) {
   case TOKEN_MOD:
     return OP_MOD;
   default:
-    fprintf(stderr, "Unexpected operator in token_to_op\n");
+    fprintf(stderr, "Unexpected operator in token_to_arithm_op\n");
+    exit(1);
+  }
+}
+
+static CompareOp token_to_compare_op(TokenType type) {
+  switch (type) {
+  case TOKEN_LT:
+    return OP_LT;
+  case TOKEN_GT:
+    return OP_GT;
+  case TOKEN_LE:
+    return OP_LE;
+  case TOKEN_GE:
+    return OP_GE;
+  default:
+    fprintf(stderr, "Unexpected operator in token_to_compare_op\n");
+    exit(1);
+  }
+}
+
+static EqualityOp token_to_equality_op(TokenType type) {
+  switch (type) {
+  case TOKEN_EQ:
+    return OP_EQ;
+  case TOKEN_NE:
+    return OP_NE;
+  default:
+    fprintf(stderr, "Unexpected operator in token_to_equality_op\n");
+    exit(1);
+  }
+}
+
+static LogicalOp token_to_logical_op(TokenType type) {
+  switch (type) {
+  case TOKEN_AND:
+    return OP_AND;
+  case TOKEN_OR:
+    return OP_OR;
+  default:
+    fprintf(stderr, "Unexpected operator in token_to_logical_op\n");
     exit(1);
   }
 }
@@ -117,31 +172,38 @@ static BinaryOp token_to_op(TokenType type) {
 static BindingPower infix_binding_power(TokenType t) {
   switch (t) {
   case TOKEN_ASSIGN:
-    return (BindingPower){2, 1};
+    return (struct BindingPower){2, 1};
+
+  case TOKEN_OR:
+    return (struct BindingPower){3, 4};
+  case TOKEN_AND:
+    return (struct BindingPower){5, 6};
+
+  case TOKEN_EQ:
+  case TOKEN_NE:
+    return (struct BindingPower){7, 8};
+  case TOKEN_LT:
+  case TOKEN_GT:
+  case TOKEN_LE:
+  case TOKEN_GE:
+    return (struct BindingPower){9, 10};
+
   case TOKEN_PLUS:
   case TOKEN_MINUS:
-    return (BindingPower){10, 11};
+    return (struct BindingPower){11, 12};
   case TOKEN_STAR:
   case TOKEN_SLASH:
   case TOKEN_MOD:
-    return (BindingPower){20, 21};
+    return (struct BindingPower){13, 14};
   case TOKEN_POWER:
-    return (BindingPower){30, 31};
+    return (struct BindingPower){15, 16};
+
   default:
-    return (BindingPower){0, 0};
+    return (struct BindingPower){0, 0};
   }
 }
 
-static int is_type_token(TokenType t) {
-  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_VOID) ||
-         t == TOKEN_TYPE_BOOLEAN;
-}
-
-static void skip_to_next_param(Parser *p) {
-  Parser_sync_param(p);
-  if (p->current_token.type == TOKEN_COMMA)
-    Parser_token_advance(p);
-}
+// ---------- FORWARD DECLARATIONS ---------- //
 
 static AstNode *Parser_parse_expression(Parser *p, int min_bp);
 static AstNode *Parser_parse_statement(Parser *p);
@@ -151,8 +213,7 @@ static TypeKind Parser_parse_type(Parser *p);
 
 static AstNode *Parser_parse_call(Parser *p, AstNode *expr) {
   Location loc = p->current_token.loc;
-  Parser_token_advance(p); // consume '('
-
+  Parser_token_advance(p);
   List args;
   List_init(&args);
 
@@ -162,7 +223,6 @@ static AstNode *Parser_parse_call(Parser *p, AstNode *expr) {
       if (!arg)
         return NULL;
       List_push(&args, arg);
-
       if (p->current_token.type == TOKEN_COMMA)
         Parser_token_advance(p);
       else
@@ -178,38 +238,32 @@ static AstNode *Parser_parse_call(Parser *p, AstNode *expr) {
 
 static AstNode *Parser_parse_index(Parser *p, AstNode *expr) {
   Location loc = p->current_token.loc;
-  Parser_token_advance(p); // consume '['
-
+  Parser_token_advance(p);
   AstNode *index = Parser_parse_expression(p, 0);
   if (!index)
     return NULL;
   if (!Parser_expect(p, TOKEN_RBRACKET, "Expected ']'"))
     return NULL;
-
   return AstNode_new_index(expr, index, loc);
 }
 
 static AstNode *Parser_parse_field(Parser *p, AstNode *expr) {
-  Parser_token_advance(p); // consume '.'
-
+  Parser_token_advance(p);
   Token ident = p->current_token;
   if (!Parser_expect(p, TOKEN_IDENT, "Expected field name after '.'"))
     return NULL;
-
   return AstNode_new_field(expr, ident.text, ident.loc);
 }
 
 static AstNode *Parser_parse_postfix_inc(Parser *p, AstNode *expr) {
   Token op = p->current_token;
   Parser_token_advance(p);
-
   UnaryOp unary_op = (op.type == TOKEN_PLUS_PLUS) ? OP_POST_INC : OP_POST_DEC;
   if (expr->tag != NODE_VAR) {
     ErrorHandler_report(p->eh, op.loc, "Operator '%s' requires an identifier",
                         unary_op == OP_POST_INC ? "++" : "--");
     return NULL;
   }
-
   return AstNode_new_unary(unary_op, expr, op.loc);
 }
 
@@ -229,7 +283,7 @@ static AstNode *Parser_make_postfix(Parser *p, AstNode *expr) {
   }
 }
 
-// ---------- PARSER BODY ---------- //
+// ---------- PARSING ---------- //
 
 static AstNode *Parser_parse_primary(Parser *p) {
   Token t = p->current_token;
@@ -244,7 +298,6 @@ static AstNode *Parser_parse_primary(Parser *p) {
     return AstNode_new_string(t.text, t.loc);
   case TOKEN_IDENT:
     return AstNode_new_var(t.text, t.loc);
-
   case TOKEN_TRUE:
     return AstNode_new_bool(1, t.loc);
   case TOKEN_FALSE:
@@ -273,8 +326,8 @@ static AstNode *Parser_parse_primary(Parser *p) {
   case TOKEN_MINUS_MINUS: {
     AstNode *expr = Parser_parse_expression(p, 100);
     UnaryOp op = (t.type == TOKEN_PLUS_PLUS) ? OP_PRE_INC : OP_PRE_DEC;
-    if (!Parser_check(expr, NODE_VAR)) {
-      ErrorHandler_report(p->eh, t.loc, "Operator requires an identifier");
+    if (!Parser_is(expr, NODE_VAR)) {
+      ErrorHandler_report(p->eh, t.loc, "Operator requires identifier");
       return NULL;
     }
     return AstNode_new_unary(op, expr, t.loc);
@@ -303,7 +356,8 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
 
     if (!is_binary_operator(op.type))
       break;
-    BindingPower bp = infix_binding_power(op.type);
+
+    struct BindingPower bp = infix_binding_power(op.type);
     if (bp.left_bp < min_bp)
       break;
 
@@ -312,18 +366,53 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     if (!right)
       return NULL;
 
-    if (op.type == TOKEN_ASSIGN) {
-      if (!Parser_check(left, NODE_VAR)) {
+    // CREATE CORRECT NODE
+    switch (op.type) {
+    case TOKEN_ASSIGN:
+      if (!Parser_is(left, NODE_VAR)) {
         ErrorHandler_report(p->eh, op.loc, "Invalid assignment target");
         return NULL;
       }
-      if (Parser_check(right, NODE_ASSIGN_EXPR)) {
+      if (Parser_is(right, NODE_ASSIGN_EXPR)) {
         ErrorHandler_report(p->eh, op.loc, "Chained assignment not supported");
         return NULL;
       }
       left = AstNode_new_assign_expr(left, right, op.loc);
-    } else {
-      left = AstNode_new_binary(left, right, token_to_op(op.type), op.loc);
+      break;
+
+    case TOKEN_PLUS:
+    case TOKEN_MINUS:
+    case TOKEN_STAR:
+    case TOKEN_SLASH:
+    case TOKEN_MOD:
+    case TOKEN_POWER:
+      left = AstNode_new_binary_arith(left, right, token_to_arithm_op(op.type),
+                                      op.loc);
+      break;
+
+    case TOKEN_LT:
+    case TOKEN_GT:
+    case TOKEN_LE:
+    case TOKEN_GE:
+      left = AstNode_new_binary_compare(left, right,
+                                        token_to_compare_op(op.type), op.loc);
+      break;
+
+    case TOKEN_EQ:
+    case TOKEN_NE:
+      left = AstNode_new_binary_equality(left, right,
+                                         token_to_equality_op(op.type), op.loc);
+      break;
+
+    case TOKEN_AND:
+    case TOKEN_OR:
+      left = AstNode_new_binary_logical(left, right,
+                                        token_to_logical_op(op.type), op.loc);
+      break;
+
+    default:
+      fprintf(stderr, "Unexpected binary operator\n");
+      exit(1);
     }
   }
 

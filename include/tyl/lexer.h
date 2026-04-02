@@ -2,6 +2,7 @@
 #define LEXER_H
 
 #include "utils.h"
+#include <ctype.h>
 #include <stddef.h>
 
 struct ErrorHandler;
@@ -26,7 +27,7 @@ typedef enum TokenType {
   TOKEN_FN,
   TOKEN_RETURN,
 
-  // Identifier
+  // Identifiers
   TOKEN_IDENT,
 
   // Data Types
@@ -62,21 +63,35 @@ typedef enum TokenType {
   TOKEN_RBRACE,
   TOKEN_LBRACKET,
   TOKEN_RBRACKET,
-  TOKEN_SLASH,
-  TOKEN_PLUS,
-  TOKEN_PLUS_PLUS,
-  TOKEN_MINUS,
-  TOKEN_MINUS_MINUS,
-  TOKEN_STAR,
-  TOKEN_POWER,
   TOKEN_COMMA,
   TOKEN_DOT,
-  TOKEN_MOD,
 
-  // ETC
+  // Arithmetic
+  TOKEN_PLUS,
+  TOKEN_MINUS,
+  TOKEN_STAR,
+  TOKEN_SLASH,
+  TOKEN_POWER,
+  TOKEN_MOD,
+  TOKEN_PLUS_PLUS,
+  TOKEN_MINUS_MINUS,
+
+  // Comparison
+  TOKEN_EQ,
+  TOKEN_NE,
+  TOKEN_LT,
+  TOKEN_LE,
+  TOKEN_GT,
+  TOKEN_GE,
+
+  // Boolean logic
+  TOKEN_AND,
+  TOKEN_OR,
+
+  // Special
   TOKEN_ERROR,
   TOKEN_EOF,
-  TOKEN_UNKNOWN,
+  TOKEN_UNKNOWN
 } TokenType;
 
 typedef struct Token {
@@ -87,10 +102,6 @@ typedef struct Token {
 } Token;
 
 Lexer make_lexer(const char *src, struct ErrorHandler *eh);
-
-char Lexer_peek(const Lexer *l);
-char Lexer_advance(Lexer *l);
-
 Token Token_advance(Lexer *l);
 
 #endif

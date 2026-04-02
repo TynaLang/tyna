@@ -8,7 +8,10 @@
 typedef enum AstKind AstKind;
 typedef struct AstNode AstNode;
 typedef enum TypeKind TypeKind;
-typedef enum BinaryOp BinaryOp;
+typedef enum ArithmOp ArithmOp;
+typedef enum CompareOp CompareOp;
+typedef enum EqualityOp EqualityOp;
+typedef enum LogicalOp LogicalOp;
 typedef enum UnaryOp UnaryOp;
 
 enum TypeKind {
@@ -29,8 +32,10 @@ enum TypeKind {
   TYPE_UNKNOWN
 };
 
-enum BinaryOp { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POW, OP_MOD };
-
+enum ArithmOp { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POW, OP_MOD };
+enum CompareOp { OP_LT, OP_GT, OP_LE, OP_GE };
+enum EqualityOp { OP_EQ, OP_NE };
+enum LogicalOp { OP_AND, OP_OR };
 enum UnaryOp { OP_NEG, OP_PRE_INC, OP_POST_INC, OP_PRE_DEC, OP_POST_DEC };
 
 enum AstKind {
@@ -42,7 +47,12 @@ enum AstKind {
   NODE_BOOL,
   NODE_STRING,
   NODE_VAR,
-  NODE_BINARY,
+
+  NODE_BINARY_ARITH,
+  NODE_BINARY_COMPARE,
+  NODE_BINARY_EQUALITY,
+  NODE_BINARY_LOGICAL,
+
   NODE_UNARY,
   NODE_CAST_EXPR,
   NODE_ASSIGN_EXPR,
@@ -112,8 +122,26 @@ struct AstNode {
     struct {
       AstNode *left;
       AstNode *right;
-      BinaryOp op;
-    } binary;
+      ArithmOp op;
+    } binary_arith;
+
+    struct {
+      AstNode *left;
+      AstNode *right;
+      CompareOp op;
+    } binary_compare;
+
+    struct {
+      AstNode *left;
+      AstNode *right;
+      EqualityOp op;
+    } binary_equality;
+
+    struct {
+      AstNode *left;
+      AstNode *right;
+      LogicalOp op;
+    } binary_logical;
 
     struct {
       AstNode *expr;
@@ -162,8 +190,14 @@ AstNode *AstNode_new_char(char value, Location loc);
 AstNode *AstNode_new_bool(int value, Location loc);
 AstNode *AstNode_new_string(StringView value, Location loc);
 AstNode *AstNode_new_var(StringView value, Location loc);
-AstNode *AstNode_new_binary(AstNode *left, AstNode *right, BinaryOp op,
-                            Location loc);
+AstNode *AstNode_new_binary_arith(AstNode *left, AstNode *right, ArithmOp op,
+                                  Location loc);
+AstNode *AstNode_new_binary_compare(AstNode *left, AstNode *right, CompareOp op,
+                                    Location loc);
+AstNode *AstNode_new_binary_equality(AstNode *left, AstNode *right,
+                                     EqualityOp op, Location loc);
+AstNode *AstNode_new_binary_logical(AstNode *left, AstNode *right, LogicalOp op,
+                                    Location loc);
 AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc);
 AstNode *AstNode_new_cast_expr(AstNode *expr, TypeKind type, Location loc);
 AstNode *AstNode_new_assign_expr(AstNode *target, AstNode *value, Location loc);

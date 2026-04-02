@@ -1,48 +1,53 @@
-#include <ctype.h>
-#include <stddef.h>
+#include "lexer.h"
+#include "ast.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "ast.h"
-#include "lexer.h"
-
 Lexer make_lexer(const char *src, struct ErrorHandler *eh) {
-  Lexer l;
-  l.cursor = 0;
+  Lexer l = {0};
+  l.src = src;
   l.loc.line = 1;
   l.loc.col = 1;
-  l.src = src;
   l.eh = eh;
-
   return l;
 }
 
-char Lexer_peek(const Lexer *l) { return l->src[l->cursor]; }
-char Lexer_advance(Lexer *l) {
-  char c = Lexer_peek(l);
+static char peek(Lexer *l) { return l->src[l->cursor]; }
+static char advance(Lexer *l) {
+  char c = peek(l);
   l->cursor++;
-
   if (c == '\n') {
     l->loc.line++;
     l->loc.col = 1;
-  } else {
+  } else
     l->loc.col++;
-  }
-
   return c;
 }
 
 static void skip_whitespace(Lexer *l) {
-  while (isspace(Lexer_peek(l)))
-    Lexer_advance(l);
+  while (isspace(peek(l)))
+    advance(l);
+}
+
+static void skip_comment(Lexer *l) {
+  while (peek(l) && peek(l) != '\n')
+    advance(l);
+}
+
+static Token make_token(Lexer *l, TokenType type, size_t start, size_t len) {
+  Token t;
+  t.type = type;
+  t.text = sv_from_parts(l->src + start, len);
+  t.loc = l->loc;
+  t.number = 0;
+  return t;
 }
 
 static Token read_identifier(Lexer *l) {
   size_t start = l->cursor;
-  while (isalnum(Lexer_peek(l)) || Lexer_peek(l) == '_')
-    Lexer_advance(l);
-
+  while (isalnum(peek(l)) || peek(l) == '_')
+    advance(l);
   StringView text = sv_from_parts(l->src + start, l->cursor - start);
 
   Token t;
@@ -105,96 +110,78 @@ static Token read_number(Lexer *l) {
   size_t start = l->cursor;
   int has_dot = 0;
 
-  while (isdigit(Lexer_peek(l)) || Lexer_peek(l) == '.') {
-    if (Lexer_peek(l) == '.') {
+  while (isdigit(peek(l)) || peek(l) == '.') {
+    if (peek(l) == '.') {
       if (has_dot)
-        break; // Only one dot allowed
+        break;
       has_dot = 1;
     }
-    Lexer_advance(l);
+    advance(l);
   }
 
-  // Check for 'f' suffix for floats
-  if (Lexer_peek(l) == 'f' || Lexer_peek(l) == 'F') {
-    Lexer_advance(l);
-  }
+  if (peek(l) == 'f' || peek(l) == 'F')
+    advance(l);
 
   StringView text = sv_from_parts(l->src + start, l->cursor - start);
   char *tmp = sv_to_cstr(text);
   double val = strtod(tmp, NULL);
   free(tmp);
 
-  Token t;
-  t.text = text;
-  t.number = val;
-  t.type = TOKEN_NUMBER;
-  t.loc = l->loc;
+  Token t = {TOKEN_NUMBER, text, val, l->loc};
   return t;
 }
 
-static void skip_comment(Lexer *l) {
-  while (Lexer_peek(l) != '\0' && Lexer_peek(l) != '\n')
-    Lexer_advance(l);
-}
-
 static Token read_string(Lexer *l) {
-  Lexer_advance(l); // skip opening "
-  size_t start_content = l->cursor;
+  advance(l); // skip opening "
+  size_t start = l->cursor;
 
-  while (Lexer_peek(l) != '"' && Lexer_peek(l) != '\0' &&
-         Lexer_peek(l) != '\n') {
-    if (Lexer_peek(l) == '\\')
-      Lexer_advance(l); // skip escape
-    Lexer_advance(l);
+  while (peek(l) != '"' && peek(l) && peek(l) != '\n') {
+    if (peek(l) == '\\')
+      advance(l);
+    advance(l);
   }
 
-  Token t;
+  Token t = {0};
   t.loc = l->loc;
 
-  if (Lexer_peek(l) != '"') {
+  if (peek(l) != '"') {
     t.type = TOKEN_ERROR;
     t.text = sv_from_cstr("unterminated string literal");
     return t;
   }
 
-  StringView text =
-      sv_from_parts(l->src + start_content, l->cursor - start_content);
-  Lexer_advance(l); // skip closing "
-
-  t.text = text;
+  t.text = sv_from_parts(l->src + start, l->cursor - start);
   t.type = TOKEN_STRING;
+  advance(l); // skip closing "
   return t;
 }
 
 static Token read_char(Lexer *l) {
-  Lexer_advance(l); // skip opening '
+  advance(l); // skip opening '
   size_t start = l->cursor;
   int len = 0;
 
-  while (Lexer_peek(l) != '\'' && Lexer_peek(l) != '\0' &&
-         Lexer_peek(l) != '\n') {
-    if (Lexer_peek(l) == '\\')
-      Lexer_advance(l); // skip escape
-    Lexer_advance(l);
+  while (peek(l) != '\'' && peek(l) && peek(l) != '\n') {
+    if (peek(l) == '\\')
+      advance(l);
+    advance(l);
     len++;
   }
 
-  Token t;
+  Token t = {0};
   t.loc = l->loc;
 
-  if (Lexer_peek(l) != '\'' || len != 1) {
+  if (peek(l) != '\'' || len != 1) {
     t.type = TOKEN_ERROR;
     t.text = sv_from_cstr("invalid char literal");
-    if (Lexer_peek(l) == '\'')
-      Lexer_advance(l);
+    if (peek(l) == '\'')
+      advance(l);
     return t;
   }
 
-  StringView text = sv_from_parts(l->src + start, len);
-  Lexer_advance(l); // skip closing '
-
-  t.text = text;
+  t.text = sv_from_parts(l->src + start, len);
   t.type = TOKEN_CHAR;
+  advance(l);
   return t;
 }
 
@@ -204,8 +191,8 @@ Token Token_advance(Lexer *l) {
   Token t;
   t.loc = l->loc;
 
-  char c = Lexer_peek(l);
-  if (c == '\0') {
+  char c = peek(l);
+  if (!c) {
     t.type = TOKEN_EOF;
     t.text = (StringView){NULL, 0};
     return t;
@@ -216,8 +203,8 @@ Token Token_advance(Lexer *l) {
   if (isdigit(c) || c == '.')
     return read_number(l);
   if (c == '/') {
-    Lexer_advance(l);
-    if (Lexer_peek(l) == '/') {
+    advance(l);
+    if (peek(l) == '/') {
       skip_comment(l);
       return Token_advance(l);
     }
@@ -230,9 +217,9 @@ Token Token_advance(Lexer *l) {
   if (c == '\'')
     return read_char(l);
 
-  // Single-character tokens
-  Lexer_advance(l);
+  advance(l);
   t.text = sv_from_parts(l->src + l->cursor - 1, 1);
+
   switch (c) {
   case ':':
     t.type = TOKEN_COLON;
@@ -240,16 +227,12 @@ Token Token_advance(Lexer *l) {
   case ';':
     t.type = TOKEN_SEMI;
     break;
-  case '=':
-    t.type = TOKEN_ASSIGN;
-    break;
   case '(':
     t.type = TOKEN_LPAREN;
     break;
   case ')':
     t.type = TOKEN_RPAREN;
     break;
-    ;
   case '{':
     t.type = TOKEN_LBRACE;
     break;
@@ -262,20 +245,28 @@ Token Token_advance(Lexer *l) {
   case ']':
     t.type = TOKEN_RBRACKET;
     break;
+  case ',':
+    t.type = TOKEN_COMMA;
+    break;
+  case '.':
+    t.type = TOKEN_DOT;
+    break;
+
+  // Arithmetic
   case '+':
     t.type = TOKEN_PLUS;
-    if (Lexer_peek(l) == '+') {
-      Lexer_advance(l);
-      t.text = sv_from_parts(t.text.data, 2);
+    if (peek(l) == '+') {
+      advance(l);
       t.type = TOKEN_PLUS_PLUS;
+      t.text.len = 2;
     }
     break;
   case '-':
     t.type = TOKEN_MINUS;
-    if (Lexer_peek(l) == '-') {
-      Lexer_advance(l);
-      t.text = sv_from_parts(t.text.data, 2);
+    if (peek(l) == '-') {
+      advance(l);
       t.type = TOKEN_MINUS_MINUS;
+      t.text.len = 2;
     }
     break;
   case '*':
@@ -287,16 +278,34 @@ Token Token_advance(Lexer *l) {
   case '%':
     t.type = TOKEN_MOD;
     break;
-  case ',':
-    t.type = TOKEN_COMMA;
+
+  // Comparisons
+  case '=':
+    t.type = (peek(l) == '=') ? (advance(l), TOKEN_EQ) : TOKEN_ASSIGN;
     break;
-  case '.':
-    t.type = TOKEN_DOT;
+  case '!':
+    t.type = (peek(l) == '=') ? (advance(l), TOKEN_NE) : TOKEN_ERROR;
     break;
+  case '<':
+    t.type = (peek(l) == '=') ? (advance(l), TOKEN_LE) : TOKEN_LT;
+    break;
+  case '>':
+    t.type = (peek(l) == '=') ? (advance(l), TOKEN_GE) : TOKEN_GT;
+    break;
+
+  // Boolean logic
+  case '&':
+    t.type = (peek(l) == '&') ? (advance(l), TOKEN_AND) : TOKEN_ERROR;
+    break;
+  case '|':
+    t.type = (peek(l) == '|') ? (advance(l), TOKEN_OR) : TOKEN_ERROR;
+    break;
+
   default:
     t.type = TOKEN_ERROR;
     t.text = sv_from_cstr("unknown character");
     break;
   }
+
   return t;
 }

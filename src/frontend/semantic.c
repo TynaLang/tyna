@@ -28,9 +28,8 @@ Symbol *SymbolTable_find(SymbolTable *table, StringView name) {
   for (SymbolTable *t = table; t != NULL; t = t->parent) {
     for (size_t i = 0; i < t->symbols.len; i++) {
       Symbol *symbol = t->symbols.items[i];
-      if (sv_eq(symbol->name, name)) {
+      if (sv_eq(symbol->name, name))
         return symbol;
-      }
     }
   }
   return NULL;
@@ -39,12 +38,9 @@ Symbol *SymbolTable_find(SymbolTable *table, StringView name) {
 static void semantic_error(SymbolTable *t, AstNode *n, const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
-
   char msg_buf[1024];
   vsnprintf(msg_buf, sizeof(msg_buf), fmt, args);
-
   va_end(args);
-
   ErrorHandler_report(t->eh, n->loc, "%s", msg_buf);
 }
 
@@ -78,22 +74,17 @@ static int type_rank(TypeKind t) {
 }
 
 static int is_numeric(TypeKind t) { return type_rank(t) > 0; }
-
 int is_bool(TypeKind t) { return t == TYPE_BOOL; }
 
 static int can_implicitly_cast(TypeKind to, TypeKind from) {
   if (to == from)
     return 1;
-
   if (to == TYPE_VOID || from == TYPE_VOID)
     return 0;
-
   if (is_bool(to) || is_bool(from))
     return 0;
-
   if (is_numeric(to) && is_numeric(from))
     return type_rank(to) >= type_rank(from);
-
   return 0;
 }
 
@@ -104,12 +95,12 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
   switch (node->tag) {
   case NODE_NUMBER:
     return TYPE_I32;
-
   case NODE_CHAR:
     return TYPE_CHAR;
-
   case NODE_STRING:
     return TYPE_STRING;
+  case NODE_BOOL:
+    return TYPE_BOOL;
 
   case NODE_VAR: {
     Symbol *s = SymbolTable_find(table, node->var.value);
@@ -119,21 +110,6 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
       return TYPE_UNKNOWN;
     }
     return s->type;
-  }
-
-  case NODE_BINARY: {
-    TypeKind left = check_expression(table, node->binary.left);
-    TypeKind right = check_expression(table, node->binary.right);
-
-    if (left == TYPE_UNKNOWN || right == TYPE_UNKNOWN)
-      return TYPE_UNKNOWN;
-
-    if (is_numeric(left) && is_numeric(right)) {
-      return type_rank(left) >= type_rank(right) ? left : right;
-    }
-
-    semantic_error(table, node, "Binary operator on non-numeric types");
-    return TYPE_UNKNOWN;
   }
 
   case NODE_UNARY: {
@@ -154,14 +130,60 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
                        "Cannot increment/decrement a constant variable");
         return TYPE_UNKNOWN;
       }
+    } else if (node->unary.op == OP_NEG) {
+      if (!is_numeric(t)) {
+        semantic_error(table, node, "Unary '-' applied to non-numeric type");
+        return TYPE_UNKNOWN;
+      }
     }
 
     return t;
   }
 
+  case NODE_BINARY_ARITH: {
+    TypeKind left = check_expression(table, node->binary_arith.left);
+    TypeKind right = check_expression(table, node->binary_arith.right);
+    if (!is_numeric(left) || !is_numeric(right)) {
+      semantic_error(table, node, "Arithmetic operator on non-numeric type");
+      return TYPE_UNKNOWN;
+    }
+    return type_rank(left) >= type_rank(right) ? left : right;
+  }
+
+  case NODE_BINARY_COMPARE: {
+    TypeKind left = check_expression(table, node->binary_compare.left);
+    TypeKind right = check_expression(table, node->binary_compare.right);
+    if (!is_numeric(left) || !is_numeric(right)) {
+      semantic_error(table, node,
+                     "Comparison operator requires numeric operands");
+      return TYPE_UNKNOWN;
+    }
+    return TYPE_BOOL;
+  }
+
+  case NODE_BINARY_EQUALITY: {
+    TypeKind left = check_expression(table, node->binary_equality.left);
+    TypeKind right = check_expression(table, node->binary_equality.right);
+    if (!can_implicitly_cast(left, right) &&
+        !can_implicitly_cast(right, left)) {
+      semantic_error(table, node, "Equality operator on incompatible types");
+      return TYPE_UNKNOWN;
+    }
+    return TYPE_BOOL;
+  }
+
+  case NODE_BINARY_LOGICAL: {
+    TypeKind left = check_expression(table, node->binary_logical.left);
+    TypeKind right = check_expression(table, node->binary_logical.right);
+    if (!is_bool(left) || !is_bool(right)) {
+      semantic_error(table, node, "Logical operator requires boolean operands");
+      return TYPE_UNKNOWN;
+    }
+    return TYPE_BOOL;
+  }
+
   case NODE_ASSIGN_EXPR: {
     AstNode *target = node->assign_expr.target;
-
     if (!is_lvalue(target)) {
       semantic_error(table, node, "Invalid assignment target");
       return TYPE_UNKNOWN;
@@ -180,7 +202,6 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
                      SV_ARG(target->var.value));
       return TYPE_UNKNOWN;
     }
-
     if (s->is_const) {
       semantic_error(table, node, "Cannot assign to constant '" SV_FMT "'",
                      SV_ARG(s->name));
@@ -189,14 +210,11 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
 
     TypeKind lhs = s->type;
     TypeKind rhs = check_expression(table, node->assign_expr.value);
-
-    if (lhs != TYPE_UNKNOWN && rhs != TYPE_UNKNOWN &&
-        !can_implicitly_cast(lhs, rhs)) {
+    if (!can_implicitly_cast(lhs, rhs)) {
       semantic_error(table, node,
                      "Type mismatch in assignment: expected %s, got %s",
                      type_to_name(lhs), type_to_name(rhs));
     }
-
     return lhs;
   }
 
@@ -223,10 +241,8 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
 
     for (size_t i = 0; i < node->call.args.len; i++) {
       TypeKind arg_type = check_expression(table, node->call.args.items[i]);
-
       if (s->scope && i < s->scope->symbols.len) {
         Symbol *param = s->scope->symbols.items[i];
-
         if (!can_implicitly_cast(param->type, arg_type)) {
           semantic_error(table, node,
                          "Argument %zu type mismatch: expected %s, got %s", i,
@@ -234,7 +250,6 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
         }
       }
     }
-
     return s->type;
   }
 
@@ -260,22 +275,17 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
                      SV_ARG(name));
       return;
     }
-
     TypeKind val_type = check_expression(table, node->var_decl.value);
     TypeKind decl_type = node->var_decl.declared_type;
-
-    if (decl_type == TYPE_UNKNOWN) {
+    if (decl_type == TYPE_UNKNOWN)
       decl_type = val_type;
-      node->var_decl.declared_type = decl_type;
-    }
-
+    node->var_decl.declared_type = decl_type;
     SymbolTable_add(table, name, decl_type, node->var_decl.is_const);
     break;
   }
 
   case NODE_FUNC_DECL: {
     StringView fn_name = node->func_decl.name;
-
     if (SymbolTable_find(table, fn_name)) {
       semantic_error(table, node, "Duplicate function '%.*s'", (int)fn_name.len,
                      fn_name.data);
@@ -320,9 +330,8 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
             if (!set) {
               inferred = t;
               set = true;
-            } else if (inferred != t) {
-              inferred = TYPE_UNKNOWN; // multiple inconsistent returns
-            }
+            } else if (inferred != t)
+              inferred = TYPE_UNKNOWN;
           }
         }
       }
@@ -341,12 +350,11 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
         if (stmt->tag == NODE_RETURN_STMT) {
           TypeKind t =
               check_expression(fn_symbol->scope, stmt->return_stmt.expr);
-          if (node->func_decl.return_type == TYPE_VOID) {
-            if (stmt->return_stmt.expr != NULL) {
-              semantic_error(fn_symbol->scope, stmt,
-                             "Void function '%.*s' cannot return a value",
-                             (int)fn_name.len, fn_name.data);
-            }
+          if (node->func_decl.return_type == TYPE_VOID &&
+              stmt->return_stmt.expr != NULL) {
+            semantic_error(fn_symbol->scope, stmt,
+                           "Void function '%.*s' cannot return a value",
+                           (int)fn_name.len, fn_name.data);
           } else if (node->func_decl.return_type != TYPE_UNKNOWN &&
                      !can_implicitly_cast(node->func_decl.return_type, t)) {
             semantic_error(fn_symbol->scope, stmt,

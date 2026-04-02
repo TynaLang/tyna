@@ -67,12 +67,39 @@ AstNode *AstNode_new_var(StringView value, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_binary(AstNode *left, AstNode *right, BinaryOp op,
-                            Location loc) {
-  AstNode *node = AstNode_new(NODE_BINARY, loc);
-  node->binary.left = left;
-  node->binary.right = right;
-  node->binary.op = op;
+static AstNode *AstNode_binary(AstKind ast_kind, Location loc, AstNode *left,
+                               AstNode *right) {
+  AstNode *node = AstNode_new(ast_kind, loc);
+  node->binary_arith.left = left;
+  node->binary_arith.right = right;
+  return node;
+}
+
+AstNode *AstNode_new_binary_arith(AstNode *left, AstNode *right, ArithmOp op,
+                                  Location loc) {
+  AstNode *node = AstNode_binary(NODE_BINARY_ARITH, loc, left, right);
+  node->binary_arith.op = op;
+  return node;
+}
+
+AstNode *AstNode_new_binary_compare(AstNode *left, AstNode *right, CompareOp op,
+                                    Location loc) {
+  AstNode *node = AstNode_binary(NODE_BINARY_COMPARE, loc, left, right);
+  node->binary_compare.op = op;
+  return node;
+}
+
+AstNode *AstNode_new_binary_equality(AstNode *left, AstNode *right,
+                                     EqualityOp op, Location loc) {
+  AstNode *node = AstNode_binary(NODE_BINARY_EQUALITY, loc, left, right);
+  node->binary_equality.op = op;
+  return node;
+}
+
+AstNode *AstNode_new_binary_logical(AstNode *left, AstNode *right, LogicalOp op,
+                                    Location loc) {
+  AstNode *node = AstNode_binary(NODE_BINARY_LOGICAL, loc, left, right);
+  node->binary_logical.op = op;
   return node;
 }
 
@@ -135,7 +162,7 @@ AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc) {
 }
 
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc) {
-  AstNode *node = AstNode_new(NODE_FIELD, loc);
+  AstNode *node = AstNode_new(NODE_INDEX, loc);
   node->index.array = expr;
   node->index.index = index;
   return node;
@@ -236,14 +263,14 @@ void Ast_print(AstNode *node, int indent) {
   case NODE_VAR:
     printf("VAR: " SV_FMT "\n", SV_ARG(node->var.value));
     break;
-  case NODE_BINARY:
-    printf("BINARY OP: %d\n", node->binary.op);
+  case NODE_BINARY_ARITH:
+    printf("BINARY ARITH OP: %d\n", node->binary_arith.op);
     print_indent(indent + 1);
     printf("LEFT:\n");
-    Ast_print(node->binary.left, indent + 2);
+    Ast_print(node->binary_arith.left, indent + 2);
     print_indent(indent + 1);
     printf("RIGHT:\n");
-    Ast_print(node->binary.right, indent + 2);
+    Ast_print(node->binary_arith.right, indent + 2);
     break;
   case NODE_UNARY:
     printf("UNARY OP: %d\n", node->unary.op);
