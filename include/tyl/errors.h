@@ -1,8 +1,8 @@
 #ifndef TYL_ERROR_H
 #define TYL_ERROR_H
 
-#include "lexer.h"
-#include "utils.h"
+#include "tyl/lexer.h"
+#include "tyl/utils.h"
 #include <stddef.h>
 
 typedef struct ErrorHandler {

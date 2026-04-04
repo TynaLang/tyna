@@ -1,39 +1,11 @@
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "semantic.h"
-
-void SymbolTable_init(SymbolTable *table, ErrorHandler *eh) {
-  table->parent = NULL;
-  List_init(&table->symbols);
-  table->eh = eh;
-}
-
-void SymbolTable_add(SymbolTable *table, StringView name, TypeKind type,
-                     int is_const) {
-  Symbol *symbol = malloc(sizeof(Symbol));
-  if (!symbol) {
-    fprintf(stderr, "Failed to allocate symbol\n");
-    exit(1);
-  }
-  symbol->name = name;
-  symbol->type = type;
-  symbol->is_const = is_const;
-  List_push(&table->symbols, symbol);
-}
-
-Symbol *SymbolTable_find(SymbolTable *table, StringView name) {
-  for (SymbolTable *t = table; t != NULL; t = t->parent) {
-    for (size_t i = 0; i < t->symbols.len; i++) {
-      Symbol *symbol = t->symbols.items[i];
-      if (sv_eq(symbol->name, name))
-        return symbol;
-    }
-  }
-  return NULL;
-}
+#include "tyl/ast.h"
+#include "tyl/semantic.h"
 
 static void semantic_error(SymbolTable *t, AstNode *n, const char *fmt, ...) {
   va_list args;
@@ -73,7 +45,7 @@ static int type_rank(TypeKind t) {
   }
 }
 
-static int is_numeric(TypeKind t) { return type_rank(t) > 0; }
+int is_numeric(TypeKind t) { return type_rank(t) > 0; }
 int is_bool(TypeKind t) { return t == TYPE_BOOL; }
 
 static int can_implicitly_cast(TypeKind to, TypeKind from) {
@@ -86,6 +58,96 @@ static int can_implicitly_cast(TypeKind to, TypeKind from) {
   if (is_numeric(to) && is_numeric(from))
     return type_rank(to) >= type_rank(from);
   return 0;
+}
+
+int signature_matches(AstNode *dec, AstNode *imp) {
+  if (dec->tag != NODE_FUNC_DECL || imp->tag != NODE_FUNC_DECL) {
+    panic("Expected function declaration nodes in signature_matches");
+    return 0;
+  }
+
+  if (dec->func_decl.return_type != imp->func_decl.return_type)
+    return 0;
+  if (dec->func_decl.params.len != imp->func_decl.params.len)
+    return 0;
+
+  List decl_params = dec->func_decl.params;
+  List imp_params = imp->func_decl.params;
+  for (int i = 0; i < decl_params.len; i++) {
+    if (decl_params.items[i] != imp_params.items[i])
+      return 0;
+  }
+  return 1;
+}
+
+void SymbolTable_init(SymbolTable *table, ErrorHandler *eh) {
+  table->parent = NULL;
+  List_init(&table->symbols);
+  table->eh = eh;
+}
+
+void SymbolTable_add(SymbolTable *table, StringView name, TypeKind type,
+                     int is_const) {
+  Symbol *symbol = xmalloc(sizeof(Symbol));
+  if (!symbol) {
+    fprintf(stderr, "Failed to allocate symbol\n");
+    exit(1);
+  }
+  symbol->name = name;
+  symbol->type = type;
+  symbol->is_const = is_const;
+  symbol->func_status = FUNC_NONE;
+  List_push(&table->symbols, symbol);
+}
+
+Symbol *SymbolTable_add_func(SymbolTable *table, StringView name,
+                             AstNode *func) {
+  Symbol *existing = SymbolTable_find(table, name);
+  AstNode *body = func->func_decl.body;
+  FuncStatus status = body ? FUNC_IMPLEMENTATION : FUNC_FORWARD_DECL;
+
+  if (existing) {
+    if (existing->func_status == FUNC_FORWARD_DECL &&
+        status == FUNC_IMPLEMENTATION) {
+      if (!signature_matches(existing->value, func)) {
+        ErrorHandler_report(table->eh, func->loc,
+                            "Function signature mismatch");
+        return NULL;
+      }
+      existing->func_status = FUNC_IMPLEMENTATION;
+      existing->value = func;
+      existing->type = func->func_decl.return_type;
+      return existing;
+    } else {
+      ErrorHandler_report(table->eh, func->loc, "Function already defined");
+      return NULL;
+    }
+  }
+
+  Symbol *sym = xmalloc(sizeof(Symbol));
+  sym->name = name;
+  sym->type = func->func_decl.return_type;
+  sym->func_status = status;
+  sym->value = func;
+  sym->scope = xmalloc(sizeof(SymbolTable));
+  SymbolTable_init(sym->scope, table->eh);
+  sym->scope->parent = table;
+
+  /* Register function symbol in the current table so calls can resolve */
+  List_push(&table->symbols, sym);
+
+  return sym;
+}
+
+Symbol *SymbolTable_find(SymbolTable *table, StringView name) {
+  for (SymbolTable *t = table; t != NULL; t = t->parent) {
+    for (size_t i = 0; i < t->symbols.len; i++) {
+      Symbol *symbol = t->symbols.items[i];
+      if (sv_eq(symbol->name, name))
+        return symbol;
+    }
+  }
+  return NULL;
 }
 
 static TypeKind check_expression(SymbolTable *table, AstNode *node) {
@@ -258,15 +320,63 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
   }
 }
 
+static void Semantic_deduplicate_top_level(AstNode *root,
+                                           SymbolTable *global_table) {
+  if (root->tag != NODE_AST_ROOT)
+    return;
+
+  for (size_t i = 0; i < root->ast_root.children.len; i++) {
+    AstNode *node = root->ast_root.children.items[i];
+    if (node->tag != NODE_FUNC_DECL)
+      continue;
+
+    StringView name = node->func_decl.name;
+    Symbol *existing = SymbolTable_find(global_table, name);
+
+    if (existing && existing->func_status == FUNC_FORWARD_DECL &&
+        node->func_decl.body) {
+
+      AstNode *original = (AstNode *)existing->value;
+      original->func_decl.body = node->func_decl.body;
+      original->func_decl.return_type = node->func_decl.return_type;
+      existing->func_status = FUNC_IMPLEMENTATION;
+
+      List_remove_at(&root->ast_root.children, i);
+      node->func_decl.body = NULL;
+      Ast_free(node);
+
+      i--;
+    } else if (existing && existing->func_status == FUNC_IMPLEMENTATION &&
+               node->func_decl.body) {
+
+      semantic_error(global_table, node,
+                     "Redefinition of function '" SV_FMT "'", SV_ARG(name));
+    } else {
+      SymbolTable_add_func(global_table, name, node);
+    }
+  }
+}
+
 void Semantic_analysis(AstNode *node, SymbolTable *table) {
   if (!node)
     return;
 
   switch (node->tag) {
-  case NODE_PROGRAM:
-    for (size_t i = 0; i < node->program.children.len; i++)
-      Semantic_analysis(node->program.children.items[i], table);
+  case NODE_AST_ROOT:
+    Semantic_deduplicate_top_level(node, table);
+    for (size_t i = 0; i < node->ast_root.children.len; i++)
+      Semantic_analysis(node->ast_root.children.items[i], table);
     break;
+
+  case NODE_BLOCK: {
+    SymbolTable block_table;
+    SymbolTable_init(&block_table, table->eh);
+    block_table.parent = table;
+
+    for (size_t i = 0; i < node->block.statements.len; i++)
+      Semantic_analysis(node->block.statements.items[i], &block_table);
+    break;
+  }
 
   case NODE_VAR_DECL: {
     StringView name = node->var_decl.name->var.value;
@@ -286,27 +396,24 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
 
   case NODE_FUNC_DECL: {
     StringView fn_name = node->func_decl.name;
-    if (SymbolTable_find(table, fn_name)) {
-      semantic_error(table, node, "Duplicate function '%.*s'", (int)fn_name.len,
-                     fn_name.data);
-      return;
+    Symbol *fn_symbol = SymbolTable_find(table, fn_name);
+
+    if (!fn_symbol) {
+      // This should theoretically only happen if it's a local function
+      // not caught by top-level deduplication.
+      fn_symbol = SymbolTable_add_func(table, fn_name, node);
     }
 
-    Symbol *fn_symbol = malloc(sizeof(Symbol));
-    fn_symbol->name = fn_name;
-    fn_symbol->is_const = 1;
-    fn_symbol->value = node;
-    fn_symbol->type = node->func_decl.return_type;
-    fn_symbol->scope = malloc(sizeof(SymbolTable));
-    SymbolTable_init(fn_symbol->scope, table->eh);
-    fn_symbol->scope->parent = table;
-    SymbolTable_add(table, fn_name, fn_symbol->type, 1);
+    if (!fn_symbol)
+      return;
 
     for (size_t i = 0; i < node->func_decl.params.len; i++) {
       AstNode *param = node->func_decl.params.items[i];
       if (SymbolTable_find(fn_symbol->scope, param->param.name)) {
-        semantic_error(table, node, "Duplicate param name '%.*s'",
-                       (int)fn_name.len, fn_name.data);
+        semantic_error(fn_symbol->scope, node,
+                       "Duplicate parameter name '" SV_FMT
+                       "' in function '" SV_FMT "'",
+                       SV_ARG(param->param.name), SV_ARG(fn_name));
         continue;
       }
       SymbolTable_add(fn_symbol->scope, param->param.name, param->param.type,
@@ -316,52 +423,44 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
     if (node->func_decl.body)
       Semantic_analysis(node->func_decl.body, fn_symbol->scope);
 
-    // Infer return type if unknown
-    if (node->func_decl.return_type == TYPE_UNKNOWN) {
+    if (node->func_decl.return_type == TYPE_UNKNOWN && node->func_decl.body) {
       TypeKind inferred = TYPE_VOID;
-      bool set = false;
-      if (node->func_decl.body) {
-        for (size_t i = 0; i < node->func_decl.body->program.children.len;
-             i++) {
-          AstNode *stmt = node->func_decl.body->program.children.items[i];
-          if (stmt->tag == NODE_RETURN_STMT && stmt->return_stmt.expr) {
-            TypeKind t =
-                check_expression(fn_symbol->scope, stmt->return_stmt.expr);
-            if (!set) {
-              inferred = t;
-              set = true;
-            } else if (inferred != t)
-              inferred = TYPE_UNKNOWN;
+      int set = 0;
+      for (size_t i = 0; i < node->func_decl.body->ast_root.children.len; i++) {
+        AstNode *stmt = node->func_decl.body->ast_root.children.items[i];
+        if (stmt->tag == NODE_RETURN_STMT && stmt->return_stmt.expr) {
+          TypeKind t =
+              check_expression(fn_symbol->scope, stmt->return_stmt.expr);
+          if (!set) {
+            inferred = t;
+            set = 1;
+          } else if (inferred != t) {
+            inferred = TYPE_UNKNOWN; // multiple inconsistent return types
           }
         }
       }
       node->func_decl.return_type = inferred;
       fn_symbol->type = inferred;
-
-      Symbol *added = SymbolTable_find(table, fn_name);
-      if (added)
-        added->type = inferred;
     }
 
-    // Validate return statements
     if (node->func_decl.body) {
-      for (size_t i = 0; i < node->func_decl.body->program.children.len; i++) {
-        AstNode *stmt = node->func_decl.body->program.children.items[i];
+      for (size_t i = 0; i < node->func_decl.body->ast_root.children.len; i++) {
+        AstNode *stmt = node->func_decl.body->ast_root.children.items[i];
         if (stmt->tag == NODE_RETURN_STMT) {
           TypeKind t =
               check_expression(fn_symbol->scope, stmt->return_stmt.expr);
           if (node->func_decl.return_type == TYPE_VOID &&
-              stmt->return_stmt.expr != NULL) {
+              stmt->return_stmt.expr) {
             semantic_error(fn_symbol->scope, stmt,
-                           "Void function '%.*s' cannot return a value",
-                           (int)fn_name.len, fn_name.data);
+                           "Void function '" SV_FMT "' cannot return a value",
+                           SV_ARG(fn_name));
           } else if (node->func_decl.return_type != TYPE_UNKNOWN &&
                      !can_implicitly_cast(node->func_decl.return_type, t)) {
             semantic_error(fn_symbol->scope, stmt,
                            "Type mismatch in return: expected %s, got %s in "
-                           "function '%.*s'",
+                           "function '" SV_FMT "'",
                            type_to_name(node->func_decl.return_type),
-                           type_to_name(t), (int)fn_name.len, fn_name.data);
+                           type_to_name(t), SV_ARG(fn_name));
           }
         }
       }

@@ -2,12 +2,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "codegen.h"
-#include "lexer.h"
-#include "parser.h"
-#include "runner.h"
-#include "semantic.h"
-#include "utils.h"
+#include "tyl/codegen.h"
+#include "tyl/lexer.h"
+#include "tyl/parser.h"
+#include "tyl/runner.h"
+#include "tyl/semantic.h"
+#include "tyl/utils.h"
 
 typedef enum { MODE_COMPILE, MODE_JIT, MODE_EMIT_IR, MODE_DUMP } RunMode;
 
@@ -73,9 +73,8 @@ int main(int argc, char **argv) {
   ErrorHandler eh;
   ErrorHandler_init(&eh, src);
   Lexer lexer = make_lexer(src, &eh);
-  AstNode *program = Parser_process(&lexer, &eh);
+  AstNode *ast_root = Parser_process(&lexer, &eh);
 
-  Ast_print(program, 2);
   /* if (eh.has_errors) { */
   /*   ErrorHandler_show_all(&eh); */
   /*   return 1; */
@@ -84,8 +83,9 @@ int main(int argc, char **argv) {
 
   SymbolTable table;
   SymbolTable_init(&table, &eh);
-  Semantic_analysis(program, &table);
+  Semantic_analysis(ast_root, &table);
 
+  Ast_print(ast_root, 2);
   if (eh.has_errors) {
     ErrorHandler_show_all(&eh);
     return 1;
@@ -93,7 +93,7 @@ int main(int argc, char **argv) {
 
   // Backend
   Codegen *cg = Codegen_new("tyl_module");
-  Codegen_program(cg, program);
+  Codegen_program(cg, ast_root);
 
   // Verification
   Runner_verify(cg);

@@ -1,8 +1,7 @@
 #ifndef LEXER_H
 #define LEXER_H
 
-#include "utils.h"
-#include <ctype.h>
+#include "tyl/utils.h"
 #include <stddef.h>
 
 struct ErrorHandler;

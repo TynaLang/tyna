@@ -1,4 +1,7 @@
-#include "utils.h"
+#include <stdarg.h>
+#include <stdnoreturn.h>
+
+#include "tyl/utils.h"
 
 void List_init(List *list) {
   list->items = NULL;
@@ -40,8 +43,38 @@ void List_free(List *list, int free_items) {
   list->capacity = 0;
 }
 
-void panic(const char *msg) {
-  fprintf(stderr, "[PANIC] %s\n", msg);
+void *List_remove_at(List *list, size_t index) {
+  if (index >= list->len) {
+    panic("List index out of bounds during remove");
+  }
+
+  void *removed_item = list->items[index];
+
+  size_t num_to_move = list->len - index - 1;
+
+  if (num_to_move > 0) {
+    memmove(&list->items[index], &list->items[index + 1],
+            sizeof(void *) * num_to_move);
+  }
+
+  list->len--;
+  return removed_item;
+}
+
+int List_index_of(List *list, void *item) {
+  for (size_t i = 0; i < list->len; i++) {
+    if (list->items[i] == item) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+noreturn void panic(const char *msg, ...) {
+  va_list args;
+  va_start(args, msg);
+  vfprintf(stderr, "[PANIC] %s\n", args);
+  va_end(args);
   exit(1);
 }
 
@@ -66,12 +99,7 @@ char *read_file(const char *filename) {
   }
   rewind(fp);
 
-  char *buffer = malloc(filesize + 1);
-  if (!buffer) {
-    perror("malloc failed");
-    fclose(fp);
-    return NULL;
-  }
+  char *buffer = xmalloc(filesize + 1);
 
   size_t read = fread(buffer, 1, filesize, fp);
   if (read != filesize) {

@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "ast.h"
-#include "lexer.h"
-#include "parser.h"
-#include "utils.h"
+#include "tyl/ast.h"
+#include "tyl/lexer.h"
+#include "tyl/parser.h"
+#include "tyl/utils.h"
 
 // ---------- UTILITIES ---------- //
 
@@ -426,6 +426,28 @@ static TypeKind Parser_parse_type(Parser *p) {
   return kind;
 }
 
+static AstNode *Parser_parse_block(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume '{'
+
+  AstNode *block = AstNode_new_block(loc);
+
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    AstNode *stmt = Parser_parse_statement(p);
+    if (!stmt) {
+      Parser_sync(p);
+      continue;
+    }
+    List_push(&block->block.statements, stmt);
+  }
+
+  if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after block"))
+    return NULL;
+
+  return block;
+}
+
 static AstNode *Parser_parse_var_decl(Parser *p) {
   int is_const = (p->current_token.type == TOKEN_CONST);
   Parser_token_advance(p);
@@ -546,19 +568,7 @@ static AstNode *Parser_parse_fn_decl(Parser *p) {
 
   AstNode *body = NULL;
   if (p->current_token.type == TOKEN_LBRACE) {
-    Parser_token_advance(p);
-    body = AstNode_new_program(loc);
-    while (p->current_token.type != TOKEN_RBRACE &&
-           p->current_token.type != TOKEN_EOF) {
-      AstNode *stmt = Parser_parse_statement(p);
-      if (!stmt) {
-        Parser_sync(p);
-        continue;
-      }
-      List_push(&body->program.children, stmt);
-    }
-    if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after function body"))
-      return NULL;
+    body = Parser_parse_block(p);
   } else if (p->current_token.type == TOKEN_SEMI) {
     Parser_token_advance(p);
   } else {
@@ -572,11 +582,13 @@ static AstNode *Parser_parse_fn_decl(Parser *p) {
 
 static AstNode *Parser_parse_statement(Parser *p) {
   switch (p->current_token.type) {
+  case TOKEN_EOF:
+    return NULL;
   case TOKEN_LET:
   case TOKEN_CONST:
     return Parser_parse_var_decl(p);
-  case TOKEN_FN:
-    return Parser_parse_fn_decl(p);
+  case TOKEN_LBRACE:
+    return Parser_parse_block(p);
   case TOKEN_PRINT:
     return Parser_parse_print(p);
   case TOKEN_RETURN: {
@@ -589,8 +601,8 @@ static AstNode *Parser_parse_statement(Parser *p) {
     Parser_sync(p);
     return NULL;
   }
-  case TOKEN_EOF:
-    return NULL;
+  case TOKEN_FN:
+    return Parser_parse_fn_decl(p);
   default: {
     Location loc = p->current_token.loc;
     AstNode *expr = Parser_parse_expression(p, 0);
@@ -609,14 +621,14 @@ AstNode *Parser_process(Lexer *lexer, ErrorHandler *eh) {
   p.eh = eh;
   p.current_token = Token_advance(lexer);
 
-  AstNode *program = AstNode_new_program(p.current_token.loc);
+  AstNode *ast_root = AstNode_new_program(p.current_token.loc);
 
   while (p.current_token.type != TOKEN_EOF) {
     AstNode *stmt = Parser_parse_statement(&p);
     if (!stmt)
       continue;
-    List_push(&program->program.children, stmt);
+    List_push(&ast_root->ast_root.children, stmt);
   }
 
-  return program;
+  return ast_root;
 }

@@ -1,10 +1,10 @@
 #ifndef PARSER_H
 #define PARSER_H
 
-#include "ast.h"
-#include "errors.h"
-#include "lexer.h"
-#include "utils.h"
+#include "tyl/ast.h"
+#include "tyl/errors.h"
+#include "tyl/lexer.h"
+#include "tyl/utils.h"
 #include <stddef.h>
 
 typedef struct Parser Parser;

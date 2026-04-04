@@ -11,7 +11,9 @@
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
 
-#include "codegen.h"
+#include "codegen_private.h"
+#include "tyl/codegen.h"
+#include "tyl/runner.h"
 
 void Runner_verify(Codegen *cg) {
   char *error = NULL;
@@ -33,10 +35,11 @@ void Runner_emit_ir(Codegen *cg, const char *filename) {
 void Runner_emit_object(Codegen *cg, const char *filename) {
   LLVMInitializeNativeTarget();
   LLVMInitializeNativeAsmPrinter();
+  LLVMInitializeNativeAsmParser();
 
   char *error = NULL;
-
   LLVMTargetRef target;
+
   if (LLVMGetTargetFromTriple(LLVMGetDefaultTargetTriple(), &target, &error)) {
     fprintf(stderr, "Failed to get target: %s\n", error);
     LLVMDisposeMessage(error);
@@ -60,8 +63,7 @@ void Runner_emit_object(Codegen *cg, const char *filename) {
 void Runner_link_executable(const char *obj, const char *out) {
   char cmd[512];
 
-  // links against libc automatically (printf)
-  snprintf(cmd, sizeof(cmd), "clang %s -o %s", obj, out);
+  snprintf(cmd, sizeof(cmd), "clang %s -o %s -lm", obj, out);
 
   int res = system(cmd);
   if (res != 0) {
@@ -77,8 +79,8 @@ void Runner_jit(Codegen *cg) {
 
   LLVMOrcLLJITRef lljit;
   LLVMOrcLLJITBuilderRef builder = LLVMOrcCreateLLJITBuilder();
-  LLVMErrorRef err = LLVMOrcCreateLLJIT(&lljit, builder);
 
+  LLVMErrorRef err = LLVMOrcCreateLLJIT(&lljit, builder);
   if (err) {
     char *msg = LLVMGetErrorMessage(err);
     fprintf(stderr, "Failed to create ORC LLJIT: %s\n", msg);
@@ -89,8 +91,10 @@ void Runner_jit(Codegen *cg) {
   LLVMOrcJITDylibRef main_jd = LLVMOrcLLJITGetMainJITDylib(lljit);
 
   LLVMOrcDefinitionGeneratorRef dg;
-  if (LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(
-          &dg, LLVMOrcLLJITGetGlobalPrefix(lljit), 0, 0)) {
+  char prefix = LLVMOrcLLJITGetGlobalPrefix(lljit);
+  err = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(&dg, prefix, NULL,
+                                                             NULL);
+  if (!err) {
     LLVMOrcJITDylibAddGenerator(main_jd, dg);
   }
 
@@ -101,24 +105,25 @@ void Runner_jit(Codegen *cg) {
   err = LLVMOrcLLJITAddLLVMIRModule(lljit, main_jd, ts_mod);
   if (err) {
     char *msg = LLVMGetErrorMessage(err);
-    fprintf(stderr, "Failed to add module to ORC: %s\n", msg);
+    fprintf(stderr, "Failed to add module to JIT: %s\n", msg);
     LLVMDisposeErrorMessage(msg);
     exit(1);
   }
 
-  LLVMOrcExecutorAddress main_addr;
-  err = LLVMOrcLLJITLookup(lljit, &main_addr, "main");
+  LLVMOrcExecutorAddress entry_addr;
+  err = LLVMOrcLLJITLookup(lljit, &entry_addr, "main");
   if (err) {
     char *msg = LLVMGetErrorMessage(err);
-    fprintf(stderr, "Failed to lookup main: %s\n", msg);
+    fprintf(stderr, "Failed to find entry point 'main': %s\n", msg);
     LLVMDisposeErrorMessage(msg);
     exit(1);
   }
 
-  int (*main_func)() = (int (*)())(uintptr_t)main_addr;
-  int exit_code = main_func();
+  int (*entry_func)() = (int (*)())(uintptr_t)entry_addr;
 
-  printf("\n[program exited with code %d]\n", exit_code);
+  printf("--- JIT Execution Started ---\n");
+  int exit_code = entry_func();
+  printf("\n--- JIT Finished (Result: %d) ---\n", exit_code);
 
   LLVMOrcDisposeLLJIT(lljit);
   LLVMOrcDisposeThreadSafeContext(ts_ctx);

@@ -3,8 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "errors.h"
-#include "lexer.h"
+#include "tyl/errors.h"
+#include "tyl/lexer.h"
 
 void ErrorHandler_init(ErrorHandler *eh, const char *src) {
   List_init(&eh->errors);
@@ -51,12 +51,12 @@ void ErrorHandler_report(ErrorHandler *eh, Location loc, const char *fmt, ...) {
   }
 
   size_t line_len = line_end - line_start;
-  char *source_line = malloc(line_len + 1);
+  char *source_line = xmalloc(line_len + 1);
   if (source_line) {
     strncpy(source_line, line_start, line_len);
     source_line[line_len] = '\0';
   } else {
-    source_line = strdup("");
+    source_line = xstrdup("");
   }
 
   // Create the col pointer `   ^`
@@ -64,13 +64,13 @@ void ErrorHandler_report(ErrorHandler *eh, Location loc, const char *fmt, ...) {
   if (caret_pad > line_len)
     caret_pad = line_len; // Cap at line length
 
-  char *caret_str = malloc(caret_pad + 2); // + '^' + '\0'
+  char *caret_str = xmalloc(caret_pad + 2);
   if (caret_str) {
     memset(caret_str, ' ', caret_pad);
     caret_str[caret_pad] = '^';
     caret_str[caret_pad + 1] = '\0';
   } else {
-    caret_str = strdup("^");
+    caret_str = xstrdup("^");
   }
 
   char final_msg[2048];
@@ -85,5 +85,5 @@ void ErrorHandler_report(ErrorHandler *eh, Location loc, const char *fmt, ...) {
   free(source_line);
   free(caret_str);
 
-  List_push(&eh->errors, strdup(final_msg));
+  List_push(&eh->errors, xstrdup(final_msg));
 }

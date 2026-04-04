@@ -5,7 +5,29 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdnoreturn.h>
 #include <string.h>
+
+typedef struct {
+  void **items;
+  size_t len;
+  size_t capacity;
+} List;
+
+void List_init(List *list);
+void List_push(List *list, void *item);
+void *List_get(List *list, size_t index);
+void List_free(List *list, int free_items);
+void *List_remove_at(List *list, size_t index);
+int List_index_of(List *list, void *item);
+
+void *xmalloc(size_t size);
+void *xrealloc(void *ptr, size_t new_size);
+char *xstrdup(const char *s);
+
+noreturn void panic(const char *msg, ...);
+
+char *read_file(const char *filepath);
 
 typedef struct {
   const char *data;
@@ -14,6 +36,7 @@ typedef struct {
 
 #define SV_FMT "%.*s"
 #define SV_ARG(sv) (int)(sv).len, (sv).data
+#define TEMP_STR_MAX 256
 
 static inline StringView sv_from_parts(const char *data, size_t len) {
   return (StringView){data, len};
@@ -46,19 +69,27 @@ static inline char *sv_to_cstr(StringView sv) {
   return res;
 }
 
-typedef struct {
-  void **items;
-  size_t len;
-  size_t capacity;
-} List;
+static inline const char *sv_to_cstr_temp(StringView sv) {
+  static char buf[TEMP_STR_MAX];
 
-void List_init(List *list);
-void List_push(List *list, void *item);
-void *List_get(List *list, size_t index);
-void List_free(List *list, int free_items);
+  if (sv.len == 0) {
+    buf[0] = '\0';
+    return buf;
+  }
 
-void panic(const char *msg);
+  if (sv.data == NULL) {
+    buf[0] = '\0';
+    return buf;
+  }
 
-char *read_file(const char *filepath);
+  if (sv.len >= TEMP_STR_MAX) {
+    panic("StringView too long for temporary buffer");
+  }
+
+  size_t copy_len = sv.len < TEMP_STR_MAX - 1 ? sv.len : TEMP_STR_MAX - 1;
+  memcpy(buf, sv.data, copy_len);
+  buf[copy_len] = '\0';
+  return buf;
+}
 
 #endif // UTILS_H

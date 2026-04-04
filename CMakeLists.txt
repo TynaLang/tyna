@@ -19,7 +19,7 @@ add_executable(tyl ${SRC_FILES})
 target_include_directories(tyl
     PRIVATE
         ${LLVM_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/include/tyl
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_compile_definitions(tyl
@@ -41,3 +41,6 @@ target_compile_options(tyl
 )
 
 set_target_properties(tyl PROPERTIES LINKER_LANGUAGE CXX)
+set_target_properties(tyl PROPERTIES ENABLE_EXPORTS ON)
+target_link_options(tyl PRIVATE -rdynamic)
+target_link_libraries(tyl PRIVATE dl)

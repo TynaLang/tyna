@@ -1,8 +1,8 @@
 #ifndef TYL_AST_H
 #define TYL_AST_H
 
-#include "lexer.h"
-#include "utils.h"
+#include "tyl/lexer.h"
+#include "tyl/utils.h"
 #include <stddef.h>
 
 typedef enum AstKind AstKind;
@@ -39,9 +39,10 @@ enum LogicalOp { OP_AND, OP_OR };
 enum UnaryOp { OP_NEG, OP_PRE_INC, OP_POST_INC, OP_PRE_DEC, OP_POST_DEC };
 
 enum AstKind {
-  NODE_PROGRAM,
+  NODE_AST_ROOT,
   NODE_VAR_DECL,
   NODE_PRINT_STMT,
+
   NODE_NUMBER,
   NODE_CHAR,
   NODE_BOOL,
@@ -54,13 +55,17 @@ enum AstKind {
   NODE_BINARY_LOGICAL,
 
   NODE_UNARY,
+
   NODE_CAST_EXPR,
   NODE_ASSIGN_EXPR,
   NODE_EXPR_STMT,
+
   NODE_CALL,
   NODE_FUNC_DECL,
   NODE_RETURN_STMT,
   NODE_PARAM,
+  NODE_BLOCK,
+
   NODE_FIELD,
   NODE_INDEX,
 };
@@ -71,7 +76,7 @@ struct AstNode {
   union {
     struct {
       List children;
-    } program;
+    } ast_root;
 
     struct {
       AstNode *expr;
@@ -157,17 +162,21 @@ struct AstNode {
       StringView name;
       List params; // List<AstNode*> NODE_PARAM
       TypeKind return_type;
-      AstNode *body; // NODE_PROGRAM
+      AstNode *body; // NODE_BLOCK or NULL;
     } func_decl;
 
     struct {
-      AstNode *expr; // optional return expression
+      AstNode *expr; // Optional
     } return_stmt;
 
     struct {
       StringView name;
       TypeKind type;
     } param;
+
+    struct {
+      List statements;
+    } block;
 
     struct {
       AstNode *object;
@@ -207,11 +216,13 @@ AstNode *AstNode_new_func_decl(StringView name, List params, TypeKind ret_type,
                                AstNode *body, Location loc);
 AstNode *AstNode_new_return(AstNode *expr, Location loc);
 AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc);
+AstNode *AstNode_new_block(Location loc);
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc);
 AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc);
 
 TypeKind Token_token_to_type(TokenType t);
 
+void Ast_free(AstNode *node);
 void Ast_print(AstNode *node, int indent);
 
 #endif // TYL_AST_H

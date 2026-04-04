@@ -1,10 +1,10 @@
-#include "ast.h"
-#include "semantic.h"
+#include "tyl/ast.h"
+#include "tyl/semantic.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 static AstNode *AstNode_new(AstKind ast_kind, Location loc) {
-  AstNode *node = malloc(sizeof(AstNode));
+  AstNode *node = xmalloc(sizeof(AstNode));
   if (!node) {
     fprintf(stderr, "Failed to allocate AST node\n");
     exit(1);
@@ -15,8 +15,8 @@ static AstNode *AstNode_new(AstKind ast_kind, Location loc) {
 }
 
 AstNode *AstNode_new_program(Location loc) {
-  AstNode *node = AstNode_new(NODE_PROGRAM, loc);
-  List_init(&node->program.children);
+  AstNode *node = AstNode_new(NODE_AST_ROOT, loc);
+  List_init(&node->ast_root.children);
   return node;
 }
 
@@ -161,6 +161,12 @@ AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_block(Location loc) {
+  AstNode *node = AstNode_new(NODE_BLOCK, loc);
+  List_init(&node->block.statements);
+  return node;
+}
+
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc) {
   AstNode *node = AstNode_new(NODE_INDEX, loc);
   node->index.array = expr;
@@ -173,6 +179,91 @@ AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc) {
   node->field.object = expr;
   node->field.field = field;
   return node;
+}
+
+void Ast_free(AstNode *node) {
+  if (!node)
+    return;
+
+  switch (node->tag) {
+  case NODE_AST_ROOT:
+    for (size_t i = 0; i < node->ast_root.children.len; i++) {
+      Ast_free((AstNode *)node->ast_root.children.items[i]);
+    }
+    List_free(&node->ast_root.children, 0);
+    break;
+  case NODE_VAR_DECL:
+    Ast_free(node->var_decl.name);
+    Ast_free(node->var_decl.value);
+    break;
+  case NODE_PRINT_STMT:
+    for (size_t i = 0; i < node->print_stmt.values.len; i++) {
+      Ast_free((AstNode *)node->print_stmt.values.items[i]);
+    }
+    List_free(&node->print_stmt.values, 0);
+    break;
+  case NODE_NUMBER:
+  case NODE_CHAR:
+  case NODE_BOOL:
+  case NODE_STRING:
+  case NODE_VAR:
+    break;
+  case NODE_BINARY_ARITH:
+    Ast_free(node->binary_arith.left);
+    Ast_free(node->binary_arith.right);
+    break;
+  case NODE_BINARY_COMPARE:
+    Ast_free(node->binary_compare.left);
+    Ast_free(node->binary_compare.right);
+    break;
+  case NODE_BINARY_EQUALITY:
+    Ast_free(node->binary_equality.left);
+    Ast_free(node->binary_equality.right);
+    break;
+  case NODE_BINARY_LOGICAL:
+    Ast_free(node->binary_logical.left);
+    Ast_free(node->binary_logical.right);
+    break;
+  case NODE_UNARY:
+    Ast_free(node->unary.expr);
+    break;
+  case NODE_CAST_EXPR:
+    Ast_free(node->cast_expr.expr);
+    break;
+  case NODE_ASSIGN_EXPR:
+    Ast_free(node->assign_expr.target);
+    Ast_free(node->assign_expr.value);
+    break;
+  case NODE_EXPR_STMT:
+    Ast_free(node->expr_stmt.expr);
+    break;
+  case NODE_CALL:
+    Ast_free(node->call.func);
+    for (size_t i = 0; i < node->call.args.len; i++) {
+      Ast_free((AstNode *)node->call.args.items[i]);
+    }
+    List_free(&node->call.args, 0);
+    break;
+  case NODE_FUNC_DECL:
+    for (size_t i = 0; i < node->func_decl.params.len; i++) {
+      Ast_free((AstNode *)node->func_decl.params.items[i]);
+    }
+    List_free(&node->func_decl.params, 0);
+    Ast_free(node->func_decl.body);
+    break;
+  case NODE_RETURN_STMT:
+    Ast_free(node->return_stmt.expr);
+    break;
+  case NODE_PARAM:
+    break;
+  case NODE_BLOCK:
+    for (size_t i = 0; i < node->block.statements.len; i++) {
+      Ast_free((AstNode *)node->block.statements.items[i]);
+    }
+    List_free(&node->block.statements, 0);
+
+    free(node);
+  }
 }
 
 TypeKind Token_token_to_type(TokenType t) {
@@ -225,10 +316,10 @@ void Ast_print(AstNode *node, int indent) {
   print_indent(indent);
 
   switch (node->tag) {
-  case NODE_PROGRAM:
+  case NODE_AST_ROOT:
     printf("PROGRAM\n");
-    for (size_t i = 0; i < node->program.children.len; i++) {
-      AstNode *child = node->program.children.items[i];
+    for (size_t i = 0; i < node->ast_root.children.len; i++) {
+      AstNode *child = node->ast_root.children.items[i];
       Ast_print(child, indent + 1);
     }
     break;
@@ -318,6 +409,13 @@ void Ast_print(AstNode *node, int indent) {
   case NODE_PARAM:
     printf("PARAM: " SV_FMT " : %s\n", SV_ARG(node->param.name),
            type_to_name(node->param.type));
+    break;
+  case NODE_BLOCK:
+    printf("BLOCK\n");
+    for (size_t i = 0; i < node->block.statements.len; i++) {
+      AstNode *child = node->block.statements.items[i];
+      Ast_print(child, indent + 1);
+    }
     break;
   case NODE_EXPR_STMT:
     printf("EXPR_STMT\n");

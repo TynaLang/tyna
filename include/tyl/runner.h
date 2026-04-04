@@ -1,7 +1,7 @@
 #ifndef RUNNER_H
 #define RUNNER_H
 
-#include "codegen.h"
+#include "tyl/codegen.h"
 
 void Runner_verify(Codegen *cg);
 
