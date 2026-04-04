@@ -167,6 +167,23 @@ AstNode *AstNode_new_block(Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
+                             AstNode *else_branch, Location loc) {
+  AstNode *node = AstNode_new(NODE_IF_STMT, loc);
+  node->if_stmt.condition = condition;
+  node->if_stmt.then_branch = then_branch;
+  node->if_stmt.else_branch = else_branch;
+  return node;
+}
+
+AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr, AstNode *false_expr, Location loc) {
+  AstNode *node = AstNode_new(NODE_TERNARY, loc);
+  node->ternary.condition = condition;
+  node->ternary.true_expr = true_expr;
+  node->ternary.false_expr = false_expr;
+  return node;
+}
+
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc) {
   AstNode *node = AstNode_new(NODE_INDEX, loc);
   node->index.array = expr;
@@ -237,6 +254,11 @@ void Ast_free(AstNode *node) {
   case NODE_EXPR_STMT:
     Ast_free(node->expr_stmt.expr);
     break;
+  case NODE_TERNARY:
+    Ast_free(node->ternary.condition);
+    Ast_free(node->ternary.true_expr);
+    Ast_free(node->ternary.false_expr);
+    break;
   case NODE_CALL:
     Ast_free(node->call.func);
     for (size_t i = 0; i < node->call.args.len; i++) {
@@ -261,9 +283,14 @@ void Ast_free(AstNode *node) {
       Ast_free((AstNode *)node->block.statements.items[i]);
     }
     List_free(&node->block.statements, 0);
-
-    free(node);
+    break;
+  case NODE_IF_STMT:
+    Ast_free(node->if_stmt.condition);
+    Ast_free(node->if_stmt.then_branch);
+    Ast_free(node->if_stmt.else_branch);
+    break;
   }
+  free(node);
 }
 
 TypeKind Token_token_to_type(TokenType t) {
@@ -363,6 +390,15 @@ void Ast_print(AstNode *node, int indent) {
     printf("RIGHT:\n");
     Ast_print(node->binary_arith.right, indent + 2);
     break;
+  case NODE_BINARY_COMPARE:
+    printf("BINARY COMPARE OP: %d\n", node->binary_compare.op);
+    print_indent(indent + 1);
+    printf("LEFT:\n");
+    Ast_print(node->binary_compare.left, indent + 2);
+    print_indent(indent + 1);
+    printf("RIGHT:\n");
+    Ast_print(node->binary_compare.right, indent + 2);
+    break;
   case NODE_UNARY:
     printf("UNARY OP: %d\n", node->unary.op);
     print_indent(indent + 1);
@@ -421,6 +457,18 @@ void Ast_print(AstNode *node, int indent) {
     printf("EXPR_STMT\n");
     Ast_print(node->expr_stmt.expr, indent + 1);
     break;
+  case NODE_TERNARY:
+    printf("TERNARY\n");
+    print_indent(indent + 1);
+    printf("CONDITION:\n");
+    Ast_print(node->ternary.condition, indent + 2);
+    print_indent(indent + 1);
+    printf("TRUE:\n");
+    Ast_print(node->ternary.true_expr, indent + 2);
+    print_indent(indent + 1);
+    printf("FALSE:\n");
+    Ast_print(node->ternary.false_expr, indent + 2);
+    break;
   case NODE_ASSIGN_EXPR:
     printf("ASSIGN_EXPR\n");
     print_indent(indent + 1);
@@ -429,6 +477,20 @@ void Ast_print(AstNode *node, int indent) {
     print_indent(indent + 1);
     printf("VALUE:\n");
     Ast_print(node->assign_expr.value, indent + 2);
+    break;
+  case NODE_IF_STMT:
+    printf("IF_STMT\n");
+    print_indent(indent + 1);
+    printf("CONDITION:\n");
+    Ast_print(node->if_stmt.condition, indent + 2);
+    print_indent(indent + 1);
+    printf("THEN:\n");
+    Ast_print(node->if_stmt.then_branch, indent + 2);
+    if (node->if_stmt.else_branch) {
+      print_indent(indent + 1);
+      printf("ELSE:\n");
+      Ast_print(node->if_stmt.else_branch, indent + 2);
+    }
     break;
   default:
     printf("UNKNOWN NODE\n");

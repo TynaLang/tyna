@@ -56,6 +56,8 @@ static void Parser_sync(Parser *p) {
     case TOKEN_PRINT:
     case TOKEN_FN:
     case TOKEN_RETURN:
+    case TOKEN_IF:
+    case TOKEN_ELSE:
       return;
     default:
       Parser_token_advance(p);
@@ -97,6 +99,7 @@ static int is_binary_operator(TokenType t) {
   case TOKEN_NE:
   case TOKEN_AND:
   case TOKEN_OR:
+  case TOKEN_QUESTION:
     return 1;
   default:
     return 0;
@@ -173,30 +176,32 @@ static BindingPower infix_binding_power(TokenType t) {
   switch (t) {
   case TOKEN_ASSIGN:
     return (struct BindingPower){2, 1};
+  case TOKEN_QUESTION:
+    return (struct BindingPower){4, 3};
 
   case TOKEN_OR:
-    return (struct BindingPower){3, 4};
-  case TOKEN_AND:
     return (struct BindingPower){5, 6};
+  case TOKEN_AND:
+    return (struct BindingPower){7, 8};
 
   case TOKEN_EQ:
   case TOKEN_NE:
-    return (struct BindingPower){7, 8};
+    return (struct BindingPower){9, 10};
   case TOKEN_LT:
   case TOKEN_GT:
   case TOKEN_LE:
   case TOKEN_GE:
-    return (struct BindingPower){9, 10};
+    return (struct BindingPower){11, 12};
 
   case TOKEN_PLUS:
   case TOKEN_MINUS:
-    return (struct BindingPower){11, 12};
+    return (struct BindingPower){13, 14};
   case TOKEN_STAR:
   case TOKEN_SLASH:
   case TOKEN_MOD:
-    return (struct BindingPower){13, 14};
-  case TOKEN_POWER:
     return (struct BindingPower){15, 16};
+  case TOKEN_POWER:
+    return (struct BindingPower){17, 18};
 
   default:
     return (struct BindingPower){0, 0};
@@ -362,6 +367,20 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
       break;
 
     Parser_token_advance(p);
+
+    if (op.type == TOKEN_QUESTION) {
+      AstNode *true_expr = Parser_parse_expression(p, 0);
+      if (!true_expr)
+        return NULL;
+      if (!Parser_expect(p, TOKEN_COLON, "Expected ':' in ternary operator"))
+        return NULL;
+      AstNode *false_expr = Parser_parse_expression(p, bp.right_bp);
+      if (!false_expr)
+        return NULL;
+      left = AstNode_new_ternary(left, true_expr, false_expr, op.loc);
+      continue;
+    }
+
     AstNode *right = Parser_parse_expression(p, bp.right_bp);
     if (!right)
       return NULL;
@@ -580,6 +599,33 @@ static AstNode *Parser_parse_fn_decl(Parser *p) {
   return AstNode_new_func_decl(ident.text, params, ret_type, body, loc);
 }
 
+static AstNode *Parser_parse_if_stmt(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // Consume 'if'
+
+  if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after 'if'"))
+    return NULL;
+
+  AstNode *condition = Parser_parse_expression(p, 0);
+  if (!condition)
+    return NULL;
+
+  if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after condition"))
+    return NULL;
+
+  AstNode *then_branch = Parser_parse_statement(p);
+  if (!then_branch)
+    return NULL;
+
+  AstNode *else_branch = NULL;
+  if (p->current_token.type == TOKEN_ELSE) {
+    Parser_token_advance(p); // Consume 'else'
+    else_branch = Parser_parse_statement(p);
+  }
+
+  return AstNode_new_if_stmt(condition, then_branch, else_branch, loc);
+}
+
 static AstNode *Parser_parse_statement(Parser *p) {
   switch (p->current_token.type) {
   case TOKEN_EOF:
@@ -591,6 +637,8 @@ static AstNode *Parser_parse_statement(Parser *p) {
     return Parser_parse_block(p);
   case TOKEN_PRINT:
     return Parser_parse_print(p);
+  case TOKEN_IF:
+    return Parser_parse_if_stmt(p);
   case TOKEN_RETURN: {
     Parser_token_advance(p);
     Location loc = p->current_token.loc;

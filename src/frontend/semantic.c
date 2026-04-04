@@ -244,6 +244,21 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
     return TYPE_BOOL;
   }
 
+  case NODE_TERNARY: {
+    TypeKind cond = check_expression(table, node->ternary.condition);
+    if (!is_bool(cond)) {
+      semantic_error(table, node->ternary.condition, "Ternary condition must be boolean");
+      return TYPE_UNKNOWN;
+    }
+    TypeKind t_expr = check_expression(table, node->ternary.true_expr);
+    TypeKind f_expr = check_expression(table, node->ternary.false_expr);
+    if (t_expr == TYPE_UNKNOWN || f_expr == TYPE_UNKNOWN) return TYPE_UNKNOWN;
+    if (can_implicitly_cast(t_expr, f_expr)) return t_expr;
+    if (can_implicitly_cast(f_expr, t_expr)) return f_expr;
+    semantic_error(table, node, "Ternary branches must have compatible types");
+    return TYPE_UNKNOWN;
+  }
+
   case NODE_ASSIGN_EXPR: {
     AstNode *target = node->assign_expr.target;
     if (!is_lvalue(target)) {
@@ -476,6 +491,19 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
   case NODE_EXPR_STMT:
     check_expression(table, node->expr_stmt.expr);
     break;
+
+  case NODE_IF_STMT: {
+    TypeKind cond_type = check_expression(table, node->if_stmt.condition);
+    if (!is_bool(cond_type)) {
+      semantic_error(table, node->if_stmt.condition,
+                     "if condition must be a boolean");
+    }
+    Semantic_analysis(node->if_stmt.then_branch, table);
+    if (node->if_stmt.else_branch) {
+      Semantic_analysis(node->if_stmt.else_branch, table);
+    }
+    break;
+  }
 
   default:
     break;

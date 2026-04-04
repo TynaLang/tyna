@@ -66,6 +66,38 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
   LLVMBuildCall2(cg->builder, print_fn->type, print_fn->value, nl_args, 1, "");
 }
 
+static void cg_if_stmt(Codegen *cg, AstNode *node) {
+  LLVMValueRef condition = cg_expression(cg, node->if_stmt.condition);
+  condition = cg_cast_value(cg, condition, LLVMInt1TypeInContext(cg->context));
+
+  CGFunction *current_fn = cg->current_function_ref;
+
+  LLVMBasicBlockRef then_bb =
+      LLVMAppendBasicBlockInContext(cg->context, current_fn->value, "then");
+  LLVMBasicBlockRef else_bb =
+      LLVMAppendBasicBlockInContext(cg->context, current_fn->value, "else");
+  LLVMBasicBlockRef merge_bb =
+      LLVMAppendBasicBlockInContext(cg->context, current_fn->value, "ifcont");
+
+  LLVMBuildCondBr(cg->builder, condition, then_bb, else_bb);
+
+  LLVMPositionBuilderAtEnd(cg->builder, then_bb);
+  cg_statement(cg, node->if_stmt.then_branch);
+  if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+    LLVMBuildBr(cg->builder, merge_bb);
+  }
+
+  LLVMPositionBuilderAtEnd(cg->builder, else_bb);
+  if (node->if_stmt.else_branch) {
+    cg_statement(cg, node->if_stmt.else_branch);
+  }
+  if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+    LLVMBuildBr(cg->builder, merge_bb);
+  }
+
+  LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+}
+
 void cg_statement(Codegen *cg, AstNode *node) {
   if (!node)
     return;
@@ -86,6 +118,10 @@ void cg_statement(Codegen *cg, AstNode *node) {
 
   case NODE_PRINT_STMT:
     cg_print_stmt(cg, node);
+    break;
+
+  case NODE_IF_STMT:
+    cg_if_stmt(cg, node);
     break;
 
   case NODE_RETURN_STMT: {

@@ -1,4 +1,4 @@
-fn nthFib(n:int):int{
+fn nthFib(n:int):int {
     if(n <= 1){
         return n;
     }
@@ -7,5 +7,5 @@ fn nthFib(n:int):int{
 }
 
 fn main(){
-    print(nthFib(500));
+    print(nthFib(10));
 }

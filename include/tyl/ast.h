@@ -60,6 +60,8 @@ enum AstKind {
   NODE_ASSIGN_EXPR,
   NODE_EXPR_STMT,
 
+  NODE_TERNARY,
+
   NODE_CALL,
   NODE_FUNC_DECL,
   NODE_RETURN_STMT,
@@ -68,6 +70,7 @@ enum AstKind {
 
   NODE_FIELD,
   NODE_INDEX,
+  NODE_IF_STMT
 };
 
 struct AstNode {
@@ -102,6 +105,12 @@ struct AstNode {
       AstNode *target;
       AstNode *value;
     } assign_expr;
+
+    struct {
+      AstNode *condition;
+      AstNode *true_expr;
+      AstNode *false_expr;
+    } ternary;
 
     struct {
       double value;
@@ -187,6 +196,12 @@ struct AstNode {
       AstNode *array;
       AstNode *index;
     } index;
+
+    struct {
+      AstNode *condition;
+      AstNode *then_branch;
+      AstNode *else_branch;
+    } if_stmt;
   };
 };
 
@@ -219,6 +234,10 @@ AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc);
 AstNode *AstNode_new_block(Location loc);
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc);
 AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc);
+AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
+                             AstNode *else_branch, Location loc);
+AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
+                             AstNode *false_expr, Location loc);
 
 TypeKind Token_token_to_type(TokenType t);
 

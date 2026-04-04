@@ -25,6 +25,8 @@ typedef enum TokenType {
   TOKEN_PRINT,
   TOKEN_FN,
   TOKEN_RETURN,
+  TOKEN_IF,
+  TOKEN_ELSE,
 
   // Identifiers
   TOKEN_IDENT,
@@ -64,6 +66,7 @@ typedef enum TokenType {
   TOKEN_RBRACKET,
   TOKEN_COMMA,
   TOKEN_DOT,
+  TOKEN_QUESTION,
 
   // Arithmetic
   TOKEN_PLUS,

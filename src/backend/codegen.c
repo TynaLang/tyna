@@ -128,14 +128,13 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
   if (ast_root->tag != NODE_AST_ROOT)
     panic("Expected AST root node");
 
-  cg_declare_functions(cg, ast_root);
-
   LLVMTypeRef i32_ty = LLVMInt32TypeInContext(cg->context);
-  LLVMTypeRef main_ty = LLVMFunctionType(i32_ty, NULL, 0, 0);
-  LLVMValueRef entry_func = LLVMAddFunction(cg->module, "main", main_ty);
+  LLVMTypeRef entry_ty = LLVMFunctionType(i32_ty, NULL, 0, 0);
+  LLVMValueRef entry_func = LLVMAddFunction(cg->module, "main", entry_ty);
   LLVMBasicBlockRef entry_bb =
       LLVMAppendBasicBlockInContext(cg->context, entry_func, "entry");
 
+  cg_declare_functions(cg, ast_root);
   cg_emit_functions(cg, ast_root);
 
   cg->current_function = entry_func;
@@ -144,10 +143,21 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
   cg_emit_global_statements(cg, ast_root);
 
   LLVMValueRef exit_code = LLVMConstInt(i32_ty, 0, 0);
-  if (cg_has_main(ast_root)) {
-    CGFunction *user_main = cg_find_function(cg, sv_from_parts("main", 4));
-    exit_code = LLVMBuildCall2(cg->builder, user_main->type, user_main->value,
-                               NULL, 0, "ret");
+
+  CGFunction *user_main = cg_find_function(cg, sv_from_parts("main", 4));
+
+  if (user_main) {
+    LLVMTypeRef return_ty = LLVMGetReturnType(user_main->type);
+    bool is_void = (LLVMGetTypeKind(return_ty) == LLVMVoidTypeKind);
+
+    const char *call_name = is_void ? "" : "ret";
+
+    LLVMValueRef ret_val = LLVMBuildCall2(cg->builder, user_main->type,
+                                          user_main->value, NULL, 0, call_name);
+
+    if (!is_void) {
+      exit_code = cg_cast_value(cg, ret_val, i32_ty);
+    }
   }
 
   if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {

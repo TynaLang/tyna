@@ -1,0 +1,7 @@
+fn nthFib(n:int):int {
+    return n <= 1 ? n : nthFib(n-1) + nthFib(n-2);
+}
+
+fn main(){
+    print(nthFib(10));
+}

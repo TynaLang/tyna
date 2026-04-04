@@ -262,6 +262,57 @@ static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
   }
 }
 
+static LLVMValueRef cg_ternary_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef cond = cg_expression(cg, node->ternary.condition);
+
+  LLVMTypeRef cond_ty = LLVMTypeOf(cond);
+  LLVMTypeKind cond_kind = LLVMGetTypeKind(cond_ty);
+  if (cond_kind != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(cond_ty) != 1) {
+      cond = LLVMBuildTruncOrBitCast(cg->builder, cond, LLVMInt1TypeInContext(cg->context), "cond_i1");
+  }
+
+  LLVMValueRef current_func = cg->current_function_ref->value;
+  LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_then");
+  LLVMBasicBlockRef else_bb = LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_else");
+  LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_cont");
+
+  LLVMBuildCondBr(cg->builder, cond, then_bb, else_bb);
+
+  LLVMPositionBuilderAtEnd(cg->builder, then_bb);
+  LLVMValueRef then_val = cg_expression(cg, node->ternary.true_expr);
+  LLVMBuildBr(cg->builder, merge_bb);
+  then_bb = LLVMGetInsertBlock(cg->builder);
+
+  LLVMPositionBuilderAtEnd(cg->builder, else_bb);
+  LLVMValueRef else_val = cg_expression(cg, node->ternary.false_expr);
+  LLVMBuildBr(cg->builder, merge_bb);
+  else_bb = LLVMGetInsertBlock(cg->builder);
+
+  LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+
+  LLVMTypeRef res_type = LLVMTypeOf(then_val);
+  
+  if (LLVMTypeOf(then_val) != LLVMTypeOf(else_val)) {
+    // If one is double and other is an integer type (implicit cast allowed from semantic phase)
+    if (LLVMGetTypeKind(LLVMTypeOf(then_val)) == LLVMDoubleTypeKind) {
+      else_val = cg_cast_value(cg, else_val, res_type);
+    } else if (LLVMGetTypeKind(LLVMTypeOf(else_val)) == LLVMDoubleTypeKind) {
+      res_type = LLVMTypeOf(else_val);
+      then_val = cg_cast_value(cg, then_val, res_type);
+    } else {
+        // cast else_val to then_val type since semantic analysis verified compatibility
+        else_val = cg_cast_value(cg, else_val, res_type);
+    }
+  }
+
+  LLVMValueRef phi = LLVMBuildPhi(cg->builder, res_type, "ternary_tmp");
+  LLVMValueRef incoming_values[] = {then_val, else_val};
+  LLVMBasicBlockRef incoming_blocks[] = {then_bb, else_bb};
+
+  LLVMAddIncoming(phi, incoming_values, incoming_blocks, 2);
+  return phi;
+}
+
 static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   LLVMValueRef ptr = cg_get_address(cg, node->assign_expr.target);
   if (!ptr)
@@ -349,6 +400,9 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
 
   case NODE_UNARY:
     return cg_unary_expr(cg, node);
+
+  case NODE_TERNARY:
+    return cg_ternary_expr(cg, node);
 
   case NODE_ASSIGN_EXPR:
     return cg_assign_expr(cg, node);

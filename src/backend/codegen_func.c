@@ -52,9 +52,15 @@ void cg_define_function(Codegen *cg, AstNode *node) {
 
   LLVMTypeRef func_type = LLVMFunctionType(ret_ty, param_types, param_count, 0);
 
-  char *c_name = sv_to_cstr(name);
-  LLVMValueRef func = LLVMAddFunction(cg->module, c_name, func_type);
-  free(c_name);
+  char *llvm_name;
+  if (sv_eq_cstr(name, "main"))
+    llvm_name = "_user_main";
+  else
+    llvm_name = sv_to_cstr(name);
+
+  LLVMValueRef func = LLVMAddFunction(cg->module, llvm_name, func_type);
+  if (llvm_name != (void *)"_user_main")
+    free(llvm_name);
 
   CGFunction *f = malloc(sizeof(CGFunction));
   f->name = name;

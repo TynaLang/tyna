@@ -64,6 +64,10 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_RETURN;
   else if (sv_eq_cstr(text, "print"))
     t.type = TOKEN_PRINT;
+  else if (sv_eq_cstr(text, "if"))
+    t.type = TOKEN_IF;
+  else if (sv_eq_cstr(text, "else"))
+    t.type = TOKEN_ELSE;
   else if (sv_eq_cstr(text, "int"))
     t.type = TOKEN_TYPE_INT;
   else if (sv_eq_cstr(text, "char"))
@@ -221,6 +225,9 @@ Token Token_advance(Lexer *l) {
   t.text = sv_from_parts(l->src + l->cursor - 1, 1);
 
   switch (c) {
+  case '?':
+    t.type = TOKEN_QUESTION;
+    break;
   case ':':
     t.type = TOKEN_COLON;
     break;
