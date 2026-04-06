@@ -1,6 +1,0 @@
-let x: int = 10;
-let y: int = ; // Error here
-let z: int = 20;
-
-print(x + z);
-prin(y); // Lexer error + semantic error

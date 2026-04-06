@@ -36,22 +36,24 @@ static LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node) {
         LLVMConstInBoundsGEP2(global_type, global_str, indices, 2);
 
     // Create a global for the dimensions array of the string
+    // Standard metadata for rank-1: [dim0, stride0] where stride0 = 1.
     char dims_name[64];
     static int str_dims_count = 0;
     sprintf(dims_name, ".str_dims.%d", str_dims_count++);
-    LLVMValueRef dims_arr_val = LLVMConstArray(
-        i64_ty,
-        (LLVMValueRef[]){LLVMConstInt(i64_ty, node->string.value.len, false)},
-        1);
+    LLVMValueRef dims_vals_data[] = {
+        LLVMConstInt(i64_ty, node->string.value.len, false),
+        LLVMConstInt(i64_ty, 1, false) // stride0
+    };
+    LLVMValueRef dims_arr_val = LLVMConstArray(i64_ty, dims_vals_data, 2);
     LLVMValueRef dims_global =
-        LLVMAddGlobal(cg->module, LLVMArrayType(i64_ty, 1), dims_name);
+        LLVMAddGlobal(cg->module, LLVMArrayType(i64_ty, 2), dims_name);
     LLVMSetInitializer(dims_global, dims_arr_val);
     LLVMSetGlobalConstant(dims_global, true);
     LLVMSetLinkage(dims_global, LLVMPrivateLinkage);
 
     LLVMValueRef dims_indices[] = {LLVMConstInt(i64_ty, 0, false),
                                    LLVMConstInt(i64_ty, 0, false)};
-    LLVMValueRef dims_ptr = LLVMConstInBoundsGEP2(LLVMArrayType(i64_ty, 1),
+    LLVMValueRef dims_ptr = LLVMConstInBoundsGEP2(LLVMArrayType(i64_ty, 2),
                                                   dims_global, dims_indices, 2);
 
     LLVMValueRef values[] = {LLVMConstInt(i64_ty, 1, false), // Rank = 1
@@ -410,16 +412,17 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
           zero_fat = LLVMBuildInsertValue(
               cg->builder, zero_fat,
               LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, false), 0,
-              "zero_len");
+              "zero_rank");
           zero_fat =
               LLVMBuildInsertValue(cg->builder, zero_fat,
                                    LLVMConstPointerNull(LLVMPointerType(
                                        LLVMInt8TypeInContext(cg->context), 0)),
                                    1, "zero_ptr");
-          zero_fat = LLVMBuildInsertValue(
-              cg->builder, zero_fat,
-              LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, false), 2,
-              "zero_stride");
+          zero_fat =
+              LLVMBuildInsertValue(cg->builder, zero_fat,
+                                   LLVMConstPointerNull(LLVMPointerType(
+                                       LLVMInt64TypeInContext(cg->context), 0)),
+                                   2, "zero_dims");
           LLVMBuildStore(cg->builder, zero_fat, addr);
         }
       }
@@ -435,12 +438,20 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
     if (obj_node->resolved_type->kind == KIND_PRIMITIVE &&
         obj_node->resolved_type->data.primitive == PRIM_STRING &&
         sv_eq(member, sv_from_parts("to_array", 8))) {
-      LLVMValueRef fat_ptr = cg_expression(cg, obj_node);
+      LLVMValueRef fat_val = cg_expression(cg, obj_node);
+      LLVMValueRef temp_in =
+          LLVMBuildAlloca(cg->builder, LLVMTypeOf(fat_val), "to_array_in");
+      LLVMBuildStore(cg->builder, fat_val, temp_in);
+
+      LLVMValueRef temp_out =
+          LLVMBuildAlloca(cg->builder, LLVMTypeOf(fat_val), "to_array_out");
+
       CGFunction *fn =
           cg_find_function(cg, sv_from_parts("__tyl_str_to_array", 18));
-      LLVMValueRef args[] = {fat_ptr};
-      return LLVMBuildCall2(cg->builder, fn->type, fn->value, args, 1,
-                            "to_array_tmp");
+      LLVMValueRef args[] = {temp_out, temp_in};
+      LLVMBuildCall2(cg->builder, fn->type, fn->value, args, 2, "");
+      return LLVMBuildLoad2(cg->builder, LLVMTypeOf(fat_val), temp_out,
+                            "to_array_res");
     }
   }
 
@@ -451,12 +462,20 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
     if (sv_eq(parent, sv_from_parts("String", 6)) &&
         sv_eq(member, sv_from_parts("from_array", 10))) {
       AstNode *arg_node = node->call.args.items[0];
-      LLVMValueRef arg_val = cg_expression(cg, arg_node);
+      LLVMValueRef fat_val = cg_expression(cg, arg_node);
+      LLVMValueRef temp_in =
+          LLVMBuildAlloca(cg->builder, LLVMTypeOf(fat_val), "from_array_in");
+      LLVMBuildStore(cg->builder, fat_val, temp_in);
+
+      LLVMValueRef temp_out =
+          LLVMBuildAlloca(cg->builder, LLVMTypeOf(fat_val), "from_array_out");
+
       CGFunction *fn =
           cg_find_function(cg, sv_from_parts("__tyl_array_to_str", 18));
-      LLVMValueRef args[] = {arg_val};
-      return LLVMBuildCall2(cg->builder, fn->type, fn->value, args, 1,
-                            "from_array_tmp");
+      LLVMValueRef args[] = {temp_out, temp_in};
+      LLVMBuildCall2(cg->builder, fn->type, fn->value, args, 2, "");
+      return LLVMBuildLoad2(cg->builder, LLVMTypeOf(fat_val), temp_out,
+                            "from_array_res");
     }
   }
 
@@ -925,21 +944,37 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
     return cg_field_expr(cg, node);
 
   case NODE_INTRINSIC_COMPARE: {
-    LLVMValueRef lhs = cg_expression(cg, node->intrinsic_compare.left);
-    LLVMValueRef rhs = cg_expression(cg, node->intrinsic_compare.right);
+    LLVMValueRef lhs_ptr = cg_get_address(cg, node->intrinsic_compare.left);
+    LLVMValueRef rhs_ptr = cg_get_address(cg, node->intrinsic_compare.right);
+
+    // If they aren't lvalues, we need to store them in a temporary
+    if (!lhs_ptr) {
+      LLVMValueRef lhs_val = cg_expression(cg, node->intrinsic_compare.left);
+      lhs_ptr = LLVMBuildAlloca(cg->builder, LLVMTypeOf(lhs_val), "tmp_lhs");
+      LLVMBuildStore(cg->builder, lhs_val, lhs_ptr);
+    }
+    if (!rhs_ptr) {
+      LLVMValueRef rhs_val = cg_expression(cg, node->intrinsic_compare.right);
+      rhs_ptr = LLVMBuildAlloca(cg->builder, LLVMTypeOf(rhs_val), "tmp_rhs");
+      LLVMBuildStore(cg->builder, rhs_val, rhs_ptr);
+    }
 
     Type *arr_type = node->intrinsic_compare.left->resolved_type;
-    Type *elem_type = (arr_type->kind == KIND_PRIMITIVE &&
-                       arr_type->data.primitive == PRIM_STRING)
-                          ? type_get_primitive(cg->type_ctx, PRIM_CHAR)
-                          : arr_type->data.array.element;
-    LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
+    Type *base_scalar = (arr_type->kind == KIND_PRIMITIVE &&
+                         arr_type->data.primitive == PRIM_STRING)
+                            ? type_get_primitive(cg->type_ctx, PRIM_CHAR)
+                            : arr_type->data.array.element;
+    while (base_scalar->kind == KIND_ARRAY) {
+      base_scalar = base_scalar->data.array.element;
+    }
 
-    LLVMValueRef elem_size = LLVMSizeOf(llvm_elem_ty);
+    LLVMTypeRef llvm_scalar_ty = cg_get_llvm_type(cg, base_scalar);
+    LLVMValueRef elem_size =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, false);
 
     CGFunction *cmp_fn =
         cg_find_function(cg, sv_from_parts("__tyl_compare_arrays", 20));
-    LLVMValueRef args[] = {lhs, rhs, elem_size};
+    LLVMValueRef args[] = {lhs_ptr, rhs_ptr, elem_size};
     LLVMValueRef res = LLVMBuildCall2(cg->builder, cmp_fn->type, cmp_fn->value,
                                       args, 3, "cmptmp");
 

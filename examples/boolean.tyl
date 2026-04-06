@@ -1,4 +1,0 @@
-print(true);
-print(false);
-print((int)true);
-print((int)false);

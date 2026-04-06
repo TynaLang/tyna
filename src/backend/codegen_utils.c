@@ -49,16 +49,24 @@ LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name) {
     fat_ptr =
         LLVMBuildInsertValue(tmp_builder, fat_ptr, data_ptr, 1, "slice_data");
 
-    // Add stride initialization
-    uint64_t stride_val = 1;
-    Type *inner = type->data.array.element;
-    while (inner->kind == KIND_ARRAY) {
-      stride_val *= inner->data.array.fixed_size;
-      inner = inner->data.array.element;
-    }
-    LLVMValueRef stride_val_llvm = LLVMConstInt(i64_type, stride_val, false);
-    fat_ptr = LLVMBuildInsertValue(tmp_builder, fat_ptr, stride_val_llvm, 2,
-                                   "slice_stride");
+    // Fix: Dimensions pointer for static arrays
+    // For static arrays, we need to provide a pointer to dimensions.
+    // For simplicity in the static stack allocation case, we can use a global
+    // or constant array for [len, 1] (len and stride of 1).
+    // However, to keep it consistent with how we handle static arrays
+    // elsewhere:
+    LLVMValueRef dims_vals[] = {len_val, LLVMConstInt(i64_type, 1, false)};
+    LLVMValueRef dims_arr = LLVMConstArray(i64_type, dims_vals, 2);
+    LLVMValueRef global_dims =
+        LLVMAddGlobal(cg->module, LLVMTypeOf(dims_arr), "static_array_dims");
+    LLVMSetInitializer(global_dims, dims_arr);
+    LLVMSetGlobalConstant(global_dims, true);
+    LLVMSetLinkage(global_dims, LLVMInternalLinkage);
+
+    LLVMValueRef dims_ptr = LLVMBuildBitCast(
+        tmp_builder, global_dims, LLVMPointerType(i64_type, 0), "dims_ptr");
+    fat_ptr =
+        LLVMBuildInsertValue(tmp_builder, fat_ptr, dims_ptr, 2, "slice_dims");
 
     LLVMBuildStore(tmp_builder, fat_ptr, alloca);
   } else if (type->kind == KIND_PRIMITIVE &&

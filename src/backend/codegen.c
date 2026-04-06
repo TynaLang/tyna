@@ -35,12 +35,13 @@ static void cg_initiate_system_functions(Codegen *cg) {
   cg_init_CGFunction(f_pow, sv_from_parts("pow", 3), pow_val, pow_type, true);
   List_push(&cg->system_functions, f_pow);
 
-  // __tyl_compare_arrays(FatPtr a, FatPtr b, size_t elem_size)
+  // __tyl_compare_arrays(const FatPtr *a, const FatPtr *b, size_t elem_size)
   LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
   LLVMTypeRef ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+  LLVMTypeRef dims_ptr_ty = LLVMPointerType(i64_ty, 0);
   LLVMTypeRef fatptr_ty = LLVMStructTypeInContext(
-      cg->context, (LLVMTypeRef[]){i64_ty, ptr_ty}, 2, false);
-  LLVMTypeRef cmp_args[] = {fatptr_ty, fatptr_ty, i64_ty};
+      cg->context, (LLVMTypeRef[]){i64_ty, ptr_ty, dims_ptr_ty}, 3, false);
+  LLVMTypeRef cmp_args[] = {ptr_ty, ptr_ty, i64_ty};
   LLVMTypeRef cmp_type =
       LLVMFunctionType(LLVMInt32TypeInContext(cg->context), cmp_args, 3, false);
   LLVMValueRef cmp_val =
@@ -50,9 +51,10 @@ static void cg_initiate_system_functions(Codegen *cg) {
                      cmp_type, true);
   List_push(&cg->system_functions, f_cmp);
 
-  // FatPtr __tyl_str_to_array(FatPtr str)
-  LLVMTypeRef to_arr_args[] = {fatptr_ty};
-  LLVMTypeRef to_arr_type = LLVMFunctionType(fatptr_ty, to_arr_args, 1, false);
+  // void __tyl_str_to_array(FatPtr *out, const FatPtr *str)
+  LLVMTypeRef to_arr_args[] = {ptr_ty, ptr_ty};
+  LLVMTypeRef to_arr_type = LLVMFunctionType(LLVMVoidTypeInContext(cg->context),
+                                             to_arr_args, 2, false);
   LLVMValueRef to_arr_val =
       LLVMAddFunction(cg->module, "__tyl_str_to_array", to_arr_type);
   CGFunction *f_to_arr = xmalloc(sizeof(CGFunction));
@@ -60,9 +62,10 @@ static void cg_initiate_system_functions(Codegen *cg) {
                      to_arr_val, to_arr_type, true);
   List_push(&cg->system_functions, f_to_arr);
 
-  // FatPtr __tyl_array_to_str(FatPtr arr)
-  LLVMTypeRef to_str_args[] = {fatptr_ty};
-  LLVMTypeRef to_str_type = LLVMFunctionType(fatptr_ty, to_str_args, 1, false);
+  // void __tyl_array_to_str(FatPtr *out, const FatPtr *arr)
+  LLVMTypeRef to_str_args[] = {ptr_ty, ptr_ty};
+  LLVMTypeRef to_str_type = LLVMFunctionType(LLVMVoidTypeInContext(cg->context),
+                                             to_str_args, 2, false);
   LLVMValueRef to_str_val =
       LLVMAddFunction(cg->module, "__tyl_array_to_str", to_str_type);
   CGFunction *f_to_str = xmalloc(sizeof(CGFunction));
