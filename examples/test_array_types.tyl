@@ -1,0 +1,26 @@
+// Test arrays of different types and cross-type assignments
+let ints: [i32; 3] = [1, 2, 3];
+let floats: [f64; 3] = [1.1, 2.2, 3.3];
+let chars: [char; 3] = ['a', 'b', 'c'];
+
+print("Initial data:");
+print(ints[0], ints[1], ints[2]);
+print(floats[0], floats[1], floats[2]);
+print(chars[0], chars[1], chars[2]);
+
+// Valid promotion: i32 -> f64
+print("Promoting int to float array...");
+floats[0] = (f64)ints[0];
+floats[1] = 5.5;
+print(floats[0], floats[1]);
+
+// Valid: char to i32 (as it's basically i8)
+print("Char to int array...");
+ints[0] = (i32)chars[2]; // 'c' is 99
+print(ints[0]);
+
+// These should FAIL to compile if uncommented (unsupported implicit narrowing)
+// ints[1] = floats[0]; 
+// chars[0] = ints[2];
+
+print("Done.");
