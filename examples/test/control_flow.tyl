@@ -1,0 +1,9 @@
+// Control flow: if, else, ternary
+let a = 5;
+if (a > 0) {
+  print("positive");
+} else {
+  print("not positive");
+}
+let b = a > 10 ? 1 : 2;
+print(b); // 2

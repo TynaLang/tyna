@@ -1,0 +1,13 @@
+// Types and casting
+let i: int = 42;
+let f: f32 = 3.5f;
+let d: f64 = 2.0;
+let c: char = 'A';
+let b: bool = true;
+print(i, f, d, c, b);
+let x: f32 = (f32)i;
+print(x);
+let y: int = (int)f;
+print(y);
+let z: char = (char)66;
+print(z);

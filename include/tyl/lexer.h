@@ -27,6 +27,8 @@ typedef enum TokenType {
   TOKEN_RETURN,
   TOKEN_IF,
   TOKEN_ELSE,
+  TOKEN_DEFER,
+  TOKEN_STRUCT,
 
   // Identifiers
   TOKEN_IDENT,
@@ -56,6 +58,7 @@ typedef enum TokenType {
 
   // Symbols
   TOKEN_COLON,
+  TOKEN_COLON_COLON,
   TOKEN_ASSIGN,
   TOKEN_SEMI,
   TOKEN_LPAREN,

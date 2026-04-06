@@ -76,12 +76,6 @@ int main(int argc, char **argv) {
   TypeContext *type_ctx = type_context_create();
   AstNode *ast_root = Parser_process(&lexer, &eh, type_ctx);
 
-  /* if (eh.has_errors) { */
-  /*   ErrorHandler_show_all(&eh); */
-  /*   return 1; */
-  /* } */
-  /* return 0; */
-
   SymbolTable table;
   SymbolTable_init(&table, &eh, type_ctx);
   Semantic_analysis(ast_root, &table);
@@ -94,7 +88,7 @@ int main(int argc, char **argv) {
   }
 
   // Backend
-  Codegen *cg = Codegen_new("tyl_module");
+  Codegen *cg = Codegen_new("tyl_module", type_ctx);
   Codegen_program(cg, ast_root);
 
   // Verification

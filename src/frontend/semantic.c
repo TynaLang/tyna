@@ -126,6 +126,15 @@ static int can_implicitly_cast(Type *to, Type *from) {
     return 0;
   if (is_numeric(to) && is_numeric(from))
     return type_rank(to) >= type_rank(from);
+
+  // Allow implicit cast from String to [char]
+  if (from->kind == KIND_PRIMITIVE && from->data.primitive == PRIM_STRING &&
+      to->kind == KIND_ARRAY &&
+      to->data.array.element->kind == KIND_PRIMITIVE &&
+      to->data.array.element->data.primitive == PRIM_CHAR) {
+    return 1;
+  }
+
   return 0;
 }
 
@@ -170,6 +179,7 @@ void SymbolTable_add(SymbolTable *table, StringView name, Type *type,
   symbol->type = type;
   symbol->is_const = is_const;
   symbol->func_status = FUNC_NONE;
+  symbol->scope = table;
   List_push(&table->symbols, symbol);
 }
 
@@ -202,8 +212,9 @@ Symbol *SymbolTable_add_func(SymbolTable *table, StringView name,
   sym->type = func->func_decl.return_type;
   sym->func_status = status;
   sym->value = func;
-  sym->scope = xmalloc(sizeof(SymbolTable));
-  SymbolTable_init(sym->scope, table->eh, table->type_ctx);
+  sym->scope = table;
+  SymbolTable *fn_scope = xmalloc(sizeof(SymbolTable));
+  SymbolTable_init(fn_scope, table->eh, table->type_ctx);
 
   /* Register function symbol in the current table so calls can resolve */
   List_push(&table->symbols, sym);
@@ -388,6 +399,20 @@ static Type *check_expression(SymbolTable *table, AstNode *node) {
       semantic_error(table, node, "Equality operator on incompatible types");
       return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
+
+    if (left->kind == KIND_ARRAY ||
+        (left->kind == KIND_PRIMITIVE && left->data.primitive == PRIM_STRING)) {
+      // Lower to intrinsic compare
+      AstNode *left_node = node->binary_equality.left;
+      AstNode *right_node = node->binary_equality.right;
+      EqualityOp op = node->binary_equality.op;
+
+      node->tag = NODE_INTRINSIC_COMPARE;
+      node->intrinsic_compare.left = left_node;
+      node->intrinsic_compare.right = right_node;
+      node->intrinsic_compare.op = op;
+    }
+
     type = type_get_primitive(table->type_ctx, PRIM_BOOL);
     node->resolved_type = type;
     break;
@@ -454,6 +479,7 @@ static Type *check_expression(SymbolTable *table, AstNode *node) {
     }
 
     size_t count = 0;
+    bool is_dynamic = true;
     if (node->array_repeat.count->tag == NODE_NUMBER) {
       double c = node->array_repeat.count->number.value;
       if (c < 0) {
@@ -461,15 +487,10 @@ static Type *check_expression(SymbolTable *table, AstNode *node) {
                        "Array repeat count cannot be negative: %g", c);
       }
       count = (size_t)c;
-    } else {
-      // For now we only support constant repeat counts because our arrays are
-      // fixed-size on the stack in codegen.
-      semantic_error(
-          table, node->array_repeat.count,
-          "Array repeat count must be a constant for stack-allocated arrays");
+      is_dynamic = false;
     }
 
-    type = type_get_array(table->type_ctx, elem_type, false, count);
+    type = type_get_array(table->type_ctx, elem_type, is_dynamic, count);
     node->resolved_type = type;
     break;
   }
@@ -478,9 +499,11 @@ static Type *check_expression(SymbolTable *table, AstNode *node) {
     Type *arr_type = check_expression(table, node->index.array);
     Type *idx_type = check_expression(table, node->index.index);
 
-    if (arr_type->kind != KIND_ARRAY) {
+    if (arr_type->kind != KIND_ARRAY &&
+        !(arr_type->kind == KIND_PRIMITIVE &&
+          arr_type->data.primitive == PRIM_STRING)) {
       semantic_error(table, node->index.array,
-                     "Indexing target must be an array, got %s",
+                     "Indexing target must be an array or string, got %s",
                      type_to_name(arr_type));
       return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
@@ -491,40 +514,73 @@ static Type *check_expression(SymbolTable *table, AstNode *node) {
                      type_to_name(idx_type));
     }
 
-    // Constant bounds check
-    if (node->index.index->tag == NODE_NUMBER) {
-      double idx_val = node->index.index->number.value;
-      if (!arr_type->data.array.is_dynamic) {
-        if (idx_val < 0 || (size_t)idx_val >= arr_type->data.array.fixed_size) {
-          semantic_error(
-              table, node->index.index,
-              "Array index %g is out of bounds for array of size %zu", idx_val,
-              arr_type->data.array.fixed_size);
+    // Result of indexing a string is a char
+    if (arr_type->kind == KIND_PRIMITIVE &&
+        arr_type->data.primitive == PRIM_STRING) {
+      type = type_get_primitive(table->type_ctx, PRIM_CHAR);
+      node->resolved_type = type;
+    } else {
+      type = arr_type->data.array.element;
+      node->resolved_type = type;
+
+      // Constant bounds check (only for non-strings and explicit fixed size
+      // arrays)
+      if (node->index.index->tag == NODE_NUMBER) {
+        double idx_val = node->index.index->number.value;
+        if (!arr_type->data.array.is_dynamic &&
+            arr_type->data.array.fixed_size > 0) {
+          if (idx_val < 0 ||
+              (size_t)idx_val >= arr_type->data.array.fixed_size) {
+            semantic_error(
+                table, node->index.index,
+                "Array index %g is out of bounds for array of size %zu",
+                idx_val, arr_type->data.array.fixed_size);
+          }
         }
       }
     }
-
-    type = arr_type->data.array.element;
-    node->resolved_type = type;
     break;
   }
 
   case NODE_FIELD: {
     Type *obj_type = check_expression(table, node->field.object);
-    if (obj_type->kind == KIND_ARRAY) {
-      if (sv_eq_cstr(node->field.field, "len")) {
-        type = type_get_primitive(table->type_ctx, PRIM_I64);
-        node->resolved_type = type;
-        break;
-      }
-      semantic_error(table, node, "Array has no field '" SV_FMT "'",
-                     SV_ARG(node->field.field));
+    Member *m = type_get_member(obj_type, node->field.field);
+    if (m) {
+      type = m->type;
+      node->resolved_type = type;
+
+    } else if (obj_type->kind == KIND_PRIMITIVE &&
+               obj_type->data.primitive == PRIM_STRING &&
+               sv_eq(node->field.field, sv_from_parts("to_array", 8))) {
+      // Blessed method s.to_array() -> [char]
+      type =
+          type_get_array(table->type_ctx,
+                         type_get_primitive(table->type_ctx, PRIM_CHAR), 0, 0);
+      node->resolved_type = type;
     } else {
-      semantic_error(table, node, "Field access on non-object type %s",
-                     type_to_name(obj_type));
+      semantic_error(table, node, "Type %s has no member '" SV_FMT "'",
+                     type_to_name(obj_type), SV_ARG(node->field.field));
+      type = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+      node->resolved_type = type;
     }
-    type = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
-    node->resolved_type = type;
+    break;
+  }
+
+  case NODE_STATIC_MEMBER: {
+    if (sv_eq(node->static_member.parent, sv_from_parts("String", 6)) &&
+        sv_eq(node->static_member.member, sv_from_parts("from_array", 10))) {
+      // Blessed static method String::from_array([char]) -> String
+      // Return a dummy type for now, but really we want a function type.
+      type = type_get_primitive(table->type_ctx, PRIM_STRING);
+      node->resolved_type = type;
+    } else {
+      semantic_error(table, node,
+                     "Unknown static member '" SV_FMT "::" SV_FMT "'",
+                     SV_ARG(node->static_member.parent),
+                     SV_ARG(node->static_member.member));
+      type = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+      node->resolved_type = type;
+    }
     break;
   }
 
@@ -568,6 +624,17 @@ static Type *check_expression(SymbolTable *table, AstNode *node) {
 
     Type *lhs = check_expression(table, target);
 
+    if (target->tag == NODE_INDEX) {
+      Type *arr_type = target->index.array->resolved_type;
+      if (arr_type && arr_type->kind == KIND_PRIMITIVE &&
+          arr_type->data.primitive == PRIM_STRING) {
+        semantic_error(table, node, "Strings in tyl are immutable");
+        return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+      }
+    } else if (lhs->kind == KIND_PRIMITIVE &&
+               lhs->data.primitive == PRIM_STRING) {
+    }
+
     if (target->tag == NODE_VAR) {
       Symbol *s = SymbolTable_find(table, target->var.value);
       if (s && s->is_const) {
@@ -596,33 +663,97 @@ static Type *check_expression(SymbolTable *table, AstNode *node) {
   }
 
   case NODE_CALL: {
-    Symbol *s = SymbolTable_find(table, node->call.func->var.value);
-    if (!s) {
-      semantic_error(table, node, "Call to undefined function '%.*s'",
-                     (int)node->call.func->var.value.len,
-                     node->call.func->var.value.data);
+    Type *func_type = check_expression(table, node->call.func);
+    if (func_type->kind == KIND_PRIMITIVE &&
+        func_type->data.primitive == PRIM_UNKNOWN) {
       return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
 
-    if (s->scope && node->call.args.len != s->scope->symbols.len) {
-      semantic_error(table, node,
-                     "Function '%.*s' expects %zu arguments, got %zu",
-                     (int)s->name.len, s->name.data, s->scope->symbols.len,
-                     node->call.args.len);
+    if (node->call.func->tag != NODE_VAR) {
+      // For now, only named calls are supported, but we might have complex
+      // exprs returning symbols or method calls being resolved. Already handled
+      // by check_expression above.
     }
 
-    for (size_t i = 0; i < node->call.args.len; i++) {
-      Type *arg_type = check_expression(table, node->call.args.items[i]);
-      if (s->scope && i < s->scope->symbols.len) {
-        Symbol *param = s->scope->symbols.items[i];
-        if (!can_implicitly_cast(param->type, arg_type)) {
+    if (node->call.func->tag == NODE_VAR) {
+      StringView name = node->call.func->var.value;
+      if (sv_eq(name, sv_from_parts("free", 4))) {
+        // Special case for free(): check it takes 1 array
+        if (node->call.args.len != 1) {
+          semantic_error(table, node, "free() expects 1 argument, got %zu",
+                         node->call.args.len);
+        } else {
+          Type *arg_ty = check_expression(table, node->call.args.items[0]);
+          if (arg_ty->kind != KIND_ARRAY) {
+            semantic_error(table, node->call.args.items[0],
+                           "free() expects an array, got %s",
+                           type_to_name(arg_ty));
+          }
+
+          AstNode *arg_node = node->call.args.items[0];
+          if (arg_node->tag != NODE_VAR) {
+            // In a real system, we might warn that zeroing will only affect the
+            // temp.
+          }
+        }
+        type = type_get_primitive(table->type_ctx, PRIM_VOID);
+        node->resolved_type = type;
+        break;
+      }
+
+      Symbol *s = SymbolTable_find(table, name);
+      if (!s) {
+        semantic_error(table, node, "Call to undefined function '" SV_FMT "'",
+                       SV_ARG(node->call.func->var.value));
+        return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+      }
+
+      if (s->value && s->value->tag == NODE_FUNC_DECL) {
+        AstNode *fn_node = s->value;
+        if (node->call.args.len != fn_node->func_decl.params.len) {
           semantic_error(table, node,
-                         "Argument %zu type mismatch: expected %s, got %s", i,
-                         type_to_name(param->type), type_to_name(arg_type));
+                         "Function '" SV_FMT "' expects %zu arguments, got %zu",
+                         SV_ARG(s->name), fn_node->func_decl.params.len,
+                         node->call.args.len);
+        }
+
+        for (size_t i = 0; i < node->call.args.len; i++) {
+          Type *arg_type = check_expression(table, node->call.args.items[i]);
+          if (i < fn_node->func_decl.params.len) {
+            AstNode *param_node = fn_node->func_decl.params.items[i];
+            Type *param_type = param_node->param.type;
+            if (!can_implicitly_cast(param_type, arg_type)) {
+              semantic_error(table, node,
+                             "Argument %zu type mismatch: expected %s, got %s",
+                             i, type_to_name(param_type),
+                             type_to_name(arg_type));
+            }
+          }
+        }
+      } else if (s->scope) {
+        // Fallback or external function?
+        if (node->call.args.len != s->scope->symbols.len) {
+          semantic_error(table, node,
+                         "Function '" SV_FMT "' expects %zu arguments, got %zu",
+                         SV_ARG(s->name), s->scope->symbols.len,
+                         node->call.args.len);
+        }
+        for (size_t i = 0; i < node->call.args.len; i++) {
+          check_expression(table, node->call.args.items[i]);
+        }
+      } else {
+        // Just check args
+        for (size_t i = 0; i < node->call.args.len; i++) {
+          check_expression(table, node->call.args.items[i]);
         }
       }
+      type = s->type;
+    } else {
+      // It was a field access or static member that resolved to a type.
+      // E.g. s.to_array() or String::from_array().
+      // For now, we assume these are blessed.
+      type = func_type;
     }
-    type = s->type;
     node->resolved_type = type;
     break;
   }
@@ -677,6 +808,13 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
 
   switch (node->tag) {
   case NODE_AST_ROOT:
+
+    Type *string_type = type_get_primitive(table->type_ctx, PRIM_STRING);
+    SymbolTable_add(table, sv_from_parts("String", 6), string_type, true);
+
+    SymbolTable_add(table, sv_from_parts("free", 4),
+                    type_get_primitive(table->type_ctx, PRIM_VOID), true);
+
     Semantic_deduplicate_top_level(node, table);
     for (size_t i = 0; i < node->ast_root.children.len; i++)
       Semantic_analysis(node->ast_root.children.items[i], table);
@@ -694,7 +832,13 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
 
   case NODE_VAR_DECL: {
     StringView name = node->var_decl.name->var.value;
-    if (SymbolTable_find(table, name)) {
+    Symbol *existing = SymbolTable_find(table, name);
+    if (existing && existing->scope == table) {
+      // If we are in a loop or block, we might want to allow this if it's not
+      // the same scope. but SymbolTable should be separate for each block.
+      // Top-level REPL-like behavior allows re-declaration if NOT the same
+      // block. But for now, we just check if it's literally the same table
+      // pointer.
       semantic_error(table, node, "Duplicate variable '" SV_FMT "'",
                      SV_ARG(name));
       return;
@@ -704,13 +848,26 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
     if (decl_type->kind == KIND_PRIMITIVE &&
         decl_type->data.primitive == PRIM_UNKNOWN) {
       decl_type = val_type;
-    } else {
-      // If we have a declared type, check if value can be cast to it
-      if (node->var_decl.value && !can_implicitly_cast(decl_type, val_type)) {
+    } else if (node->var_decl.value) {
+      // If we have a declared type and a value, check if value can be cast to
+      // it
+      if (!can_implicitly_cast(decl_type, val_type)) {
         semantic_error(
             table, node->var_decl.value,
             "Type mismatch in variable declaration: expected %s, got %s",
             type_to_name(decl_type), type_to_name(val_type));
+      }
+    } else {
+      // No initial value. Check if type contains placeholders (e.g. [int; _])
+      Type *t = decl_type;
+      while (t && t->kind == KIND_ARRAY) {
+        if (t->data.array.is_dynamic) {
+          semantic_error(table, node,
+                         "Cannot declare uninitialized array with dynamic "
+                         "dimension (placeholder '_')");
+          break;
+        }
+        t = t->data.array.element;
       }
     }
 
@@ -767,9 +924,7 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
             inferred = t;
             set = 1;
           } else if (inferred != t) {
-            inferred = type_get_primitive(
-                table->type_ctx,
-                PRIM_UNKNOWN); 
+            inferred = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
           }
         }
       }
@@ -822,6 +977,35 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
     Semantic_analysis(node->if_stmt.then_branch, table);
     if (node->if_stmt.else_branch) {
       Semantic_analysis(node->if_stmt.else_branch, table);
+    }
+    break;
+  }
+
+  case NODE_DEFER:
+    Semantic_analysis(node->defer.expr, table);
+    break;
+
+  case NODE_STRUCT_DECL: {
+    StringView name = node->struct_decl.name->var.value;
+    char *c_name = sv_to_cstr(name);
+    Type *struct_type = type_get_struct(table->type_ctx, c_name);
+    free(c_name);
+
+    if (SymbolTable_find(table, name)) {
+      semantic_error(table, node, "Duplicate symbol '" SV_FMT "'",
+                     SV_ARG(name));
+      break;
+    }
+    SymbolTable_add(table, name, struct_type, true);
+
+    for (size_t i = 0; i < node->struct_decl.members.len; i++) {
+      AstNode *mem_decl = node->struct_decl.members.items[i];
+      StringView mem_name = mem_decl->var_decl.name->var.value;
+      Type *mem_type = mem_decl->var_decl.declared_type;
+
+      char *c_mem_name = sv_to_cstr(mem_name);
+      type_add_member(struct_type, c_mem_name, mem_type, 0); // Offset 0 for now
+      free(c_mem_name);
     }
     break;
   }

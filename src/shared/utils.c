@@ -28,9 +28,39 @@ void *List_get(List *list, size_t index) {
   return list->items[index];
 }
 
+void *List_pop(List *list) {
+  if (list->len == 0) {
+    panic("List pop from empty list");
+  }
+  return list->items[--list->len];
+}
+
 /*
  * free_items: if 1, frees each pointer inside the list before freeing the array
  */
+void List_insert(List *list, size_t index, void *item) {
+  if (index > list->len) {
+    panic("List index out of bounds during insert");
+  }
+
+  if (list->len == list->capacity) {
+    list->capacity = list->capacity ? list->capacity * 2 : 4;
+    void **new_items = realloc(list->items, sizeof(void *) * list->capacity);
+    if (!new_items) {
+      panic("Failed to realloc list");
+    }
+    list->items = new_items;
+  }
+
+  if (index < list->len) {
+    memmove(&list->items[index + 1], &list->items[index],
+            sizeof(void *) * (list->len - index));
+  }
+
+  list->items[index] = item;
+  list->len++;
+}
+
 void List_free(List *list, int free_items) {
   if (free_items) {
     for (size_t i = 0; i < list->len; i++) {

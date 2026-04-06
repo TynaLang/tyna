@@ -51,10 +51,15 @@ enum AstKind {
   NODE_BLOCK,
 
   NODE_FIELD,
+  NODE_STATIC_MEMBER,
   NODE_INDEX,
   NODE_ARRAY_LITERAL,
   NODE_ARRAY_REPEAT,
-  NODE_IF_STMT
+  NODE_IF_STMT,
+  TOKEN_INDEX,
+  NODE_DEFER,
+  NODE_INTRINSIC_COMPARE,
+  NODE_STRUCT_DECL
 };
 
 struct AstNode {
@@ -70,6 +75,17 @@ struct AstNode {
       AstNode *value;
       AstNode *count;
     } array_repeat;
+
+    struct {
+      AstNode *left;
+      AstNode *right;
+      EqualityOp op;
+    } intrinsic_compare;
+
+    struct {
+      AstNode *name;
+      List members; // List<AstNode* (NODE_VAR_DECL)>
+    } struct_decl;
 
     struct {
       List children;
@@ -187,9 +203,18 @@ struct AstNode {
     } field;
 
     struct {
+      StringView parent;
+      StringView member;
+    } static_member;
+
+    struct {
       AstNode *array;
       AstNode *index;
     } index;
+
+    struct {
+      AstNode *expr;
+    } defer;
 
     struct {
       AstNode *condition;
@@ -229,11 +254,15 @@ AstNode *AstNode_new_param(StringView name, Type *type, Location loc);
 AstNode *AstNode_new_block(Location loc);
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc);
 AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc);
+AstNode *AstNode_new_static_member(StringView parent, StringView member,
+                                   Location loc);
 AstNode *AstNode_new_array_repeat(AstNode *value, AstNode *count, Location loc);
 AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
                              AstNode *else_branch, Location loc);
+AstNode *AstNode_new_defer(AstNode *expr, Location loc);
 AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
                              AstNode *false_expr, Location loc);
+AstNode *AstNode_new_struct_decl(AstNode *name, List members, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
 
 PrimitiveKind Token_token_to_type(TokenType t);

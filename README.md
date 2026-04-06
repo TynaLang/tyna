@@ -57,5 +57,23 @@ Options:
 You can also use the `just` commands:
 
 - `just run <file>`: Build and run a file.
-- `just test`: Run the default test file.
-- `just ir`: Emit LLVM IR for the default test file.
+
+## Feature Set
+
+Tyl supports the following language features:
+
+- **Scalar types:** `int`, `float`, `double`, `char`, `bool`, `string`, with `const` and `let` declarations
+- **Type casting:** Explicit and implicit promotion (e.g., `int` → `float`)
+- **Arithmetic & binary operators:** `+`, `-`, `*`, `/`, `%`, `^`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`, `||`
+- **Control flow:** `if`, `else`, ternary operator (`? :`)
+- **Functions:** Definition, recursion, mutual recursion, return values
+- **Arrays:** Declaration, initialization, indexing, multi-dimensional (partial)
+- **Defer:** Cleanup blocks (like Go's `defer`)
+- **Print:** Variadic, supports multiple types
+- **Error handling:** Compile-time and runtime errors, bounds checking (partial)
+- **String operations:** Equality, length, subscripting, `to_array`, `from_array`
+- **Increment/decrement:** `++`, `--`
+- **Comments:** `//` single-line
+- **Edge cases:** Out-of-bounds, type errors, const assignment
+
+See `examples/tests/` for comprehensive language and feature tests.

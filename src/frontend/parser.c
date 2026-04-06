@@ -304,6 +304,13 @@ static AstNode *Parser_parse_primary(Parser *p) {
   case TOKEN_CHAR:
     return AstNode_new_char(t.text.data[0], t.loc);
   case TOKEN_IDENT:
+    if (p->current_token.type == TOKEN_COLON_COLON) {
+      Parser_token_advance(p);
+      Token member = p->current_token;
+      if (!Parser_expect(p, TOKEN_IDENT, "Expected member name after '::'"))
+        return NULL;
+      return AstNode_new_static_member(t.text, member.text, t.loc);
+    }
     return AstNode_new_var(t.text, t.loc);
   case TOKEN_STRING:
     return AstNode_new_string(t.text, t.loc);
@@ -336,20 +343,31 @@ static AstNode *Parser_parse_primary(Parser *p) {
         return NULL;
 
       if (p->current_token.type == TOKEN_SEMI) {
-        // [value; count] shorthand
+        // [value; count1, count2, ...] shorthand
         Parser_token_advance(p);
         AstNode *count_node = Parser_parse_expression(p, 0);
         if (!count_node) {
-          ErrorHandler_report(p->eh, p->current_token.loc,
-                              "Expected count expression after ';' in array literal");
+          ErrorHandler_report(
+              p->eh, p->current_token.loc,
+              "Expected count expression after ';' in array literal");
           return NULL;
         }
 
-        // We could also check here if count_node is a constant, but we'll let
-        // semantic handle it for more flexibility (like dynamic repeats eventually).
-        List_free(&items, 0); // Don't need the list anymore
+        AstNode *res = AstNode_new_array_repeat(first, count_node, t.loc);
+        while (p->current_token.type == TOKEN_COMMA) {
+          Parser_token_advance(p);
+          AstNode *next_count = Parser_parse_expression(p, 0);
+          if (!next_count) {
+            ErrorHandler_report(p->eh, p->current_token.loc,
+                                "Expected count expression after ','");
+            return NULL;
+          }
+          res = AstNode_new_array_repeat(res, next_count, t.loc);
+        }
+
+        List_free(&items, 0);
         Parser_expect(p, TOKEN_RBRACKET, "Expected ']' at end of array repeat");
-        return AstNode_new_array_repeat(first, count_node, t.loc);
+        return res;
       } else {
         List_push(&items, first);
         while (p->current_token.type == TOKEN_COMMA) {
@@ -487,26 +505,41 @@ static Type *Parser_parse_type_full(Parser *p) {
   if (p->current_token.type == TOKEN_LBRACKET) {
     Parser_token_advance(p); // consume '['
     Type *element = Parser_parse_type_full(p);
+    if (!element)
+      return NULL;
 
-    bool is_dynamic = false;
-    size_t fixed_size = 0;
+    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after array element type"))
+      return NULL;
 
-    if (p->current_token.type == TOKEN_SEMI) {
-      Parser_token_advance(p);
-      if (p->current_token.type == TOKEN_NUMBER) {
-        fixed_size = (size_t)p->current_token.number;
-        is_dynamic = false;
-        Parser_token_advance(p);
-      } else {
-        ErrorHandler_report(p->eh, p->current_token.loc,
-                            "Expected array size after ';'");
-      }
-    } else {
-      is_dynamic = true;
+    AstNode *size_node = NULL;
+    if (p->current_token.type != TOKEN_RBRACKET) {
+      size_node = Parser_parse_expression(p, 0);
     }
 
-    Parser_expect(p, TOKEN_RBRACKET, "Expected ']' after array type");
-    return type_get_array(p->type_ctx, element, is_dynamic, fixed_size);
+    if (size_node) {
+      // Fixed-size array (potentially multi-dimensional)
+      Type *res = type_get_array(p->type_ctx, element, false,
+                                 (size_t)size_node->number.value);
+
+      while (p->current_token.type == TOKEN_COMMA) {
+        Parser_token_advance(p);
+        AstNode *next_size = Parser_parse_expression(p, 0);
+        if (!next_size) {
+          ErrorHandler_report(
+              p->eh, p->current_token.loc,
+              "Expected size expression after ',' in array type");
+          return NULL;
+        }
+        res = type_get_array(p->type_ctx, res, false,
+                             (size_t)next_size->number.value);
+      }
+      Parser_expect(p, TOKEN_RBRACKET, "Expected ']' at end of array type");
+      return res;
+    } else {
+      Type *res = type_get_array(p->type_ctx, element, true, 0);
+      Parser_expect(p, TOKEN_RBRACKET, "Expected ']' at end of array type");
+      return res;
+    }
   }
 
   PrimitiveKind kind = Token_token_to_type(p->current_token.type);
@@ -562,6 +595,8 @@ static AstNode *Parser_parse_var_decl(Parser *p) {
   if (p->current_token.type == TOKEN_COLON) {
     Parser_token_advance(p);
     declared_type = Parser_parse_type_full(p);
+    if (!declared_type)
+      return NULL;
     if (declared_type->kind == KIND_PRIMITIVE &&
         declared_type->data.primitive == PRIM_UNKNOWN) {
       ErrorHandler_report(p->eh, p->current_token.loc,
@@ -603,8 +638,11 @@ static AstNode *Parser_parse_print(Parser *p) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p);
 
-  if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after print"))
-    return NULL;
+  bool has_parens = false;
+  if (p->current_token.type == TOKEN_LPAREN) {
+    Parser_token_advance(p);
+    has_parens = true;
+  }
 
   List values;
   List_init(&values);
@@ -622,8 +660,11 @@ static AstNode *Parser_parse_print(Parser *p) {
     }
   }
 
-  if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after print"))
-    return NULL;
+  if (has_parens) {
+    if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after print"))
+      return NULL;
+  }
+
   if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after print statement"))
     return NULL;
 
@@ -727,6 +768,56 @@ static AstNode *Parser_parse_if_stmt(Parser *p) {
   return AstNode_new_if_stmt(condition, then_branch, else_branch, loc);
 }
 
+static AstNode *Parser_parse_struct_decl(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'struct'
+
+  Token name_token = p->current_token;
+  if (!Parser_expect(p, TOKEN_IDENT, "Expected struct name"))
+    return NULL;
+  AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
+
+  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after struct name"))
+    return NULL;
+
+  List members;
+  List_init(&members);
+
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    Location mem_loc = p->current_token.loc;
+    Token mem_ident = p->current_token;
+    if (!Parser_expect(p, TOKEN_IDENT, "Expected member name")) {
+      Parser_sync(p);
+      continue;
+    }
+
+    if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after member name")) {
+      Parser_sync(p);
+      continue;
+    }
+
+    Type *type = Parser_parse_type_full(p);
+    if (!type) {
+      Parser_sync(p);
+      continue;
+    }
+
+    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after member type")) {
+      Parser_sync(p);
+      continue;
+    }
+
+    AstNode *mem_name = AstNode_new_var(mem_ident.text, mem_ident.loc);
+    AstNode *mem_decl = AstNode_new_var_decl(mem_name, NULL, type, 0, mem_loc);
+    List_push(&members, mem_decl);
+  }
+
+  Parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct members");
+
+  return AstNode_new_struct_decl(name_node, members, loc);
+}
+
 static AstNode *Parser_parse_statement(Parser *p) {
   switch (p->current_token.type) {
   case TOKEN_EOF:
@@ -740,10 +831,23 @@ static AstNode *Parser_parse_statement(Parser *p) {
     return Parser_parse_print(p);
   case TOKEN_IF:
     return Parser_parse_if_stmt(p);
-  case TOKEN_RETURN: {
-    Parser_token_advance(p);
+  case TOKEN_DEFER: {
     Location loc = p->current_token.loc;
-    AstNode *expr = Parser_parse_expression(p, 0);
+    Parser_token_advance(p);
+
+    AstNode *deferred = Parser_parse_statement(p);
+
+    return AstNode_new_defer(deferred, loc);
+  }
+  case TOKEN_RETURN: {
+    Location loc = p->current_token.loc;
+    Parser_token_advance(p);
+
+    AstNode *expr = NULL;
+    if (p->current_token.type != TOKEN_SEMI) {
+      expr = Parser_parse_expression(p, 0);
+    }
+
     if (Parser_expect(p, TOKEN_SEMI, "Expected ';' after return statement"))
       return AstNode_new_return(expr, loc);
 
@@ -752,6 +856,8 @@ static AstNode *Parser_parse_statement(Parser *p) {
   }
   case TOKEN_FN:
     return Parser_parse_fn_decl(p);
+  case TOKEN_STRUCT:
+    return Parser_parse_struct_decl(p);
   default: {
     Location loc = p->current_token.loc;
     AstNode *expr = Parser_parse_expression(p, 0);

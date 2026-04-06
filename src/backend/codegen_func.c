@@ -114,16 +114,18 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
 
   LLVMBasicBlockRef current_bb = LLVMGetInsertBlock(cg->builder);
   if (!LLVMGetBasicBlockTerminator(current_bb)) {
-    if (node->func_decl.return_type->kind == KIND_PRIMITIVE &&
-        node->func_decl.return_type->data.primitive == PRIM_VOID) {
+    if (LLVMGetTypeKind(LLVMGetReturnType(f->type)) == LLVMVoidTypeKind) {
+      cg_pop_scope(cg);
       LLVMBuildRetVoid(cg->builder);
     } else {
-      LLVMTypeRef ret_ty = cg_get_llvm_type(cg, node->func_decl.return_type);
-      LLVMBuildRet(cg->builder, LLVMConstNull(ret_ty));
+      cg_pop_scope(cg);
+      LLVMValueRef default_ret = LLVMConstNull(LLVMGetReturnType(f->type));
+      LLVMBuildRet(cg->builder, default_ret);
     }
+  } else {
+    cg_pop_scope(cg);
   }
 
-  cg_pop_scope(cg);
   cg->current_function_ref = old_func_ref;
 }
 

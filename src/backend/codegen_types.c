@@ -6,15 +6,29 @@
 #include "tyl/utils.h"
 
 LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
-  if (t->kind == KIND_ARRAY) {
-    // Fat Pointer Implementation: { i64 len, T* data }
-    LLVMTypeRef element_type = cg_get_llvm_type(cg, t->data.array.element);
+  if (t->kind == KIND_ARRAY ||
+      (t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING)) {
+    // Slice Representation: { i64 rank, ptr data, ptr dims }
+    // rank = number of dimensions overall
+    // data = pointer to underlying data
+    // dims = pointer to array of dimensions [len_0, len_1, ..., len_{rank-1}]
+    LLVMTypeRef element_type;
+    if (t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING) {
+      element_type = LLVMInt8TypeInContext(cg->context);
+    } else {
+      Type *base = t->data.array.element;
+      while (base->kind == KIND_ARRAY) {
+        base = base->data.array.element;
+      }
+      element_type = cg_get_llvm_type(cg, base);
+    }
+
     LLVMTypeRef pointer_type = LLVMPointerType(element_type, 0);
     LLVMTypeRef i64_type = LLVMInt64TypeInContext(cg->context);
+    LLVMTypeRef dims_ptr_type = LLVMPointerType(i64_type, 0);
 
-    // Literal structure for the Fat Pointer
-    LLVMTypeRef struct_fields[] = {i64_type, pointer_type};
-    return LLVMStructTypeInContext(cg->context, struct_fields, 2, false);
+    LLVMTypeRef struct_fields[] = {i64_type, pointer_type, dims_ptr_type};
+    return LLVMStructTypeInContext(cg->context, struct_fields, 3, false);
   }
 
   if (t->kind == KIND_PRIMITIVE) {
@@ -42,7 +56,7 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     case PRIM_VOID:
       return LLVMVoidTypeInContext(cg->context);
     case PRIM_STRING:
-      return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+      panic("PRIM_STRING should be handled in KIND_ARRAY/Fat Pointer logic");
     case PRIM_UNKNOWN:
     default:
       panic("Unknown primitive kind: %d", t->data.primitive);
@@ -68,6 +82,12 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, LLVMTypeRef to_ty) {
   if (from_kind == LLVMIntegerTypeKind && to_kind == LLVMIntegerTypeKind) {
     unsigned from_width = LLVMGetIntTypeWidth(from_ty);
     unsigned to_width = LLVMGetIntTypeWidth(to_ty);
+
+    if (to_width == 1 && from_width > 1) {
+      // Boolean Truthiness: x != 0
+      return LLVMBuildICmp(cg->builder, LLVMIntNE, value,
+                           LLVMConstInt(from_ty, 0, false), "tobool");
+    }
 
     if (from_width > to_width) {
       return LLVMBuildTrunc(cg->builder, value, to_ty, "trunctmp");

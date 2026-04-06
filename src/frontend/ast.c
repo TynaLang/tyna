@@ -183,12 +183,25 @@ AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
   return node;
 }
 
+AstNode *AstNode_new_defer(AstNode *expr, Location loc) {
+  AstNode *node = AstNode_new(NODE_DEFER, loc);
+  node->defer.expr = expr;
+  return node;
+}
+
 AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
                              AstNode *false_expr, Location loc) {
   AstNode *node = AstNode_new(NODE_TERNARY, loc);
   node->ternary.condition = condition;
   node->ternary.true_expr = true_expr;
   node->ternary.false_expr = false_expr;
+  return node;
+}
+
+AstNode *AstNode_new_struct_decl(AstNode *name, List members, Location loc) {
+  AstNode *node = AstNode_new(NODE_STRUCT_DECL, loc);
+  node->struct_decl.name = name;
+  node->struct_decl.members = members;
   return node;
 }
 
@@ -206,7 +219,16 @@ AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_array_repeat(AstNode *value, AstNode *count, Location loc) {
+AstNode *AstNode_new_static_member(StringView parent, StringView member,
+                                   Location loc) {
+  AstNode *node = AstNode_new(NODE_STATIC_MEMBER, loc);
+  node->static_member.parent = parent;
+  node->static_member.member = member;
+  return node;
+}
+
+AstNode *AstNode_new_array_repeat(AstNode *value, AstNode *count,
+                                  Location loc) {
   AstNode *node = AstNode_new(NODE_ARRAY_REPEAT, loc);
   node->array_repeat.value = value;
   node->array_repeat.count = count;
@@ -303,6 +325,9 @@ void Ast_free(AstNode *node) {
     Ast_free(node->if_stmt.condition);
     Ast_free(node->if_stmt.then_branch);
     Ast_free(node->if_stmt.else_branch);
+    break;
+  case NODE_DEFER:
+    Ast_free(node->defer.expr);
     break;
   case NODE_ARRAY_REPEAT:
     Ast_free(node->array_repeat.value);
@@ -511,6 +536,12 @@ void Ast_print(AstNode *node, int indent) {
       Ast_print(node->if_stmt.else_branch, indent + 2);
     }
     break;
+  case NODE_DEFER:
+    printf("DEFER\n");
+    print_indent(indent + 1);
+    printf("EXPR:\n");
+    Ast_print(node->defer.expr, indent + 2);
+    break;
   case NODE_ARRAY_LITERAL:
     printf("ARRAY_LITERAL\n");
     for (size_t i = 0; i < node->array_literal.items.len; i++) {
@@ -541,8 +572,23 @@ void Ast_print(AstNode *node, int indent) {
     printf("COUNT:\n");
     Ast_print(node->array_repeat.count, indent + 2);
     break;
+  case NODE_INTRINSIC_COMPARE:
+    printf("INTRINSIC_COMPARE (%s)\n",
+           node->intrinsic_compare.op == OP_EQ ? "==" : "!=");
+    print_indent(indent + 1);
+    printf("LEFT:\n");
+    Ast_print(node->intrinsic_compare.left, indent + 2);
+    print_indent(indent + 1);
+    printf("RIGHT:\n");
+    Ast_print(node->intrinsic_compare.right, indent + 2);
+    break;
+  case NODE_STATIC_MEMBER:
+    printf("STATIC_MEMBER: " SV_FMT "::" SV_FMT "\n",
+           SV_ARG(node->static_member.parent),
+           SV_ARG(node->static_member.member));
+    break;
   default:
-    printf("UNKNOWN NODE\n");
+    printf("UNKNOWN NODE %d\n", node->tag);
     break;
   }
 }

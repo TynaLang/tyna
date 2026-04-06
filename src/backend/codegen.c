@@ -34,6 +34,41 @@ static void cg_initiate_system_functions(Codegen *cg) {
   CGFunction *f_pow = xmalloc(sizeof(CGFunction));
   cg_init_CGFunction(f_pow, sv_from_parts("pow", 3), pow_val, pow_type, true);
   List_push(&cg->system_functions, f_pow);
+
+  // __tyl_compare_arrays(FatPtr a, FatPtr b, size_t elem_size)
+  LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
+  LLVMTypeRef ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+  LLVMTypeRef fatptr_ty = LLVMStructTypeInContext(
+      cg->context, (LLVMTypeRef[]){i64_ty, ptr_ty}, 2, false);
+  LLVMTypeRef cmp_args[] = {fatptr_ty, fatptr_ty, i64_ty};
+  LLVMTypeRef cmp_type =
+      LLVMFunctionType(LLVMInt32TypeInContext(cg->context), cmp_args, 3, false);
+  LLVMValueRef cmp_val =
+      LLVMAddFunction(cg->module, "__tyl_compare_arrays", cmp_type);
+  CGFunction *f_cmp = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_cmp, sv_from_parts("__tyl_compare_arrays", 20), cmp_val,
+                     cmp_type, true);
+  List_push(&cg->system_functions, f_cmp);
+
+  // FatPtr __tyl_str_to_array(FatPtr str)
+  LLVMTypeRef to_arr_args[] = {fatptr_ty};
+  LLVMTypeRef to_arr_type = LLVMFunctionType(fatptr_ty, to_arr_args, 1, false);
+  LLVMValueRef to_arr_val =
+      LLVMAddFunction(cg->module, "__tyl_str_to_array", to_arr_type);
+  CGFunction *f_to_arr = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_to_arr, sv_from_parts("__tyl_str_to_array", 18),
+                     to_arr_val, to_arr_type, true);
+  List_push(&cg->system_functions, f_to_arr);
+
+  // FatPtr __tyl_array_to_str(FatPtr arr)
+  LLVMTypeRef to_str_args[] = {fatptr_ty};
+  LLVMTypeRef to_str_type = LLVMFunctionType(fatptr_ty, to_str_args, 1, false);
+  LLVMValueRef to_str_val =
+      LLVMAddFunction(cg->module, "__tyl_array_to_str", to_str_type);
+  CGFunction *f_to_str = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_to_str, sv_from_parts("__tyl_array_to_str", 18),
+                     to_str_val, to_str_type, true);
+  List_push(&cg->system_functions, f_to_str);
 }
 
 static bool cg_has_main(AstNode *root) {
@@ -107,11 +142,13 @@ static void cg_emit_global_statements(Codegen *cg, AstNode *root) {
   }
 }
 
-Codegen *Codegen_new(const char *module_name) {
+Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx) {
   Codegen *cg = xmalloc(sizeof(Codegen));
   cg->context = LLVMContextCreate();
   cg->module = LLVMModuleCreateWithNameInContext(module_name, cg->context);
   cg->builder = LLVMCreateBuilderInContext(cg->context);
+  cg->type_ctx = type_ctx;
+  List_init(&cg->defers);
   cg->current_scope = xmalloc(sizeof(CGSymbolTable));
   CGSymbolTable_init(cg->current_scope, NULL);
   cg->current_function_ref = NULL;
@@ -119,6 +156,8 @@ Codegen *Codegen_new(const char *module_name) {
   List_init(&cg->functions);
   List_init(&cg->system_functions);
   List_init(&cg->format_strings);
+  List_init(&cg->string_pool);
+  List_init(&cg->string_globals);
 
   cg_initiate_system_functions(cg);
 
@@ -139,7 +178,14 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
   cg_emit_functions(cg, ast_root);
 
   cg->current_function = entry_func;
+  cg->current_function_ref = xmalloc(sizeof(CGFunction));
+  cg->current_function_ref->name = sv_from_parts("main", 4);
+  cg->current_function_ref->value = entry_func;
+  cg->current_function_ref->type = entry_ty;
+
   LLVMPositionBuilderAtEnd(cg->builder, entry_bb);
+
+  cg_push_scope(cg);
 
   cg_emit_global_statements(cg, ast_root);
 
@@ -161,9 +207,14 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
     }
   }
 
+  cg_pop_scope(cg);
+
   if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
     LLVMBuildRet(cg->builder, exit_code);
   }
+
+  free(cg->current_function_ref);
+  cg->current_function_ref = NULL;
 }
 
 void Codegen_dump(Codegen *cg) { LLVMDumpModule(cg->module); }
@@ -174,8 +225,43 @@ void Codegen_free(Codegen *cg) {
   }
   List_free(&cg->format_strings, 0);
 
+  for (size_t i = 0; i < cg->string_pool.len; i++) {
+    free(cg->string_pool.items[i]);
+  }
+  List_free(&cg->string_pool, 0);
+  List_free(&cg->string_globals, 0);
+
   LLVMDisposeBuilder(cg->builder);
   LLVMDisposeModule(cg->module);
   LLVMContextDispose(cg->context);
   free(cg);
+}
+
+size_t cg_string_pool_insert(Codegen *cg, StringView str) {
+  for (size_t i = 0; i < cg->string_pool.len; i++) {
+    char *existing = cg->string_pool.items[i];
+    if (strlen(existing) == str.len &&
+        memcmp(existing, str.data, str.len) == 0) {
+      return i;
+    }
+  }
+
+  char *copy = sv_to_cstr(str);
+  List_push(&cg->string_pool, copy);
+
+  // Generate the global variable immediately
+  char name[32];
+  sprintf(name, ".str.%zu", cg->string_pool.len - 1);
+
+  LLVMValueRef const_str =
+      LLVMConstStringInContext(cg->context, copy, str.len + 1, false);
+  LLVMValueRef global = LLVMAddGlobal(cg->module, LLVMTypeOf(const_str), name);
+  LLVMSetInitializer(global, const_str);
+  LLVMSetGlobalConstant(global, true);
+  LLVMSetLinkage(global, LLVMPrivateLinkage);
+  LLVMSetUnnamedAddr(global, true);
+
+  List_push(&cg->string_globals, (void *)global);
+
+  return cg->string_pool.len - 1;
 }

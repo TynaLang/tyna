@@ -20,7 +20,7 @@ struct Symbol {
   int is_const;
 
   AstNode *value;            // For constant initializers or function bodies
-  struct SymbolTable *scope; // For functions: inner scope
+  struct SymbolTable *scope; // TABLE where it was defined
 
   FuncStatus func_status;
 };

@@ -38,12 +38,26 @@ CGSymbolTable *cg_push_scope(Codegen *cg) {
   CGSymbolTable *new_scope = malloc(sizeof(CGSymbolTable));
   CGSymbolTable_init(new_scope, cg->current_scope);
   cg->current_scope = new_scope;
+
+  List *defer_list = malloc(sizeof(List));
+  List_init(defer_list);
+  List_push(&cg->defers, defer_list);
+
   return new_scope;
 }
 
 void cg_pop_scope(Codegen *cg) {
   if (!cg->current_scope)
     return;
+
+  List *defer_list = List_pop(&cg->defers);
+  for (int i = (int)defer_list->len - 1; i >= 0; i--) {
+    AstNode *defer_node = defer_list->items[i];
+    cg_statement(cg, defer_node);
+  }
+  List_free(defer_list, 0);
+  free(defer_list);
+
   CGSymbolTable *old = cg->current_scope;
   cg->current_scope = old->parent;
   cg_free_symbol_table(old);

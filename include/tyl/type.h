@@ -14,7 +14,8 @@ typedef enum PrimitiveKind PrimitiveKind;
 enum TypeKind {
   KIND_PRIMITIVE,
   KIND_ARRAY,
-  // Future: KIND_STRUCT, KIND_POINTER
+  KIND_STRUCT,
+  // Future: KIND_POINTER
 };
 
 enum PrimitiveKind {
@@ -31,8 +32,22 @@ enum PrimitiveKind {
   PRIM_CHAR,
   PRIM_BOOL,
   PRIM_VOID,
-  PRIM_STRING, // TODO: remove this and treat strings as arrays of char later
+  PRIM_STRING, 
   PRIM_UNKNOWN
+};
+
+typedef enum {
+  BUILTIN_NONE,
+  BUILTIN_ARRAY_LEN,
+} BuiltinMember;
+
+typedef struct Member Member;
+
+struct Member {
+  char *name;
+  Type *type;
+  BuiltinMember builtin_id;
+  size_t offset;
 };
 
 struct Type {
@@ -44,7 +59,11 @@ struct Type {
       bool is_dynamic;
       size_t fixed_size;
     } array;
+    struct {
+      char *name;
+    } structure;
   } data;
+  List members; // List<Member*>
 };
 
 struct TypeContext {
@@ -58,6 +77,13 @@ void type_context_free(TypeContext *ctx);
 Type *type_get_primitive(TypeContext *ctx, PrimitiveKind primitive);
 Type *type_get_array(TypeContext *ctx, Type *element, bool is_dynamic,
                      size_t fixed_size);
+Type *type_get_struct(TypeContext *ctx, const char *name);
+
+Member *type_get_member(Type *type, StringView name);
+void type_add_builtin_member(Type *type, const char *name, Type *member_type,
+                             BuiltinMember builtin_id, size_t offset);
+void type_add_member(Type *type, const char *name, Type *member_type,
+                     size_t offset);
 
 bool type_equals(Type *a, Type *b);
 

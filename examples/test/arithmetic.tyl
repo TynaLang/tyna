@@ -1,0 +1,9 @@
+// Arithmetic and precedence
+let a = 10 + 2 * 3 - 4 / 2;
+print(a); // 10 + 6 - 2 = 14
+let b = (10 + 2) * (3 - 4) / 2;
+print(b); // (12) * (-1) / 2 = -6
+let c = 2 ^ 3 ^ 2;
+print(c); // 2^(3^2) = 2^9 = 512 (if right-associative)
+let d = 11 % 4;
+print(d); // 3
