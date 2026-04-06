@@ -1,3 +1,6 @@
+#include <float.h>
+#include <limits.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -6,6 +9,55 @@
 
 #include "tyl/ast.h"
 #include "tyl/semantic.h"
+
+const char *type_to_name(Type *t) {
+  if (!t)
+    return "null";
+  if (t->kind == KIND_PRIMITIVE) {
+    switch (t->data.primitive) {
+    case PRIM_I8:
+      return "i8";
+    case PRIM_I16:
+      return "i16";
+    case PRIM_I32:
+      return "i32";
+    case PRIM_I64:
+      return "i64";
+    case PRIM_U8:
+      return "u8";
+    case PRIM_U16:
+      return "u16";
+    case PRIM_U32:
+      return "u32";
+    case PRIM_U64:
+      return "u64";
+    case PRIM_F32:
+      return "f32";
+    case PRIM_F64:
+      return "f64";
+    case PRIM_CHAR:
+      return "char";
+    case PRIM_BOOL:
+      return "bool";
+    case PRIM_VOID:
+      return "void";
+    case PRIM_STRING:
+      return "string";
+    case PRIM_UNKNOWN:
+      return "unknown";
+    }
+  } else if (t->kind == KIND_ARRAY) {
+    static char buf[256];
+    if (t->data.array.is_dynamic) {
+      snprintf(buf, sizeof(buf), "[%s]", type_to_name(t->data.array.element));
+    } else {
+      snprintf(buf, sizeof(buf), "[%s; %zu]",
+               type_to_name(t->data.array.element), t->data.array.fixed_size);
+    }
+    return buf;
+  }
+  return "unknown";
+}
 
 static void semantic_error(SymbolTable *t, AstNode *n, const char *fmt, ...) {
   va_list args;
@@ -16,42 +68,59 @@ static void semantic_error(SymbolTable *t, AstNode *n, const char *fmt, ...) {
   ErrorHandler_report(t->eh, n->loc, "%s", msg_buf);
 }
 
+static void semantic_warning(SymbolTable *t, AstNode *n, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  char msg_buf[1024];
+  vsnprintf(msg_buf, sizeof(msg_buf), fmt, args);
+  va_end(args);
+  ErrorHandler_report_level(t->eh, n->loc, LEVEL_WARNING, "%s", msg_buf);
+}
+
 static int is_lvalue(AstNode *node) {
   return node->tag == NODE_VAR || node->tag == NODE_FIELD ||
          node->tag == NODE_INDEX;
 }
 
-static int type_rank(TypeKind t) {
-  switch (t) {
-  case TYPE_I8:
-  case TYPE_U8:
-  case TYPE_CHAR:
+static int type_rank(Type *t) {
+  if (!t || t->kind != KIND_PRIMITIVE)
+    return 0;
+  switch (t->data.primitive) {
+  case PRIM_I8:
+  case PRIM_U8:
+  case PRIM_CHAR:
     return 1;
-  case TYPE_I16:
-  case TYPE_U16:
+  case PRIM_I16:
+  case PRIM_U16:
     return 2;
-  case TYPE_I32:
-  case TYPE_U32:
+  case PRIM_I32:
+  case PRIM_U32:
     return 3;
-  case TYPE_I64:
-  case TYPE_U64:
+  case PRIM_I64:
+  case PRIM_U64:
     return 4;
-  case TYPE_F32:
+  case PRIM_F32:
     return 5;
-  case TYPE_F64:
+  case PRIM_F64:
     return 6;
   default:
     return 0;
   }
 }
 
-int is_numeric(TypeKind t) { return type_rank(t) > 0; }
-int is_bool(TypeKind t) { return t == TYPE_BOOL; }
+int is_numeric(Type *t) { return t && type_rank(t) > 0; }
+int is_bool(Type *t) {
+  return t && t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_BOOL;
+}
 
-static int can_implicitly_cast(TypeKind to, TypeKind from) {
+static int can_implicitly_cast(Type *to, Type *from) {
+  if (!to || !from)
+    return 0;
   if (to == from)
     return 1;
-  if (to == TYPE_VOID || from == TYPE_VOID)
+  if (to->kind == KIND_PRIMITIVE && to->data.primitive == PRIM_VOID)
+    return 0;
+  if (from->kind == KIND_PRIMITIVE && from->data.primitive == PRIM_VOID)
     return 0;
   if (is_bool(to) || is_bool(from))
     return 0;
@@ -74,19 +143,23 @@ int signature_matches(AstNode *dec, AstNode *imp) {
   List decl_params = dec->func_decl.params;
   List imp_params = imp->func_decl.params;
   for (int i = 0; i < decl_params.len; i++) {
-    if (decl_params.items[i] != imp_params.items[i])
+    AstNode *p1 = decl_params.items[i];
+    AstNode *p2 = imp_params.items[i];
+    if (p1->param.type != p2->param.type)
       return 0;
   }
   return 1;
 }
 
-void SymbolTable_init(SymbolTable *table, ErrorHandler *eh) {
+void SymbolTable_init(SymbolTable *table, ErrorHandler *eh,
+                      TypeContext *type_ctx) {
   table->parent = NULL;
   List_init(&table->symbols);
   table->eh = eh;
+  table->type_ctx = type_ctx;
 }
 
-void SymbolTable_add(SymbolTable *table, StringView name, TypeKind type,
+void SymbolTable_add(SymbolTable *table, StringView name, Type *type,
                      int is_const) {
   Symbol *symbol = xmalloc(sizeof(Symbol));
   if (!symbol) {
@@ -130,8 +203,7 @@ Symbol *SymbolTable_add_func(SymbolTable *table, StringView name,
   sym->func_status = status;
   sym->value = func;
   sym->scope = xmalloc(sizeof(SymbolTable));
-  SymbolTable_init(sym->scope, table->eh);
-  sym->scope->parent = table;
+  SymbolTable_init(sym->scope, table->eh, table->type_ctx);
 
   /* Register function symbol in the current table so calls can resolve */
   List_push(&table->symbols, sym);
@@ -150,154 +222,377 @@ Symbol *SymbolTable_find(SymbolTable *table, StringView name) {
   return NULL;
 }
 
-static TypeKind check_expression(SymbolTable *table, AstNode *node) {
+static void check_literal_bounds(SymbolTable *table, AstNode *node,
+                                 Type *target) {
+  if (node->tag != NODE_NUMBER || !target || target->kind != KIND_PRIMITIVE)
+    return;
+
+  double val = node->number.value;
+  switch (target->data.primitive) {
+  case PRIM_I8:
+    if (val < SCHAR_MIN || val > SCHAR_MAX)
+      semantic_warning(table, node, "Literal %.2f out of range for i8", val);
+    break;
+  case PRIM_U8:
+    if (val < 0 || val > UCHAR_MAX)
+      semantic_warning(table, node, "Literal %.2f out of range for u8", val);
+    break;
+  case PRIM_I16:
+    if (val < SHRT_MIN || val > SHRT_MAX)
+      semantic_warning(table, node, "Literal %.2f out of range for i16", val);
+    break;
+  case PRIM_U16:
+    if (val < 0 || val > USHRT_MAX)
+      semantic_warning(table, node, "Literal %.2f out of range for u16", val);
+    break;
+  case PRIM_I32:
+    if (val < INT_MIN || val > INT_MAX)
+      semantic_warning(table, node, "Literal %.2f out of range for i32", val);
+    break;
+  case PRIM_U32:
+    if (val < 0 || val > UINT_MAX)
+      semantic_warning(table, node, "Literal %.2f out of range for u32", val);
+    break;
+  case PRIM_I64:
+    if (val < LLONG_MIN || val > LLONG_MAX)
+      semantic_warning(table, node, "Literal %.2f out of range for i64", val);
+    break;
+  case PRIM_U64:
+    if (val < 0 || (unsigned long long)val > ULLONG_MAX)
+      semantic_warning(table, node, "Literal %.2f out of range for u64", val);
+    break;
+  case PRIM_F32:
+    if (fabs(val) > FLT_MAX && !isinf(val))
+      semantic_warning(table, node, "Literal %.2f out of range for f32", val);
+    break;
+  default:
+    break;
+  }
+}
+
+static Type *check_expression(SymbolTable *table, AstNode *node) {
   if (!node)
-    return TYPE_UNKNOWN;
+    return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+
+  if (node->resolved_type) {
+    return node->resolved_type;
+  }
+
+  Type *type = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
 
   switch (node->tag) {
   case NODE_NUMBER:
-    return TYPE_I32;
+    if (sv_contains(node->number.raw_text, '.')) {
+      type = type_get_primitive(table->type_ctx,
+                                sv_ends_with(node->number.raw_text, "f") ||
+                                        sv_ends_with(node->number.raw_text, "F")
+                                    ? PRIM_F32
+                                    : PRIM_F64);
+    } else {
+      type = type_get_primitive(table->type_ctx, PRIM_I32);
+    }
+    node->resolved_type = type;
+    break;
   case NODE_CHAR:
-    return TYPE_CHAR;
+    type = type_get_primitive(table->type_ctx, PRIM_CHAR);
+    node->resolved_type = type;
+    break;
   case NODE_STRING:
-    return TYPE_STRING;
+    type = type_get_primitive(table->type_ctx, PRIM_STRING);
+    node->resolved_type = type;
+    break;
   case NODE_BOOL:
-    return TYPE_BOOL;
+    type = type_get_primitive(table->type_ctx, PRIM_BOOL);
+    node->resolved_type = type;
+    break;
 
   case NODE_VAR: {
     Symbol *s = SymbolTable_find(table, node->var.value);
     if (!s) {
       semantic_error(table, node, "Undefined variable '" SV_FMT "'",
                      SV_ARG(node->var.value));
-      return TYPE_UNKNOWN;
+      type = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+      node->resolved_type = type;
+      return type;
     }
-    return s->type;
+    type = s->type;
+    node->resolved_type = type;
+    break;
   }
 
   case NODE_UNARY: {
-    TypeKind t = check_expression(table, node->unary.expr);
-    if (t == TYPE_UNKNOWN)
-      return TYPE_UNKNOWN;
+    Type *t = check_expression(table, node->unary.expr);
 
-    if (node->unary.op == OP_PRE_INC || node->unary.op == OP_POST_INC ||
-        node->unary.op == OP_PRE_DEC || node->unary.op == OP_POST_DEC) {
-      if (!is_lvalue(node->unary.expr)) {
-        semantic_error(table, node,
-                       "Increment/decrement operand must be an lvalue");
-        return TYPE_UNKNOWN;
-      }
-      Symbol *s = SymbolTable_find(table, node->unary.expr->var.value);
-      if (s && s->is_const) {
-        semantic_error(table, node,
-                       "Cannot increment/decrement a constant variable");
-        return TYPE_UNKNOWN;
-      }
-    } else if (node->unary.op == OP_NEG) {
-      if (!is_numeric(t)) {
-        semantic_error(table, node, "Unary '-' applied to non-numeric type");
-        return TYPE_UNKNOWN;
-      }
+    if (!t) {
+      type = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+      node->resolved_type = type;
+      return type;
     }
-
-    return t;
+    if (t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_UNKNOWN) {
+      node->resolved_type = t;
+      return t;
+    }
+    type = t;
+    node->resolved_type = type;
+    break;
   }
 
   case NODE_BINARY_ARITH: {
-    TypeKind left = check_expression(table, node->binary_arith.left);
-    TypeKind right = check_expression(table, node->binary_arith.right);
+    Type *left = check_expression(table, node->binary_arith.left);
+    Type *right = check_expression(table, node->binary_arith.right);
+
     if (!is_numeric(left) || !is_numeric(right)) {
       semantic_error(table, node, "Arithmetic operator on non-numeric type");
-      return TYPE_UNKNOWN;
+      type = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+      node->resolved_type = type;
+      return type;
     }
-    return type_rank(left) >= type_rank(right) ? left : right;
+
+    type = type_rank(left) >= type_rank(right) ? left : right;
+
+    // If this is part of a larger expression being assigned to a specific
+    // target, the target type might be even higher (handled in
+    // assignments/decl)
+
+    // Ensure both operands are updated to the result type
+    // This allows Codegen to use node->resolved_type for all casts
+    if (left != type) {
+      check_literal_bounds(table, node->binary_arith.left, type);
+    }
+    if (right != type) {
+      check_literal_bounds(table, node->binary_arith.right, type);
+    }
+
+    node->resolved_type = type;
+    break;
   }
 
   case NODE_BINARY_COMPARE: {
-    TypeKind left = check_expression(table, node->binary_compare.left);
-    TypeKind right = check_expression(table, node->binary_compare.right);
+    Type *left = check_expression(table, node->binary_compare.left);
+    Type *right = check_expression(table, node->binary_compare.right);
     if (!is_numeric(left) || !is_numeric(right)) {
       semantic_error(table, node,
                      "Comparison operator requires numeric operands");
-      return TYPE_UNKNOWN;
+      return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
-    return TYPE_BOOL;
+    type = type_get_primitive(table->type_ctx, PRIM_BOOL);
+    node->resolved_type = type;
+    break;
   }
 
   case NODE_BINARY_EQUALITY: {
-    TypeKind left = check_expression(table, node->binary_equality.left);
-    TypeKind right = check_expression(table, node->binary_equality.right);
+    Type *left = check_expression(table, node->binary_equality.left);
+    Type *right = check_expression(table, node->binary_equality.right);
     if (!can_implicitly_cast(left, right) &&
         !can_implicitly_cast(right, left)) {
       semantic_error(table, node, "Equality operator on incompatible types");
-      return TYPE_UNKNOWN;
+      return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
-    return TYPE_BOOL;
+    type = type_get_primitive(table->type_ctx, PRIM_BOOL);
+    node->resolved_type = type;
+    break;
   }
 
   case NODE_BINARY_LOGICAL: {
-    TypeKind left = check_expression(table, node->binary_logical.left);
-    TypeKind right = check_expression(table, node->binary_logical.right);
+    Type *left = check_expression(table, node->binary_logical.left);
+    Type *right = check_expression(table, node->binary_logical.right);
     if (!is_bool(left) || !is_bool(right)) {
       semantic_error(table, node, "Logical operator requires boolean operands");
-      return TYPE_UNKNOWN;
+      return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
-    return TYPE_BOOL;
+    type = type_get_primitive(table->type_ctx, PRIM_BOOL);
+    node->resolved_type = type;
+    break;
+  }
+
+  case NODE_ARRAY_LITERAL: {
+    if (node->array_literal.items.len == 0) {
+      semantic_error(table, node, "Empty array literals are not yet supported");
+      return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+    }
+
+    Type *element_type = NULL;
+    for (size_t i = 0; i < node->array_literal.items.len; i++) {
+      AstNode *item = node->array_literal.items.items[i];
+      Type *item_type = check_expression(table, item);
+
+      if (element_type == NULL) {
+        element_type = item_type;
+      } else {
+        if (type_rank(item_type) > type_rank(element_type)) {
+          element_type = item_type;
+        }
+      }
+    }
+
+    // Check elements against the determined element type
+    for (size_t i = 0; i < node->array_literal.items.len; i++) {
+      AstNode *item = node->array_literal.items.items[i];
+      if (!can_implicitly_cast(element_type, item->resolved_type)) {
+        semantic_error(
+            table, item, "Array element type mismatch: expected %s, got %s",
+            type_to_name(element_type), type_to_name(item->resolved_type));
+      }
+      check_literal_bounds(table, item, element_type);
+    }
+
+    // Create fixed-size array type
+    type = type_get_array(table->type_ctx, element_type, false,
+                          node->array_literal.items.len);
+    node->resolved_type = type;
+    break;
+  }
+
+  case NODE_ARRAY_REPEAT: {
+    Type *elem_type = check_expression(table, node->array_repeat.value);
+    Type *count_type = check_expression(table, node->array_repeat.count);
+
+    if (!is_numeric(count_type)) {
+      semantic_error(table, node->array_repeat.count,
+                     "Array repeat count must be numeric, got %s",
+                     type_to_name(count_type));
+    }
+
+    size_t count = 0;
+    if (node->array_repeat.count->tag == NODE_NUMBER) {
+      double c = node->array_repeat.count->number.value;
+      if (c < 0) {
+        semantic_error(table, node->array_repeat.count,
+                       "Array repeat count cannot be negative: %g", c);
+      }
+      count = (size_t)c;
+    } else {
+      // For now we only support constant repeat counts because our arrays are
+      // fixed-size on the stack in codegen.
+      semantic_error(
+          table, node->array_repeat.count,
+          "Array repeat count must be a constant for stack-allocated arrays");
+    }
+
+    type = type_get_array(table->type_ctx, elem_type, false, count);
+    node->resolved_type = type;
+    break;
+  }
+
+  case NODE_INDEX: {
+    Type *arr_type = check_expression(table, node->index.array);
+    Type *idx_type = check_expression(table, node->index.index);
+
+    if (arr_type->kind != KIND_ARRAY) {
+      semantic_error(table, node->index.array,
+                     "Indexing target must be an array, got %s",
+                     type_to_name(arr_type));
+      return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+    }
+
+    if (!is_numeric(idx_type)) {
+      semantic_error(table, node->index.index,
+                     "Array index must be numeric, got %s",
+                     type_to_name(idx_type));
+    }
+
+    // Constant bounds check
+    if (node->index.index->tag == NODE_NUMBER) {
+      double idx_val = node->index.index->number.value;
+      if (!arr_type->data.array.is_dynamic) {
+        if (idx_val < 0 || (size_t)idx_val >= arr_type->data.array.fixed_size) {
+          semantic_error(
+              table, node->index.index,
+              "Array index %g is out of bounds for array of size %zu", idx_val,
+              arr_type->data.array.fixed_size);
+        }
+      }
+    }
+
+    type = arr_type->data.array.element;
+    node->resolved_type = type;
+    break;
+  }
+
+  case NODE_FIELD: {
+    Type *obj_type = check_expression(table, node->field.object);
+    if (obj_type->kind == KIND_ARRAY) {
+      if (sv_eq_cstr(node->field.field, "len")) {
+        type = type_get_primitive(table->type_ctx, PRIM_I64);
+        node->resolved_type = type;
+        break;
+      }
+      semantic_error(table, node, "Array has no field '" SV_FMT "'",
+                     SV_ARG(node->field.field));
+    } else {
+      semantic_error(table, node, "Field access on non-object type %s",
+                     type_to_name(obj_type));
+    }
+    type = type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+    node->resolved_type = type;
+    break;
   }
 
   case NODE_TERNARY: {
-    TypeKind cond = check_expression(table, node->ternary.condition);
+    Type *cond = check_expression(table, node->ternary.condition);
     if (!is_bool(cond)) {
-      semantic_error(table, node->ternary.condition, "Ternary condition must be boolean");
-      return TYPE_UNKNOWN;
+      semantic_error(table, node->ternary.condition,
+                     "Ternary condition must be boolean");
+      return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
-    TypeKind t_expr = check_expression(table, node->ternary.true_expr);
-    TypeKind f_expr = check_expression(table, node->ternary.false_expr);
-    if (t_expr == TYPE_UNKNOWN || f_expr == TYPE_UNKNOWN) return TYPE_UNKNOWN;
-    if (can_implicitly_cast(t_expr, f_expr)) return t_expr;
-    if (can_implicitly_cast(f_expr, t_expr)) return f_expr;
+    Type *t_expr = check_expression(table, node->ternary.true_expr);
+    Type *f_expr = check_expression(table, node->ternary.false_expr);
+    if ((t_expr->kind == KIND_PRIMITIVE &&
+         t_expr->data.primitive == PRIM_UNKNOWN) ||
+        (f_expr->kind == KIND_PRIMITIVE &&
+         f_expr->data.primitive == PRIM_UNKNOWN)) {
+      type = t_expr;
+      node->resolved_type = type;
+      break;
+    }
+    if (can_implicitly_cast(t_expr, f_expr)) {
+      type = t_expr;
+      node->resolved_type = type;
+      break;
+    }
+    if (can_implicitly_cast(f_expr, t_expr)) {
+      type = f_expr;
+      node->resolved_type = type;
+      break;
+    }
     semantic_error(table, node, "Ternary branches must have compatible types");
-    return TYPE_UNKNOWN;
+    return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
   }
 
   case NODE_ASSIGN_EXPR: {
     AstNode *target = node->assign_expr.target;
     if (!is_lvalue(target)) {
       semantic_error(table, node, "Invalid assignment target");
-      return TYPE_UNKNOWN;
+      return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
 
-    check_expression(table, target);
+    Type *lhs = check_expression(table, target);
 
-    if (target->tag != NODE_VAR) {
-      semantic_error(table, node, "Only variable assignment supported for now");
-      return TYPE_UNKNOWN;
+    if (target->tag == NODE_VAR) {
+      Symbol *s = SymbolTable_find(table, target->var.value);
+      if (s && s->is_const) {
+        semantic_error(table, node, "Cannot assign to constant '" SV_FMT "'",
+                       SV_ARG(s->name));
+        return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
+      }
     }
 
-    Symbol *s = SymbolTable_find(table, target->var.value);
-    if (!s) {
-      semantic_error(table, node, "Undefined variable '" SV_FMT "'",
-                     SV_ARG(target->var.value));
-      return TYPE_UNKNOWN;
-    }
-    if (s->is_const) {
-      semantic_error(table, node, "Cannot assign to constant '" SV_FMT "'",
-                     SV_ARG(s->name));
-      return TYPE_UNKNOWN;
-    }
-
-    TypeKind lhs = s->type;
-    TypeKind rhs = check_expression(table, node->assign_expr.value);
+    Type *rhs = check_expression(table, node->assign_expr.value);
     if (!can_implicitly_cast(lhs, rhs)) {
       semantic_error(table, node,
                      "Type mismatch in assignment: expected %s, got %s",
                      type_to_name(lhs), type_to_name(rhs));
     }
-    return lhs;
+
+    node->resolved_type = lhs;
+    break;
   }
 
   case NODE_CAST_EXPR: {
     check_expression(table, node->cast_expr.expr);
-    return node->cast_expr.target_type;
+    type = node->cast_expr.target_type;
+    node->resolved_type = type;
+    break;
   }
 
   case NODE_CALL: {
@@ -306,7 +601,7 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
       semantic_error(table, node, "Call to undefined function '%.*s'",
                      (int)node->call.func->var.value.len,
                      node->call.func->var.value.data);
-      return TYPE_UNKNOWN;
+      return type_get_primitive(table->type_ctx, PRIM_UNKNOWN);
     }
 
     if (s->scope && node->call.args.len != s->scope->symbols.len) {
@@ -317,7 +612,7 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
     }
 
     for (size_t i = 0; i < node->call.args.len; i++) {
-      TypeKind arg_type = check_expression(table, node->call.args.items[i]);
+      Type *arg_type = check_expression(table, node->call.args.items[i]);
       if (s->scope && i < s->scope->symbols.len) {
         Symbol *param = s->scope->symbols.items[i];
         if (!can_implicitly_cast(param->type, arg_type)) {
@@ -327,12 +622,16 @@ static TypeKind check_expression(SymbolTable *table, AstNode *node) {
         }
       }
     }
-    return s->type;
+    type = s->type;
+    node->resolved_type = type;
+    break;
   }
 
   default:
-    return TYPE_UNKNOWN;
+    break;
   }
+  node->resolved_type = type;
+  return type;
 }
 
 static void Semantic_deduplicate_top_level(AstNode *root,
@@ -385,7 +684,7 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
 
   case NODE_BLOCK: {
     SymbolTable block_table;
-    SymbolTable_init(&block_table, table->eh);
+    SymbolTable_init(&block_table, table->eh, table->type_ctx);
     block_table.parent = table;
 
     for (size_t i = 0; i < node->block.statements.len; i++)
@@ -400,11 +699,28 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
                      SV_ARG(name));
       return;
     }
-    TypeKind val_type = check_expression(table, node->var_decl.value);
-    TypeKind decl_type = node->var_decl.declared_type;
-    if (decl_type == TYPE_UNKNOWN)
+    Type *val_type = check_expression(table, node->var_decl.value);
+    Type *decl_type = node->var_decl.declared_type;
+    if (decl_type->kind == KIND_PRIMITIVE &&
+        decl_type->data.primitive == PRIM_UNKNOWN) {
       decl_type = val_type;
+    } else {
+      // If we have a declared type, check if value can be cast to it
+      if (node->var_decl.value && !can_implicitly_cast(decl_type, val_type)) {
+        semantic_error(
+            table, node->var_decl.value,
+            "Type mismatch in variable declaration: expected %s, got %s",
+            type_to_name(decl_type), type_to_name(val_type));
+      }
+    }
+
     node->var_decl.declared_type = decl_type;
+
+    // Check bounds for initial value literal against the variable type
+    if (node->var_decl.value) {
+      check_literal_bounds(table, node->var_decl.value, decl_type);
+    }
+
     SymbolTable_add(table, name, decl_type, node->var_decl.is_const);
     break;
   }
@@ -438,19 +754,22 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
     if (node->func_decl.body)
       Semantic_analysis(node->func_decl.body, fn_symbol->scope);
 
-    if (node->func_decl.return_type == TYPE_UNKNOWN && node->func_decl.body) {
-      TypeKind inferred = TYPE_VOID;
+    if (node->func_decl.return_type->kind == KIND_PRIMITIVE &&
+        node->func_decl.return_type->data.primitive == PRIM_UNKNOWN &&
+        node->func_decl.body) {
+      Type *inferred = type_get_primitive(table->type_ctx, PRIM_VOID);
       int set = 0;
-      for (size_t i = 0; i < node->func_decl.body->ast_root.children.len; i++) {
-        AstNode *stmt = node->func_decl.body->ast_root.children.items[i];
+      for (size_t i = 0; i < node->func_decl.body->block.statements.len; i++) {
+        AstNode *stmt = node->func_decl.body->block.statements.items[i];
         if (stmt->tag == NODE_RETURN_STMT && stmt->return_stmt.expr) {
-          TypeKind t =
-              check_expression(fn_symbol->scope, stmt->return_stmt.expr);
+          Type *t = check_expression(fn_symbol->scope, stmt->return_stmt.expr);
           if (!set) {
             inferred = t;
             set = 1;
           } else if (inferred != t) {
-            inferred = TYPE_UNKNOWN; // multiple inconsistent return types
+            inferred = type_get_primitive(
+                table->type_ctx,
+                PRIM_UNKNOWN); 
           }
         }
       }
@@ -459,17 +778,19 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
     }
 
     if (node->func_decl.body) {
-      for (size_t i = 0; i < node->func_decl.body->ast_root.children.len; i++) {
-        AstNode *stmt = node->func_decl.body->ast_root.children.items[i];
+      for (size_t i = 0; i < node->func_decl.body->block.statements.len; i++) {
+        AstNode *stmt = node->func_decl.body->block.statements.items[i];
         if (stmt->tag == NODE_RETURN_STMT) {
-          TypeKind t =
-              check_expression(fn_symbol->scope, stmt->return_stmt.expr);
-          if (node->func_decl.return_type == TYPE_VOID &&
+          Type *t = check_expression(fn_symbol->scope, stmt->return_stmt.expr);
+          if (node->func_decl.return_type->kind == KIND_PRIMITIVE &&
+              node->func_decl.return_type->data.primitive == PRIM_VOID &&
               stmt->return_stmt.expr) {
             semantic_error(fn_symbol->scope, stmt,
                            "Void function '" SV_FMT "' cannot return a value",
                            SV_ARG(fn_name));
-          } else if (node->func_decl.return_type != TYPE_UNKNOWN &&
+          } else if (!(node->func_decl.return_type->kind == KIND_PRIMITIVE &&
+                       node->func_decl.return_type->data.primitive ==
+                           PRIM_UNKNOWN) &&
                      !can_implicitly_cast(node->func_decl.return_type, t)) {
             semantic_error(fn_symbol->scope, stmt,
                            "Type mismatch in return: expected %s, got %s in "
@@ -493,7 +814,7 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
     break;
 
   case NODE_IF_STMT: {
-    TypeKind cond_type = check_expression(table, node->if_stmt.condition);
+    Type *cond_type = check_expression(table, node->if_stmt.condition);
     if (!is_bool(cond_type)) {
       semantic_error(table, node->if_stmt.condition,
                      "if condition must be a boolean");
@@ -507,40 +828,5 @@ void Semantic_analysis(AstNode *node, SymbolTable *table) {
 
   default:
     break;
-  }
-}
-
-char *type_to_name(TypeKind type) {
-  switch (type) {
-  case TYPE_I8:
-    return "i8";
-  case TYPE_I16:
-    return "i16";
-  case TYPE_I32:
-    return "i32";
-  case TYPE_I64:
-    return "i64";
-  case TYPE_U8:
-    return "u8";
-  case TYPE_U16:
-    return "u16";
-  case TYPE_U32:
-    return "u32";
-  case TYPE_U64:
-    return "u64";
-  case TYPE_F32:
-    return "f32";
-  case TYPE_F64:
-    return "f64";
-  case TYPE_CHAR:
-    return "char";
-  case TYPE_BOOL:
-    return "bool";
-  case TYPE_STRING:
-    return "string";
-  case TYPE_VOID:
-    return "void";
-  default:
-    return "unknown";
   }
 }

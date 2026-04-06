@@ -73,7 +73,8 @@ int main(int argc, char **argv) {
   ErrorHandler eh;
   ErrorHandler_init(&eh, src);
   Lexer lexer = make_lexer(src, &eh);
-  AstNode *ast_root = Parser_process(&lexer, &eh);
+  TypeContext *type_ctx = type_context_create();
+  AstNode *ast_root = Parser_process(&lexer, &eh, type_ctx);
 
   /* if (eh.has_errors) { */
   /*   ErrorHandler_show_all(&eh); */
@@ -82,12 +83,13 @@ int main(int argc, char **argv) {
   /* return 0; */
 
   SymbolTable table;
-  SymbolTable_init(&table, &eh);
+  SymbolTable_init(&table, &eh, type_ctx);
   Semantic_analysis(ast_root, &table);
 
   Ast_print(ast_root, 2);
   if (eh.has_errors) {
     ErrorHandler_show_all(&eh);
+    type_context_free(type_ctx);
     return 1;
   }
 
@@ -121,5 +123,6 @@ int main(int argc, char **argv) {
     break;
   }
 
+  type_context_free(type_ctx);
   return 0;
 }

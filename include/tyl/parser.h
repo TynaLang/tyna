@@ -14,6 +14,7 @@ struct Parser {
   Lexer *lexer;
   Token current_token;
   ErrorHandler *eh;
+  TypeContext *type_ctx;
 };
 
 struct BindingPower {
@@ -21,6 +22,6 @@ struct BindingPower {
   int right_bp;
 };
 
-AstNode *Parser_process(Lexer *l, ErrorHandler *eh);
+AstNode *Parser_process(Lexer *l, ErrorHandler *eh, TypeContext *type_ctx);
 
 #endif // !PARSER_H

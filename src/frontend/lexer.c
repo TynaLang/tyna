@@ -204,7 +204,7 @@ Token Token_advance(Lexer *l) {
 
   if (isalpha(c) || c == '_')
     return read_identifier(l);
-  if (isdigit(c) || c == '.')
+  if (isdigit(c) || c == '.' && isdigit(l->src[l->cursor + 1]))
     return read_number(l);
   if (c == '/') {
     advance(l);

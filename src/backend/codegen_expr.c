@@ -4,25 +4,24 @@
 #include "tyl/ast.h"
 
 static LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node) {
+  LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->resolved_type);
+
   switch (node->tag) {
   case NODE_NUMBER: {
     double val = node->number.value;
 
-    // Check if the double is actually a whole number
-    if (val == (double)((long long)val)) {
-      LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
-      return LLVMConstInt(i64_ty, (long long)val, true);
+    if (LLVMGetTypeKind(target_ty) == LLVMDoubleTypeKind ||
+        LLVMGetTypeKind(target_ty) == LLVMFloatTypeKind) {
+      return LLVMConstReal(target_ty, val);
     }
 
-    return LLVMConstReal(LLVMDoubleTypeInContext(cg->context), val);
+    return LLVMConstInt(target_ty, (long long)val, true);
   }
   case NODE_BOOL:
-    return LLVMConstInt(LLVMInt1TypeInContext(cg->context), node->boolean.value,
-                        false);
+    return LLVMConstInt(target_ty, node->boolean.value, false);
 
   case NODE_CHAR:
-    return LLVMConstInt(LLVMInt8TypeInContext(cg->context),
-                        node->char_lit.value, false);
+    return LLVMConstInt(target_ty, node->char_lit.value, false);
 
   case NODE_STRING:
     return LLVMBuildGlobalStringPtr(cg->builder, sv_to_cstr(node->string.value),
@@ -202,7 +201,11 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
   if (!rhs)
     return NULL;
 
-  cg_binary_sync_types(cg, &lhs, &rhs);
+  // The semantic layer already calculated the target type for the result.
+  // We cast both operands to this target type to ensure consistency.
+  LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->resolved_type);
+  lhs = cg_cast_value(cg, lhs, target_ty);
+  rhs = cg_cast_value(cg, rhs, target_ty);
 
   switch (node->tag) {
   case NODE_BINARY_ARITH:
@@ -219,10 +222,14 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
 static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
   UnaryOp op = node->unary.op;
   AstNode *expr = node->unary.expr;
+  LLVMTypeRef res_ty = cg_get_llvm_type(cg, node->resolved_type);
 
   if (op == OP_NEG) {
     LLVMValueRef val = cg_expression(cg, expr);
-    if (LLVMGetTypeKind(LLVMTypeOf(val)) == LLVMDoubleTypeKind) {
+    val = cg_cast_value(cg, val, res_ty);
+
+    if (LLVMGetTypeKind(res_ty) == LLVMDoubleTypeKind ||
+        LLVMGetTypeKind(res_ty) == LLVMFloatTypeKind) {
       return LLVMBuildFNeg(cg->builder, val, "fnegtmp");
     }
     return LLVMBuildNeg(cg->builder, val, "negtmp");
@@ -238,17 +245,20 @@ static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
 
   LLVMValueRef old_val = LLVMBuildLoad2(cg->builder, type, ptr, "u_load");
 
-  LLVMValueRef one = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind)
+  LLVMValueRef one = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind ||
+                      LLVMGetTypeKind(type) == LLVMFloatTypeKind)
                          ? LLVMConstReal(type, 1.0)
                          : LLVMConstInt(type, 1, false);
 
   LLVMValueRef new_val;
   if (op == OP_PRE_INC || op == OP_POST_INC) {
-    new_val = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind)
+    new_val = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind ||
+               LLVMGetTypeKind(type) == LLVMFloatTypeKind)
                   ? LLVMBuildFAdd(cg->builder, old_val, one, "inc")
                   : LLVMBuildAdd(cg->builder, old_val, one, "inc");
   } else {
-    new_val = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind)
+    new_val = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind ||
+               LLVMGetTypeKind(type) == LLVMFloatTypeKind)
                   ? LLVMBuildFSub(cg->builder, old_val, one, "dec")
                   : LLVMBuildSub(cg->builder, old_val, one, "dec");
   }
@@ -265,45 +275,34 @@ static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
 static LLVMValueRef cg_ternary_expr(Codegen *cg, AstNode *node) {
   LLVMValueRef cond = cg_expression(cg, node->ternary.condition);
 
-  LLVMTypeRef cond_ty = LLVMTypeOf(cond);
-  LLVMTypeKind cond_kind = LLVMGetTypeKind(cond_ty);
-  if (cond_kind != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(cond_ty) != 1) {
-      cond = LLVMBuildTruncOrBitCast(cg->builder, cond, LLVMInt1TypeInContext(cg->context), "cond_i1");
-  }
+  LLVMTypeRef i1_ty = LLVMInt1TypeInContext(cg->context);
+  cond = cg_cast_value(cg, cond, i1_ty);
 
   LLVMValueRef current_func = cg->current_function_ref->value;
-  LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_then");
-  LLVMBasicBlockRef else_bb = LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_else");
-  LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_cont");
+  LLVMBasicBlockRef then_bb =
+      LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_then");
+  LLVMBasicBlockRef else_bb =
+      LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_else");
+  LLVMBasicBlockRef merge_bb =
+      LLVMAppendBasicBlockInContext(cg->context, current_func, "ternary_cont");
 
   LLVMBuildCondBr(cg->builder, cond, then_bb, else_bb);
 
+  LLVMTypeRef res_type = cg_get_llvm_type(cg, node->resolved_type);
+
   LLVMPositionBuilderAtEnd(cg->builder, then_bb);
   LLVMValueRef then_val = cg_expression(cg, node->ternary.true_expr);
+  then_val = cg_cast_value(cg, then_val, res_type);
   LLVMBuildBr(cg->builder, merge_bb);
   then_bb = LLVMGetInsertBlock(cg->builder);
 
   LLVMPositionBuilderAtEnd(cg->builder, else_bb);
   LLVMValueRef else_val = cg_expression(cg, node->ternary.false_expr);
+  else_val = cg_cast_value(cg, else_val, res_type);
   LLVMBuildBr(cg->builder, merge_bb);
   else_bb = LLVMGetInsertBlock(cg->builder);
 
   LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
-
-  LLVMTypeRef res_type = LLVMTypeOf(then_val);
-  
-  if (LLVMTypeOf(then_val) != LLVMTypeOf(else_val)) {
-    // If one is double and other is an integer type (implicit cast allowed from semantic phase)
-    if (LLVMGetTypeKind(LLVMTypeOf(then_val)) == LLVMDoubleTypeKind) {
-      else_val = cg_cast_value(cg, else_val, res_type);
-    } else if (LLVMGetTypeKind(LLVMTypeOf(else_val)) == LLVMDoubleTypeKind) {
-      res_type = LLVMTypeOf(else_val);
-      then_val = cg_cast_value(cg, then_val, res_type);
-    } else {
-        // cast else_val to then_val type since semantic analysis verified compatibility
-        else_val = cg_cast_value(cg, else_val, res_type);
-    }
-  }
 
   LLVMValueRef phi = LLVMBuildPhi(cg->builder, res_type, "ternary_tmp");
   LLVMValueRef incoming_values[] = {then_val, else_val};
@@ -320,8 +319,8 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
 
   LLVMValueRef val = cg_expression(cg, node->assign_expr.value);
 
-  // We need the type to cast correctly
-  LLVMTypeRef target_ty = LLVMGetAllocatedType(ptr);
+  LLVMTypeRef target_ty =
+      cg_get_llvm_type(cg, node->assign_expr.target->resolved_type);
   val = cg_cast_value(cg, val, target_ty);
 
   LLVMBuildStore(cg->builder, val, ptr);
@@ -378,6 +377,152 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
   return result;
 }
 
+static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
+  Type *array_ty = node->resolved_type;
+  Type *elem_ty = array_ty->data.array.element;
+  size_t count = node->array_literal.items.len;
+
+  LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_ty);
+  LLVMTypeRef arr_type = LLVMArrayType(llvm_elem_ty, count);
+
+  LLVMValueRef backing_ptr =
+      LLVMBuildAlloca(cg->builder, arr_type, "arr_back_store");
+
+  for (size_t i = 0; i < count; i++) {
+    AstNode *item = node->array_literal.items.items[i];
+    LLVMValueRef item_val = cg_expression(cg, item);
+    item_val = cg_cast_value(cg, item_val, llvm_elem_ty);
+
+    LLVMValueRef indices[] = {
+        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false),
+        LLVMConstInt(LLVMInt32TypeInContext(cg->context), i, false)};
+
+    LLVMValueRef slot_ptr = LLVMBuildGEP2(cg->builder, arr_type, backing_ptr,
+                                          indices, 2, "arr_init_gep");
+    LLVMBuildStore(cg->builder, item_val, slot_ptr);
+  }
+
+  LLVMTypeRef fat_ptr_type = cg_get_llvm_type(cg, array_ty);
+  LLVMValueRef fat_ptr = LLVMGetUndef(fat_ptr_type);
+
+  LLVMValueRef len_val =
+      LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, false);
+  fat_ptr = LLVMBuildInsertValue(cg->builder, fat_ptr, len_val, 0, "fat_len");
+
+  LLVMValueRef first_elem_indices[] = {
+      LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false),
+      LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false)};
+  LLVMValueRef data_ptr = LLVMBuildGEP2(cg->builder, arr_type, backing_ptr,
+                                        first_elem_indices, 2, "arr_decay_gep");
+  fat_ptr = LLVMBuildInsertValue(cg->builder, fat_ptr, data_ptr, 1, "fat_data");
+
+  return fat_ptr;
+}
+
+static LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
+  Type *array_ty = node->resolved_type;
+  Type *elem_ty = array_ty->data.array.element;
+  size_t count = array_ty->data.array.fixed_size;
+
+  LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_ty);
+  LLVMTypeRef arr_type = LLVMArrayType(llvm_elem_ty, count);
+
+  LLVMValueRef backing_ptr =
+      LLVMBuildAlloca(cg->builder, arr_type, "arr_back_store");
+
+  LLVMValueRef item_val = cg_expression(cg, node->array_repeat.value);
+  item_val = cg_cast_value(cg, item_val, llvm_elem_ty);
+
+  for (size_t i = 0; i < count; i++) {
+    LLVMValueRef indices[] = {
+        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false),
+        LLVMConstInt(LLVMInt32TypeInContext(cg->context), i, false)};
+
+    LLVMValueRef slot_ptr = LLVMBuildGEP2(cg->builder, arr_type, backing_ptr,
+                                          indices, 2, "arr_init_gep");
+    LLVMBuildStore(cg->builder, item_val, slot_ptr);
+  }
+
+  LLVMTypeRef fat_ptr_type = cg_get_llvm_type(cg, array_ty);
+  LLVMValueRef fat_ptr = LLVMGetUndef(fat_ptr_type);
+
+  LLVMValueRef len_val =
+      LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, false);
+  fat_ptr = LLVMBuildInsertValue(cg->builder, fat_ptr, len_val, 0, "fat_len");
+
+  LLVMValueRef first_elem_indices[] = {
+      LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false),
+      LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false)};
+  LLVMValueRef data_ptr = LLVMBuildGEP2(cg->builder, arr_type, backing_ptr,
+                                        first_elem_indices, 2, "arr_decay_gep");
+  fat_ptr = LLVMBuildInsertValue(cg->builder, fat_ptr, data_ptr, 1, "fat_data");
+
+  return fat_ptr;
+}
+
+static LLVMValueRef cg_index_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef fat_ptr = cg_expression(cg, node->index.array);
+  LLVMValueRef index = cg_expression(cg, node->index.index);
+
+  Type *arr_ty = node->index.array->resolved_type;
+  LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, arr_ty->data.array.element);
+
+  LLVMValueRef len =
+      LLVMBuildExtractValue(cg->builder, fat_ptr, 0, "arr_len_check");
+  LLVMValueRef data_ptr =
+      LLVMBuildExtractValue(cg->builder, fat_ptr, 1, "arr_extract_ptr");
+
+  LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
+  index = cg_cast_value(cg, index, i64_ty);
+
+  LLVMValueRef is_lt =
+      LLVMBuildICmp(cg->builder, LLVMIntULT, index, len, "bounds_check_lt");
+
+  LLVMBasicBlockRef current_bb = LLVMGetInsertBlock(cg->builder);
+  LLVMValueRef func = LLVMGetBasicBlockParent(current_bb);
+
+  LLVMBasicBlockRef ok_bb =
+      LLVMAppendBasicBlockInContext(cg->context, func, "index_ok");
+  LLVMBasicBlockRef fail_bb =
+      LLVMAppendBasicBlockInContext(cg->context, func, "index_fail");
+
+  LLVMBuildCondBr(cg->builder, is_lt, ok_bb, fail_bb);
+
+  // On failure, abort the program. In a real implementation, we might want to
+  // return an Option or something instead.
+  LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
+  // For now, just trap. Later we can print a nice error.
+  LLVMValueRef trap = LLVMGetNamedFunction(cg->module, "llvm.trap");
+  LLVMTypeRef trap_ty =
+      LLVMFunctionType(LLVMVoidTypeInContext(cg->context), NULL, 0, false);
+  if (!trap) {
+    trap = LLVMAddFunction(cg->module, "llvm.trap", trap_ty);
+  }
+  LLVMBuildCall2(cg->builder, trap_ty, trap, NULL, 0, "");
+  LLVMBuildUnreachable(cg->builder);
+
+  LLVMPositionBuilderAtEnd(cg->builder, ok_bb);
+
+  LLVMValueRef element_ptr = LLVMBuildGEP2(cg->builder, llvm_elem_ty, data_ptr,
+                                           &index, 1, "arr_index_gep");
+
+  return LLVMBuildLoad2(cg->builder, llvm_elem_ty, element_ptr, "arr_load");
+}
+
+static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
+  AstNode *obj_node = node->field.object;
+  Type *obj_type = obj_node->resolved_type;
+
+  if (obj_type->kind == KIND_ARRAY) {
+    if (sv_eq_cstr(node->field.field, "len")) {
+      LLVMValueRef fat_ptr = cg_expression(cg, obj_node);
+      return LLVMBuildExtractValue(cg->builder, fat_ptr, 0, "arr_len_extract");
+    }
+  }
+
+  return NULL;
+}
+
 LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
   if (!node)
     return NULL;
@@ -413,9 +558,17 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
   case NODE_CALL:
     return cg_call_expr(cg, node);
 
-  case NODE_FIELD:
+  case NODE_ARRAY_LITERAL:
+    return cg_array_literal(cg, node);
+
+  case NODE_ARRAY_REPEAT:
+    return cg_array_repeat(cg, node);
+
   case NODE_INDEX:
-    return NULL;
+    return cg_index_expr(cg, node);
+
+  case NODE_FIELD:
+    return cg_field_expr(cg, node);
 
   default:
     fprintf(stderr, "Codegen: Unhandled expression tag %d\n", node->tag);

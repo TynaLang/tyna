@@ -92,4 +92,19 @@ static inline const char *sv_to_cstr_temp(StringView sv) {
   return buf;
 }
 
+static inline bool sv_contains(StringView sv, char c) {
+  for (size_t i = 0; i < sv.len; i++) {
+    if (sv.data[i] == c)
+      return true;
+  }
+  return false;
+}
+
+static inline bool sv_ends_with(StringView sv, const char *suffix) {
+  size_t suffix_len = strlen(suffix);
+  if (sv.len < suffix_len)
+    return false;
+  return memcmp(sv.data + sv.len - suffix_len, suffix, suffix_len) == 0;
+}
+
 #endif // UTILS_H

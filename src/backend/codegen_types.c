@@ -5,39 +5,51 @@
 #include "tyl/semantic.h"
 #include "tyl/utils.h"
 
-LLVMTypeRef cg_get_llvm_type(Codegen *cg, TypeKind t) {
-  switch (t) {
-  case TYPE_I8:
-  case TYPE_U8:
-    return LLVMInt8TypeInContext(cg->context);
-  case TYPE_I16:
-  case TYPE_U16:
-    return LLVMInt16TypeInContext(cg->context);
-  case TYPE_I32:
-  case TYPE_U32:
-    return LLVMInt32TypeInContext(cg->context);
-  case TYPE_I64:
-  case TYPE_U64:
-    return LLVMInt64TypeInContext(cg->context);
-  case TYPE_F32:
-    return LLVMFloatTypeInContext(cg->context);
-  case TYPE_F64:
-    return LLVMDoubleTypeInContext(cg->context);
-  case TYPE_CHAR:
-    return LLVMInt8TypeInContext(cg->context);
-  case TYPE_BOOL:
-    return LLVMInt1TypeInContext(cg->context);
-  case TYPE_VOID:
-    return LLVMVoidTypeInContext(cg->context);
+LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
+  if (t->kind == KIND_ARRAY) {
+    // Fat Pointer Implementation: { i64 len, T* data }
+    LLVMTypeRef element_type = cg_get_llvm_type(cg, t->data.array.element);
+    LLVMTypeRef pointer_type = LLVMPointerType(element_type, 0);
+    LLVMTypeRef i64_type = LLVMInt64TypeInContext(cg->context);
 
-  case TYPE_STRING:
-    return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
-
-  case TYPE_UNKNOWN:
-  default:
-    printf("Unknown type kind: %d\n", t);
-    panic("Unknown type kind: %d", type_to_name(t));
+    // Literal structure for the Fat Pointer
+    LLVMTypeRef struct_fields[] = {i64_type, pointer_type};
+    return LLVMStructTypeInContext(cg->context, struct_fields, 2, false);
   }
+
+  if (t->kind == KIND_PRIMITIVE) {
+    switch (t->data.primitive) {
+    case PRIM_I8:
+    case PRIM_U8:
+      return LLVMInt8TypeInContext(cg->context);
+    case PRIM_I16:
+    case PRIM_U16:
+      return LLVMInt16TypeInContext(cg->context);
+    case PRIM_I32:
+    case PRIM_U32:
+      return LLVMInt32TypeInContext(cg->context);
+    case PRIM_I64:
+    case PRIM_U64:
+      return LLVMInt64TypeInContext(cg->context);
+    case PRIM_F32:
+      return LLVMFloatTypeInContext(cg->context);
+    case PRIM_F64:
+      return LLVMDoubleTypeInContext(cg->context);
+    case PRIM_CHAR:
+      return LLVMInt8TypeInContext(cg->context);
+    case PRIM_BOOL:
+      return LLVMInt1TypeInContext(cg->context);
+    case PRIM_VOID:
+      return LLVMVoidTypeInContext(cg->context);
+    case PRIM_STRING:
+      return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+    case PRIM_UNKNOWN:
+    default:
+      panic("Unknown primitive kind: %d", t->data.primitive);
+    }
+  }
+
+  panic("Unknown type kind: %d", t->kind);
 }
 
 LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, LLVMTypeRef to_ty) {

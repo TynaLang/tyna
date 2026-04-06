@@ -3,6 +3,7 @@
 
 #include "tyl/codegen.h"
 #include "tyl/errors.h"
+#include "tyl/type.h"
 #include "tyl/utils.h"
 
 #include <llvm-c/Core.h>
@@ -10,7 +11,7 @@
 
 typedef struct CGSymbol {
   StringView name;
-  TypeKind type;
+  Type *type;
   LLVMValueRef value;
 } CGSymbol;
 
@@ -41,12 +42,15 @@ struct Codegen {
 
   List functions;        // user-defined
   List system_functions; // printf, pow, etc.
+
+  // Format string map for deduplication
+  List format_strings; // List<struct { Type* t; LLVMValueRef val; }>
 };
 
 // ===== symbol table =====
 
 void CGSymbolTable_init(CGSymbolTable *t, CGSymbolTable *parent);
-void CGSymbolTable_add(CGSymbolTable *t, StringView name, TypeKind type,
+void CGSymbolTable_add(CGSymbolTable *t, StringView name, Type *type,
                        LLVMValueRef value);
 CGSymbol *CGSymbolTable_find(CGSymbolTable *t, StringView name);
 
@@ -55,7 +59,7 @@ void cg_pop_scope(Codegen *cg);
 
 // ===== types =====
 
-LLVMTypeRef cg_get_llvm_type(Codegen *cg, TypeKind t);
+LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t);
 LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, LLVMTypeRef to_ty);
 void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, LLVMValueRef *rhs);
 
@@ -73,6 +77,6 @@ void cg_emit_function_body(Codegen *cg, AstNode *node);
 CGFunction *cg_find_function(Codegen *cg, StringView name);
 
 LLVMValueRef cg_get_address(Codegen *cg, AstNode *node);
-LLVMValueRef cg_alloca_in_entry(Codegen *cg, TypeKind type, StringView name);
+LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name);
 
 #endif

@@ -3,7 +3,7 @@
 #include "codegen_private.h"
 #include "tyl/codegen.h"
 
-LLVMValueRef cg_alloca_in_entry(Codegen *cg, TypeKind type, StringView name) {
+LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name) {
   LLVMBuilderRef tmp_builder = LLVMCreateBuilderInContext(cg->context);
   LLVMBasicBlockRef entry_block = LLVMGetEntryBasicBlock(cg->current_function);
 
@@ -37,8 +37,18 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
   }
 
   case NODE_INDEX: {
-    panic("Indexing is not yet implemented");
-    return NULL;
+
+    LLVMValueRef fat_ptr = cg_expression(cg, node->index.array);
+    LLVMValueRef data_ptr =
+        LLVMBuildExtractValue(cg->builder, fat_ptr, 1, "arr_extract_ptr");
+
+    LLVMValueRef idx_val = cg_expression(cg, node->index.index);
+    Type *arr_type = node->index.array->resolved_type;
+    LLVMTypeRef llvm_elem_ty =
+        cg_get_llvm_type(cg, arr_type->data.array.element);
+
+    return LLVMBuildGEP2(cg->builder, llvm_elem_ty, data_ptr, &idx_val, 1,
+                         "arr_index_gep");
   }
 
   default:

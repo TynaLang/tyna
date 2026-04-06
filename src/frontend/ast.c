@@ -11,6 +11,7 @@ static AstNode *AstNode_new(AstKind ast_kind, Location loc) {
   }
   node->tag = ast_kind;
   node->loc = loc;
+  node->resolved_type = NULL;
   return node;
 }
 
@@ -20,7 +21,7 @@ AstNode *AstNode_new_program(Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, TypeKind type,
+AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, Type *type,
                               int is_const, Location loc) {
   AstNode *node = AstNode_new(NODE_VAR_DECL, loc);
   node->var_decl.name = name;
@@ -67,38 +68,44 @@ AstNode *AstNode_new_var(StringView value, Location loc) {
   return node;
 }
 
-static AstNode *AstNode_binary(AstKind ast_kind, Location loc, AstNode *left,
-                               AstNode *right) {
-  AstNode *node = AstNode_new(ast_kind, loc);
-  node->binary_arith.left = left;
-  node->binary_arith.right = right;
+AstNode *AstNode_new_array_literal(List items, Location loc) {
+  AstNode *node = AstNode_new(NODE_ARRAY_LITERAL, loc);
+  node->array_literal.items = items;
   return node;
 }
 
 AstNode *AstNode_new_binary_arith(AstNode *left, AstNode *right, ArithmOp op,
                                   Location loc) {
-  AstNode *node = AstNode_binary(NODE_BINARY_ARITH, loc, left, right);
+  AstNode *node = AstNode_new(NODE_BINARY_ARITH, loc);
+  node->binary_arith.left = left;
+  node->binary_arith.right = right;
   node->binary_arith.op = op;
   return node;
 }
 
 AstNode *AstNode_new_binary_compare(AstNode *left, AstNode *right, CompareOp op,
                                     Location loc) {
-  AstNode *node = AstNode_binary(NODE_BINARY_COMPARE, loc, left, right);
+  AstNode *node = AstNode_new(NODE_BINARY_COMPARE, loc);
+  node->binary_compare.left = left;
+  node->binary_compare.right = right;
   node->binary_compare.op = op;
   return node;
 }
 
 AstNode *AstNode_new_binary_equality(AstNode *left, AstNode *right,
                                      EqualityOp op, Location loc) {
-  AstNode *node = AstNode_binary(NODE_BINARY_EQUALITY, loc, left, right);
+  AstNode *node = AstNode_new(NODE_BINARY_EQUALITY, loc);
+  node->binary_equality.left = left;
+  node->binary_equality.right = right;
   node->binary_equality.op = op;
   return node;
 }
 
 AstNode *AstNode_new_binary_logical(AstNode *left, AstNode *right, LogicalOp op,
                                     Location loc) {
-  AstNode *node = AstNode_binary(NODE_BINARY_LOGICAL, loc, left, right);
+  AstNode *node = AstNode_new(NODE_BINARY_LOGICAL, loc);
+  node->binary_logical.left = left;
+  node->binary_logical.right = right;
   node->binary_logical.op = op;
   return node;
 }
@@ -110,7 +117,7 @@ AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_cast_expr(AstNode *expr, TypeKind type, Location loc) {
+AstNode *AstNode_new_cast_expr(AstNode *expr, Type *type, Location loc) {
   AstNode *node = AstNode_new(NODE_CAST_EXPR, loc);
   node->cast_expr.expr = expr;
   node->cast_expr.target_type = type;
@@ -138,7 +145,7 @@ AstNode *AstNode_new_call(AstNode *func, List args, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_func_decl(StringView name, List params, TypeKind ret_type,
+AstNode *AstNode_new_func_decl(StringView name, List params, Type *ret_type,
                                AstNode *body, Location loc) {
   AstNode *node = AstNode_new(NODE_FUNC_DECL, loc);
   node->func_decl.name = name;
@@ -154,7 +161,7 @@ AstNode *AstNode_new_return(AstNode *expr, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_param(StringView name, TypeKind type, Location loc) {
+AstNode *AstNode_new_param(StringView name, Type *type, Location loc) {
   AstNode *node = AstNode_new(NODE_PARAM, loc);
   node->param.name = name;
   node->param.type = type;
@@ -176,7 +183,8 @@ AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
   return node;
 }
 
-AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr, AstNode *false_expr, Location loc) {
+AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
+                             AstNode *false_expr, Location loc) {
   AstNode *node = AstNode_new(NODE_TERNARY, loc);
   node->ternary.condition = condition;
   node->ternary.true_expr = true_expr;
@@ -195,6 +203,13 @@ AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc) {
   AstNode *node = AstNode_new(NODE_FIELD, loc);
   node->field.object = expr;
   node->field.field = field;
+  return node;
+}
+
+AstNode *AstNode_new_array_repeat(AstNode *value, AstNode *count, Location loc) {
+  AstNode *node = AstNode_new(NODE_ARRAY_REPEAT, loc);
+  node->array_repeat.value = value;
+  node->array_repeat.count = count;
   return node;
 }
 
@@ -289,44 +304,48 @@ void Ast_free(AstNode *node) {
     Ast_free(node->if_stmt.then_branch);
     Ast_free(node->if_stmt.else_branch);
     break;
+  case NODE_ARRAY_REPEAT:
+    Ast_free(node->array_repeat.value);
+    Ast_free(node->array_repeat.count);
+    break;
   }
   free(node);
 }
 
-TypeKind Token_token_to_type(TokenType t) {
+PrimitiveKind Token_token_to_type(TokenType t) {
   switch (t) {
   case TOKEN_TYPE_INT:
   case TOKEN_TYPE_I32:
-    return TYPE_I32;
+    return PRIM_I32;
   case TOKEN_TYPE_I8:
-    return TYPE_I8;
+    return PRIM_I8;
   case TOKEN_TYPE_I16:
-    return TYPE_I16;
+    return PRIM_I16;
   case TOKEN_TYPE_I64:
-    return TYPE_I64;
+    return PRIM_I64;
   case TOKEN_TYPE_U8:
-    return TYPE_U8;
+    return PRIM_U8;
   case TOKEN_TYPE_U16:
-    return TYPE_U16;
+    return PRIM_U16;
   case TOKEN_TYPE_U32:
-    return TYPE_U32;
+    return PRIM_U32;
   case TOKEN_TYPE_U64:
-    return TYPE_U64;
+    return PRIM_U64;
   case TOKEN_TYPE_FLOAT:
   case TOKEN_TYPE_F32:
-    return TYPE_F32;
+    return PRIM_F32;
   case TOKEN_TYPE_F64:
-    return TYPE_F64;
-  case TOKEN_TYPE_CHAR:
-    return TYPE_CHAR;
-  case TOKEN_TYPE_STR:
-    return TYPE_STRING;
-  case TOKEN_TYPE_VOID:
-    return TYPE_VOID;
+    return PRIM_F64;
   case TOKEN_TYPE_BOOLEAN:
-    return TYPE_BOOL;
+    return PRIM_BOOL;
+  case TOKEN_TYPE_CHAR:
+    return PRIM_CHAR;
+  case TOKEN_TYPE_STR:
+    return PRIM_STRING;
+  case TOKEN_TYPE_VOID:
+    return PRIM_VOID;
   default:
-    return TYPE_UNKNOWN;
+    return PRIM_UNKNOWN;
   }
 }
 
@@ -351,9 +370,9 @@ void Ast_print(AstNode *node, int indent) {
     }
     break;
   case NODE_VAR_DECL:
-    printf("%s " SV_FMT " : %d\n", node->var_decl.is_const ? "CONST" : "LET",
+    printf("%s " SV_FMT " : %s\n", node->var_decl.is_const ? "CONST" : "LET",
            SV_ARG(node->var_decl.name->var.value),
-           node->var_decl.declared_type);
+           type_to_name(node->var_decl.declared_type));
     print_indent(indent + 1);
     printf("VALUE:\n");
     Ast_print(node->var_decl.value, indent + 2);
@@ -491,6 +510,36 @@ void Ast_print(AstNode *node, int indent) {
       printf("ELSE:\n");
       Ast_print(node->if_stmt.else_branch, indent + 2);
     }
+    break;
+  case NODE_ARRAY_LITERAL:
+    printf("ARRAY_LITERAL\n");
+    for (size_t i = 0; i < node->array_literal.items.len; i++) {
+      Ast_print(node->array_literal.items.items[i], indent + 1);
+    }
+    break;
+  case NODE_INDEX:
+    printf("INDEX_EXPR\n");
+    print_indent(indent + 1);
+    printf("ARRAY:\n");
+    Ast_print(node->index.array, indent + 2);
+    print_indent(indent + 1);
+    printf("INDEX:\n");
+    Ast_print(node->index.index, indent + 2);
+    break;
+  case NODE_FIELD:
+    printf("FIELD_ACCESS: " SV_FMT "\n", SV_ARG(node->field.field));
+    print_indent(indent + 1);
+    printf("OBJECT:\n");
+    Ast_print(node->field.object, indent + 2);
+    break;
+  case NODE_ARRAY_REPEAT:
+    printf("ARRAY_REPEAT\n");
+    print_indent(indent + 1);
+    printf("VALUE:\n");
+    Ast_print(node->array_repeat.value, indent + 2);
+    print_indent(indent + 1);
+    printf("COUNT:\n");
+    Ast_print(node->array_repeat.count, indent + 2);
     break;
   default:
     printf("UNKNOWN NODE\n");

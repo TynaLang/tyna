@@ -118,6 +118,7 @@ Codegen *Codegen_new(const char *module_name) {
 
   List_init(&cg->functions);
   List_init(&cg->system_functions);
+  List_init(&cg->format_strings);
 
   cg_initiate_system_functions(cg);
 
@@ -168,6 +169,11 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
 void Codegen_dump(Codegen *cg) { LLVMDumpModule(cg->module); }
 
 void Codegen_free(Codegen *cg) {
+  for (size_t i = 0; i < cg->format_strings.len; i++) {
+    free(cg->format_strings.items[i]);
+  }
+  List_free(&cg->format_strings, 0);
+
   LLVMDisposeBuilder(cg->builder);
   LLVMDisposeModule(cg->module);
   LLVMContextDispose(cg->context);

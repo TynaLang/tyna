@@ -19,6 +19,29 @@ void cg_var_decl(Codegen *cg, AstNode *node) {
   }
 }
 
+typedef struct CGFormatString {
+  Type *type;
+  LLVMValueRef value;
+} CGFormatString;
+
+static LLVMValueRef cg_get_format_string(Codegen *cg, Type *t,
+                                         const char *fmt_str) {
+  // Deduplicate
+  for (size_t i = 0; i < cg->format_strings.len; i++) {
+    CGFormatString *fs = cg->format_strings.items[i];
+    if (fs->type == t) {
+      return fs->value;
+    }
+  }
+
+  LLVMValueRef val = LLVMBuildGlobalStringPtr(cg->builder, fmt_str, "print_fmt");
+  CGFormatString *fs = xmalloc(sizeof(CGFormatString));
+  fs->type = t;
+  fs->value = val;
+  List_push(&cg->format_strings, fs);
+  return val;
+}
+
 static void cg_print_stmt(Codegen *cg, AstNode *node) {
   CGFunction *print_fn = cg_find_function(cg, sv_from_parts("print", 5));
   if (!print_fn)
@@ -31,6 +54,7 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
     LLVMTypeKind kind = LLVMGetTypeKind(val_ty);
 
     const char *fmt_str = "%p ";
+    Type *resolved_type = val_node->resolved_type;
 
     if (kind == LLVMIntegerTypeKind) {
       unsigned width = LLVMGetIntTypeWidth(val_ty);
@@ -51,17 +75,22 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
       }
     } else if (kind == LLVMDoubleTypeKind || kind == LLVMFloatTypeKind) {
       fmt_str = "%f ";
+      // C variadic promotion: float -> double
+      if (kind == LLVMFloatTypeKind) {
+        val = LLVMBuildFPExt(cg->builder, val,
+                             LLVMDoubleTypeInContext(cg->context), "fpext_varg");
+      }
     } else if (kind == LLVMPointerTypeKind) {
       fmt_str = "%s ";
     }
 
-    LLVMValueRef fmt_val =
-        LLVMBuildGlobalStringPtr(cg->builder, fmt_str, "print_fmt");
+    LLVMValueRef fmt_val = cg_get_format_string(cg, resolved_type, fmt_str);
     LLVMValueRef args[] = {fmt_val, val};
     LLVMBuildCall2(cg->builder, print_fn->type, print_fn->value, args, 2, "");
   }
 
-  LLVMValueRef nl_fmt = LLVMBuildGlobalStringPtr(cg->builder, "\n", "nl");
+  // Deduplicate newline as well (using NULL as type key)
+  LLVMValueRef nl_fmt = cg_get_format_string(cg, NULL, "\n");
   LLVMValueRef nl_args[] = {nl_fmt};
   LLVMBuildCall2(cg->builder, print_fn->type, print_fn->value, nl_args, 1, "");
 }

@@ -95,7 +95,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
     }
 
     StringView param_name = param_node->param.name;
-    TypeKind param_type = param_node->param.type;
+    Type *param_type = param_node->param.type;
 
     LLVMValueRef param_val = LLVMGetParam(f->value, (unsigned)i);
 
@@ -114,7 +114,8 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
 
   LLVMBasicBlockRef current_bb = LLVMGetInsertBlock(cg->builder);
   if (!LLVMGetBasicBlockTerminator(current_bb)) {
-    if (node->func_decl.return_type == TYPE_VOID) {
+    if (node->func_decl.return_type->kind == KIND_PRIMITIVE &&
+        node->func_decl.return_type->data.primitive == PRIM_VOID) {
       LLVMBuildRetVoid(cg->builder);
     } else {
       LLVMTypeRef ret_ty = cg_get_llvm_type(cg, node->func_decl.return_type);

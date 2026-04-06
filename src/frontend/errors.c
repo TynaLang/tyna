@@ -27,7 +27,21 @@ void ErrorHandler_show_all(ErrorHandler *eh) {
 }
 
 void ErrorHandler_report(ErrorHandler *eh, Location loc, const char *fmt, ...) {
-  eh->has_errors = 1;
+  va_list args;
+  va_start(args, fmt);
+
+  char msg_buf[1024];
+  vsnprintf(msg_buf, sizeof(msg_buf), fmt, args);
+  va_end(args);
+
+  ErrorHandler_report_level(eh, loc, LEVEL_ERROR, "%s", msg_buf);
+}
+
+void ErrorHandler_report_level(ErrorHandler *eh, Location loc, ErrorLevel level,
+                               const char *fmt, ...) {
+  if (level == LEVEL_ERROR) {
+    eh->has_errors = 1;
+  }
 
   char msg_buf[1024];
   va_list args;
@@ -73,14 +87,25 @@ void ErrorHandler_report(ErrorHandler *eh, Location loc, const char *fmt, ...) {
     caret_str = xstrdup("^");
   }
 
+  const char *level_str = "Error";
+  const char *color_prefix = "\x1b[31;1m"; // Red for Error
+
+  if (level == LEVEL_WARNING) {
+    level_str = "Warning";
+    color_prefix = "\x1b[33;1m"; // Yellow for Warning
+  } else if (level == LEVEL_INFO) {
+    level_str = "Info";
+    color_prefix = "\x1b[34;1m"; // Blue for Info
+  }
+
   char final_msg[2048];
-  // ANSI colors: \x1b[31;1m for bold red, \x1b[0m to reset
   snprintf(final_msg, sizeof(final_msg),
-           "\x1b[31;1mError\x1b[0m at line %zu, col %zu: %s\n"
+           "%s%s\x1b[0m at line %zu, col %zu: %s\n"
            "  |\n"
            "%zu | %s\n"
            "  | %s\n",
-           loc.line, loc.col, msg_buf, loc.line, source_line, caret_str);
+           color_prefix, level_str, loc.line, loc.col, msg_buf, loc.line,
+           source_line, caret_str);
 
   free(source_line);
   free(caret_str);

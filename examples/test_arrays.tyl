@@ -1,0 +1,29 @@
+// test_arrays.tyl
+// Explicit array literal initialization
+let arr1 = [1, 2, 3, 4, 5];
+print("arr1 len:", arr1.len);
+print("arr1[0]:", arr1[0]);
+print("arr1[4]:", arr1[4]);
+
+// Sized initialization
+let arr2 = [0; 5];
+print("arr2 len:", arr2.len);
+print("arr2[4] before:", arr2[4]);
+
+// Moving elements from arr1 to arr2
+arr2[0] = arr1[4];
+arr2[1] = arr1[3];
+arr2[2] = arr1[2];
+arr2[3] = arr1[1];
+arr2[4] = arr1[0];
+
+print("arr2[0] after:", arr2[0]);
+print("arr2[4] after:", arr2[4]);
+
+// Float arrays
+let float_arr = [1.1, 2.2, 3.3];
+print("float_arr[0]:", float_arr[0]);
+
+// Type promotion test
+let mixed_arr = [1, 2.2, 3];
+print("mixed_arr[2]:", mixed_arr[2]);

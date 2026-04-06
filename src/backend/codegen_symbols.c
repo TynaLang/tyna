@@ -6,7 +6,7 @@ void CGSymbolTable_init(CGSymbolTable *t, CGSymbolTable *parent) {
   List_init(&t->symbols);
 }
 
-void CGSymbolTable_add(CGSymbolTable *t, StringView name, TypeKind type,
+void CGSymbolTable_add(CGSymbolTable *t, StringView name, Type *type,
                        LLVMValueRef value) {
   CGSymbol *s = malloc(sizeof(CGSymbol));
   s->name = name;

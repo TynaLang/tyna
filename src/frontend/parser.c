@@ -78,8 +78,7 @@ static void skip_to_next_param(Parser *p) {
 }
 
 static int is_type_token(TokenType t) {
-  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_VOID) ||
-         t == TOKEN_TYPE_BOOLEAN;
+  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_VOID) || t == TOKEN_LBRACKET;
 }
 
 static int is_binary_operator(TokenType t) {
@@ -201,18 +200,23 @@ static BindingPower infix_binding_power(TokenType t) {
   case TOKEN_MOD:
     return (struct BindingPower){15, 16};
   case TOKEN_POWER:
-    return (struct BindingPower){17, 18};
+    return (struct BindingPower){20, 19};
 
   default:
     return (struct BindingPower){0, 0};
   }
 }
 
+static int is_lvalue(AstNode *node) {
+  return node->tag == NODE_VAR || node->tag == NODE_FIELD ||
+         node->tag == NODE_INDEX;
+}
+
 // ---------- FORWARD DECLARATIONS ---------- //
 
 static AstNode *Parser_parse_expression(Parser *p, int min_bp);
 static AstNode *Parser_parse_statement(Parser *p);
-static TypeKind Parser_parse_type(Parser *p);
+static PrimitiveKind Parser_parse_type(Parser *p);
 
 // ---------- POSTFIX HANDLERS ---------- //
 
@@ -299,10 +303,10 @@ static AstNode *Parser_parse_primary(Parser *p) {
     return AstNode_new_number(t.number, t.text, t.loc);
   case TOKEN_CHAR:
     return AstNode_new_char(t.text.data[0], t.loc);
-  case TOKEN_STRING:
-    return AstNode_new_string(t.text, t.loc);
   case TOKEN_IDENT:
     return AstNode_new_var(t.text, t.loc);
+  case TOKEN_STRING:
+    return AstNode_new_string(t.text, t.loc);
   case TOKEN_TRUE:
     return AstNode_new_bool(1, t.loc);
   case TOKEN_FALSE:
@@ -311,15 +315,56 @@ static AstNode *Parser_parse_primary(Parser *p) {
   case TOKEN_LPAREN: {
     Token peek = p->current_token;
     if (is_type_token(peek.type)) {
-      TypeKind target_type = Parser_parse_type(p);
+      PrimitiveKind target_type = Parser_parse_type(p);
       Parser_expect(p, TOKEN_RPAREN, "Expected ')' after cast");
       AstNode *expr = Parser_parse_expression(p, 100);
-      return AstNode_new_cast_expr(expr, target_type, t.loc);
+      return AstNode_new_cast_expr(
+          expr, type_get_primitive(p->type_ctx, target_type), t.loc);
     } else {
       AstNode *expr = Parser_parse_expression(p, 0);
       Parser_expect(p, TOKEN_RPAREN, "Expected ')'");
       return expr;
     }
+  }
+
+  case TOKEN_LBRACKET: {
+    List items;
+    List_init(&items);
+    if (p->current_token.type != TOKEN_RBRACKET) {
+      AstNode *first = Parser_parse_expression(p, 0);
+      if (!first)
+        return NULL;
+
+      if (p->current_token.type == TOKEN_SEMI) {
+        // [value; count] shorthand
+        Parser_token_advance(p);
+        AstNode *count_node = Parser_parse_expression(p, 0);
+        if (!count_node) {
+          ErrorHandler_report(p->eh, p->current_token.loc,
+                              "Expected count expression after ';' in array literal");
+          return NULL;
+        }
+
+        // We could also check here if count_node is a constant, but we'll let
+        // semantic handle it for more flexibility (like dynamic repeats eventually).
+        List_free(&items, 0); // Don't need the list anymore
+        Parser_expect(p, TOKEN_RBRACKET, "Expected ']' at end of array repeat");
+        return AstNode_new_array_repeat(first, count_node, t.loc);
+      } else {
+        List_push(&items, first);
+        while (p->current_token.type == TOKEN_COMMA) {
+          Parser_token_advance(p);
+          if (p->current_token.type == TOKEN_RBRACKET)
+            break;
+          AstNode *item = Parser_parse_expression(p, 0);
+          if (!item)
+            return NULL;
+          List_push(&items, item);
+        }
+      }
+    }
+    Parser_expect(p, TOKEN_RBRACKET, "Expected ']' at end of array literal");
+    return AstNode_new_array_literal(items, t.loc);
   }
 
   case TOKEN_MINUS: {
@@ -388,7 +433,7 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     // CREATE CORRECT NODE
     switch (op.type) {
     case TOKEN_ASSIGN:
-      if (!Parser_is(left, NODE_VAR)) {
+      if (!is_lvalue(left)) {
         ErrorHandler_report(p->eh, op.loc, "Invalid assignment target");
         return NULL;
       }
@@ -438,9 +483,44 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
   return left;
 }
 
-static TypeKind Parser_parse_type(Parser *p) {
-  TypeKind kind = Token_token_to_type(p->current_token.type);
-  if (kind != TYPE_UNKNOWN)
+static Type *Parser_parse_type_full(Parser *p) {
+  if (p->current_token.type == TOKEN_LBRACKET) {
+    Parser_token_advance(p); // consume '['
+    Type *element = Parser_parse_type_full(p);
+
+    bool is_dynamic = false;
+    size_t fixed_size = 0;
+
+    if (p->current_token.type == TOKEN_SEMI) {
+      Parser_token_advance(p);
+      if (p->current_token.type == TOKEN_NUMBER) {
+        fixed_size = (size_t)p->current_token.number;
+        is_dynamic = false;
+        Parser_token_advance(p);
+      } else {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected array size after ';'");
+      }
+    } else {
+      is_dynamic = true;
+    }
+
+    Parser_expect(p, TOKEN_RBRACKET, "Expected ']' after array type");
+    return type_get_array(p->type_ctx, element, is_dynamic, fixed_size);
+  }
+
+  PrimitiveKind kind = Token_token_to_type(p->current_token.type);
+  if (kind != PRIM_UNKNOWN) {
+    Parser_token_advance(p);
+    return type_get_primitive(p->type_ctx, kind);
+  }
+
+  return type_get_primitive(p->type_ctx, PRIM_UNKNOWN);
+}
+
+static PrimitiveKind Parser_parse_type(Parser *p) {
+  PrimitiveKind kind = Token_token_to_type(p->current_token.type);
+  if (kind != PRIM_UNKNOWN)
     Parser_token_advance(p);
   return kind;
 }
@@ -478,26 +558,45 @@ static AstNode *Parser_parse_var_decl(Parser *p) {
 
   AstNode *name = AstNode_new_var(ident.text, ident.loc);
 
-  TypeKind declared_type = TYPE_UNKNOWN;
+  Type *declared_type = NULL;
   if (p->current_token.type == TOKEN_COLON) {
     Parser_token_advance(p);
-    declared_type = Parser_parse_type(p);
-    if (declared_type == TYPE_UNKNOWN) {
+    declared_type = Parser_parse_type_full(p);
+    if (declared_type->kind == KIND_PRIMITIVE &&
+        declared_type->data.primitive == PRIM_UNKNOWN) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Expected type after ':'");
       return NULL;
     }
+  } else {
+    declared_type = type_get_primitive(p->type_ctx, PRIM_UNKNOWN);
   }
 
-  if (!Parser_expect(p, TOKEN_ASSIGN, "Expected '=' after identifier/type"))
-    return NULL;
-  AstNode *value = Parser_parse_expression(p, 0);
-  if (!value)
-    return NULL;
-  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
-    return NULL;
+  if (p->current_token.type == TOKEN_ASSIGN) {
+    Parser_token_advance(p);
+    AstNode *value = Parser_parse_expression(p, 0);
+    if (!value)
+      return NULL;
+    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
+      return NULL;
 
-  return AstNode_new_var_decl(name, value, declared_type, is_const, ident.loc);
+    return AstNode_new_var_decl(name, value, declared_type, is_const,
+                                ident.loc);
+  } else {
+    // Sized initialization like: let arr: [i32; 10];
+    if (declared_type->kind == KIND_PRIMITIVE &&
+        declared_type->data.primitive == PRIM_UNKNOWN) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Type required for uninitialized variable");
+      return NULL;
+    }
+
+    if (!Parser_expect(p, TOKEN_SEMI,
+                       "Expected ';' or '=' after identifier/type"))
+      return NULL;
+
+    return AstNode_new_var_decl(name, NULL, declared_type, is_const, ident.loc);
+  }
 }
 
 static AstNode *Parser_parse_print(Parser *p) {
@@ -560,8 +659,9 @@ static AstNode *Parser_parse_fn_decl(Parser *p) {
       continue;
     }
 
-    TypeKind param_type = Parser_parse_type(p);
-    if (param_type == TYPE_UNKNOWN) {
+    Type *param_type = Parser_parse_type_full(p);
+    if (param_type->kind == KIND_PRIMITIVE &&
+        param_type->data.primitive == PRIM_UNKNOWN) {
       skip_to_next_param(p);
       continue;
     }
@@ -574,11 +674,12 @@ static AstNode *Parser_parse_fn_decl(Parser *p) {
   if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after parameters"))
     return NULL;
 
-  TypeKind ret_type = TYPE_UNKNOWN;
+  Type *ret_type = type_get_primitive(p->type_ctx, PRIM_VOID);
   if (p->current_token.type == TOKEN_COLON) {
     Parser_token_advance(p);
-    ret_type = Parser_parse_type(p);
-    if (ret_type == TYPE_UNKNOWN) {
+    ret_type = Parser_parse_type_full(p);
+    if (ret_type->kind == KIND_PRIMITIVE &&
+        ret_type->data.primitive == PRIM_UNKNOWN) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Expected return type after ':'");
       return NULL;
@@ -663,10 +764,11 @@ static AstNode *Parser_parse_statement(Parser *p) {
   }
 }
 
-AstNode *Parser_process(Lexer *lexer, ErrorHandler *eh) {
+AstNode *Parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
   Parser p;
   p.lexer = lexer;
   p.eh = eh;
+  p.type_ctx = type_ctx;
   p.current_token = Token_advance(lexer);
 
   AstNode *ast_root = AstNode_new_program(p.current_token.loc);
