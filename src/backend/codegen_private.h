@@ -51,6 +51,9 @@ struct Codegen {
 
   // Format string map for deduplication
   List format_strings; // List<struct { Type* t; LLVMValueRef val; }>
+
+  List break_stack;    // List<LLVMBasicBlockRef>
+  List continue_stack; // List<LLVMBasicBlockRef>
 };
 
 // ===== symbol table =====
@@ -66,8 +69,10 @@ void cg_pop_scope(Codegen *cg);
 // ===== types =====
 
 LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t);
-LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, LLVMTypeRef to_ty);
-void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, LLVMValueRef *rhs);
+LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_ty,
+                           LLVMTypeRef to_ty);
+void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, Type *l_ty,
+                          LLVMValueRef *rhs, Type *r_ty);
 
 // ===== expressions / statements =====
 

@@ -29,6 +29,12 @@ typedef enum TokenType {
   TOKEN_ELSE,
   TOKEN_DEFER,
   TOKEN_STRUCT,
+  TOKEN_FOR,
+  TOKEN_WHILE,
+  TOKEN_LOOP,
+  TOKEN_IN,
+  TOKEN_BREAK,
+  TOKEN_CONTINUE,
 
   // Identifiers
   TOKEN_IDENT,
@@ -92,6 +98,7 @@ typedef enum TokenType {
   // Boolean logic
   TOKEN_AND,
   TOKEN_OR,
+  TOKEN_NOT,
 
   // Special
   TOKEN_ERROR,

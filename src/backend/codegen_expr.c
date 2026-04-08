@@ -108,8 +108,9 @@ static LLVMValueRef cg_arith_expr(Codegen *cg, LLVMValueRef lhs,
     CGFunction *pow_fn = cg_find_function(cg, sv_from_parts("pow", 3));
 
     LLVMTypeRef double_ty = LLVMDoubleTypeInContext(cg->context);
-    lhs = cg_cast_value(cg, lhs, double_ty);
-    rhs = cg_cast_value(cg, rhs, double_ty);
+    Type *f64_t = type_get_primitive(cg->type_ctx, PRIM_F64);
+    lhs = cg_cast_value(cg, lhs, NULL, double_ty);
+    rhs = cg_cast_value(cg, rhs, NULL, double_ty);
 
     LLVMValueRef args[] = {lhs, rhs};
     return LLVMBuildCall2(cg->builder, pow_fn->type, pow_fn->value, args, 2,
@@ -223,17 +224,31 @@ static LLVMValueRef cg_logical_expr(Codegen *cg, AstNode *node,
 }
 
 static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
-  LLVMValueRef lhs = cg_expression(cg, node->binary_arith.left);
+  AstNode *left_node =
+      (node->tag == NODE_BINARY_ARITH)      ? node->binary_arith.left
+      : (node->tag == NODE_BINARY_COMPARE)  ? node->binary_compare.left
+      : (node->tag == NODE_BINARY_EQUALITY) ? node->binary_equality.left
+      : (node->tag == NODE_BINARY_LOGICAL)  ? node->binary_logical.left
+                                            : NULL;
+
+  AstNode *right_node =
+      (node->tag == NODE_BINARY_ARITH)      ? node->binary_arith.right
+      : (node->tag == NODE_BINARY_COMPARE)  ? node->binary_compare.right
+      : (node->tag == NODE_BINARY_EQUALITY) ? node->binary_equality.right
+      : (node->tag == NODE_BINARY_LOGICAL)  ? node->binary_logical.right
+                                            : NULL;
+
+  LLVMValueRef lhs = cg_expression(cg, left_node);
   if (!lhs)
     return NULL;
 
   if (node->tag == NODE_BINARY_LOGICAL) {
     LLVMTypeRef i1_ty = LLVMInt1TypeInContext(cg->context);
-    lhs = cg_cast_value(cg, lhs, i1_ty);
+    lhs = cg_cast_value(cg, lhs, left_node->resolved_type, i1_ty);
     return cg_logical_expr(cg, node, lhs);
   }
 
-  LLVMValueRef rhs = cg_expression(cg, node->binary_arith.right);
+  LLVMValueRef rhs = cg_expression(cg, right_node);
   if (!rhs)
     return NULL;
 
@@ -241,12 +256,13 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
     // The semantic layer already calculated the target type for the result.
     // We cast both operands to this target type to ensure consistency.
     LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->resolved_type);
-    lhs = cg_cast_value(cg, lhs, target_ty);
-    rhs = cg_cast_value(cg, rhs, target_ty);
+    lhs = cg_cast_value(cg, lhs, left_node->resolved_type, target_ty);
+    rhs = cg_cast_value(cg, rhs, right_node->resolved_type, target_ty);
     return cg_arith_expr(cg, lhs, rhs, node->binary_arith.op);
   }
 
-  cg_binary_sync_types(cg, &lhs, &rhs);
+  cg_binary_sync_types(cg, &lhs, left_node->resolved_type, &rhs,
+                       right_node->resolved_type);
 
   switch (node->tag) {
   case NODE_BINARY_COMPARE:
@@ -265,7 +281,7 @@ static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
 
   if (op == OP_NEG) {
     LLVMValueRef val = cg_expression(cg, expr);
-    val = cg_cast_value(cg, val, res_ty);
+    val = cg_cast_value(cg, val, expr->resolved_type, res_ty);
 
     if (LLVMGetTypeKind(res_ty) == LLVMDoubleTypeKind ||
         LLVMGetTypeKind(res_ty) == LLVMFloatTypeKind) {
@@ -315,7 +331,7 @@ static LLVMValueRef cg_ternary_expr(Codegen *cg, AstNode *node) {
   LLVMValueRef cond = cg_expression(cg, node->ternary.condition);
 
   LLVMTypeRef i1_ty = LLVMInt1TypeInContext(cg->context);
-  cond = cg_cast_value(cg, cond, i1_ty);
+  cond = cg_cast_value(cg, cond, node->ternary.condition->resolved_type, i1_ty);
 
   LLVMValueRef current_func = cg->current_function_ref->value;
   LLVMBasicBlockRef then_bb_start =
@@ -332,14 +348,16 @@ static LLVMValueRef cg_ternary_expr(Codegen *cg, AstNode *node) {
   // Then block
   LLVMPositionBuilderAtEnd(cg->builder, then_bb_start);
   LLVMValueRef then_val = cg_expression(cg, node->ternary.true_expr);
-  then_val = cg_cast_value(cg, then_val, res_type);
+  then_val = cg_cast_value(cg, then_val, node->ternary.true_expr->resolved_type,
+                           res_type);
   LLVMBuildBr(cg->builder, merge_bb);
   LLVMBasicBlockRef then_bb_end = LLVMGetInsertBlock(cg->builder);
 
   // Else block
   LLVMPositionBuilderAtEnd(cg->builder, else_bb_start);
   LLVMValueRef else_val = cg_expression(cg, node->ternary.false_expr);
-  else_val = cg_cast_value(cg, else_val, res_type);
+  else_val = cg_cast_value(cg, else_val,
+                           node->ternary.false_expr->resolved_type, res_type);
   LLVMBuildBr(cg->builder, merge_bb);
   LLVMBasicBlockRef else_bb_end = LLVMGetInsertBlock(cg->builder);
 
@@ -362,7 +380,8 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
 
   LLVMTypeRef target_ty =
       cg_get_llvm_type(cg, node->assign_expr.target->resolved_type);
-  val = cg_cast_value(cg, val, target_ty);
+  val =
+      cg_cast_value(cg, val, node->assign_expr.value->resolved_type, target_ty);
 
   LLVMBuildStore(cg->builder, val, ptr);
   return val;
@@ -372,7 +391,7 @@ static LLVMValueRef cg_cast_expr(Codegen *cg, AstNode *node) {
   LLVMValueRef val = cg_expression(cg, node->cast_expr.expr);
   LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->cast_expr.target_type);
 
-  return cg_cast_value(cg, val, target_ty);
+  return cg_cast_value(cg, val, node->cast_expr.expr->resolved_type, target_ty);
 }
 
 static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
@@ -508,7 +527,8 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
       LLVMValueRef arg_val = cg_expression(cg, arg_node);
 
       if (i < param_count) {
-        args[i] = cg_cast_value(cg, arg_val, param_types[i]);
+        args[i] =
+            cg_cast_value(cg, arg_val, arg_node->resolved_type, param_types[i]);
       } else {
         args[i] = arg_val;
       }
@@ -543,7 +563,7 @@ static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
   for (size_t i = 0; i < count; i++) {
     AstNode *item = node->array_literal.items.items[i];
     LLVMValueRef item_val = cg_expression(cg, item);
-    item_val = cg_cast_value(cg, item_val, llvm_elem_ty);
+    item_val = cg_cast_value(cg, item_val, item->resolved_type, llvm_elem_ty);
 
     LLVMValueRef indices[] = {
         LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false),
@@ -612,7 +632,10 @@ static LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
     LLVMValueRef count = cg_expression(cg, current->array_repeat.count);
     // Push at index 0 to ensure outermost (first) dimensions are at the start
     // of the list
-    List_insert(&dims, 0, (void *)cg_cast_value(cg, count, i64_ty));
+    List_insert(
+        &dims, 0,
+        (void *)cg_cast_value(
+            cg, count, current->array_repeat.count->resolved_type, i64_ty));
     if (current->array_repeat.value->tag == NODE_ARRAY_REPEAT) {
       current = current->array_repeat.value;
     } else {
@@ -703,7 +726,8 @@ static LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
 
   AstNode *base_expr = current->array_repeat.value;
   LLVMValueRef item_val = cg_expression(cg, base_expr);
-  item_val = cg_cast_value(cg, item_val, llvm_base_ty);
+  item_val =
+      cg_cast_value(cg, item_val, base_expr->resolved_type, llvm_base_ty);
 
   // Initialization (Memset 0 or loop)
   if (LLVMIsAConstantInt(item_val) && LLVMConstIntGetZExtValue(item_val) == 0) {
@@ -783,7 +807,7 @@ static LLVMValueRef cg_index_expr(Codegen *cg, AstNode *node) {
 
   Type *arr_ty = node->index.array->resolved_type;
   LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
-  index = cg_cast_value(cg, index, i64_ty);
+  index = cg_cast_value(cg, index, node->index.index->resolved_type, i64_ty);
 
   // 1. Extract Metadata
   LLVMValueRef rank =

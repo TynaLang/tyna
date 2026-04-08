@@ -10,7 +10,9 @@ typedef enum FuncStatus FuncStatus;
 
 typedef struct Symbol Symbol;
 
-typedef struct SymbolTable SymbolTable;
+typedef struct SemaScope SemaScope;
+typedef struct SemaJump SemaJump;
+typedef struct Sema Sema;
 
 enum FuncStatus { FUNC_NONE, FUNC_FORWARD_DECL, FUNC_IMPLEMENTATION };
 
@@ -19,28 +21,36 @@ struct Symbol {
   Type *type;
   int is_const;
 
-  AstNode *value;            // For constant initializers or function bodies
-  struct SymbolTable *scope; // TABLE where it was defined
-
+  AstNode *value;
+  struct SemaScope *scope;
   FuncStatus func_status;
 };
 
-struct SymbolTable {
-  SymbolTable *parent;
+struct SemaScope {
+  SemaScope *parent;
   List symbols; // List<Symbol*>
-  ErrorHandler *eh;
-  TypeContext *type_ctx;
 };
 
-void SymbolTable_init(SymbolTable *table, ErrorHandler *eh,
-                      TypeContext *type_ctx);
-void SymbolTable_add(SymbolTable *table, StringView name, Type *type,
-                     int is_const);
-Symbol *SymbolTable_find(SymbolTable *table, StringView name);
+struct SemaJump {
+  StringView label;
+  AstNode *node;
+  bool is_loop;
+  int defer_count;
+  struct SemaJump *parent;
+};
 
-void Semantic_analysis(AstNode *ast_root, SymbolTable *table);
-const char *type_to_name(Type *type);
-int is_numeric(Type *type);
-int is_bool(Type *type);
+struct Sema {
+  SemaScope *scope;
+  SemaJump *jump;
+  Type *ret_type;
+  AstNode *fn_node;
+
+  TypeContext *types;
+  ErrorHandler *eh;
+};
+
+void Sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx);
+void Sema_analyze(Sema *s, AstNode *root);
+void Sema_finish(Sema *s);
 
 #endif // !SEMANTIC_H

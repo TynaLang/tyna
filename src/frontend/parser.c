@@ -58,6 +58,8 @@ static void Parser_sync(Parser *p) {
     case TOKEN_RETURN:
     case TOKEN_IF:
     case TOKEN_ELSE:
+    case TOKEN_WHILE:
+    case TOKEN_FOR:
       return;
     default:
       Parser_token_advance(p);
@@ -388,6 +390,11 @@ static AstNode *Parser_parse_primary(Parser *p) {
   case TOKEN_MINUS: {
     AstNode *expr = Parser_parse_expression(p, 100);
     return AstNode_new_unary(OP_NEG, expr, t.loc);
+  }
+
+  case TOKEN_NOT: {
+    AstNode *expr = Parser_parse_expression(p, 100);
+    return AstNode_new_unary(OP_NOT, expr, t.loc);
   }
 
   case TOKEN_PLUS_PLUS:
@@ -768,6 +775,89 @@ static AstNode *Parser_parse_if_stmt(Parser *p) {
   return AstNode_new_if_stmt(condition, then_branch, else_branch, loc);
 }
 
+static AstNode *Parser_parse_while_stmt(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // Consume 'while'
+
+  if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after 'while'"))
+    return NULL;
+
+  AstNode *condition = Parser_parse_expression(p, 0);
+  if (!condition)
+    return NULL;
+
+  if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after condition"))
+    return NULL;
+
+  AstNode *body = Parser_parse_statement(p);
+  if (!body)
+    return NULL;
+
+  return AstNode_new_while(condition, body, loc);
+}
+
+static AstNode *Parser_parse_for_stmt(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'for'
+
+  if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after 'for'"))
+    return NULL;
+
+  if (p->current_token.type == TOKEN_IDENT &&
+      Parser_token_peek(p->lexer, 1).type == TOKEN_IN) {
+    AstNode *var = AstNode_new_var(p->current_token.text, p->current_token.loc);
+    Parser_token_advance(p); // consume 'in'
+    Parser_token_advance(p); // consume 'in'
+
+    AstNode *iterable = Parser_parse_expression(p, 0);
+    if (!iterable)
+      return NULL;
+
+    if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after iterable"))
+      return NULL;
+
+    AstNode *body = Parser_parse_statement(p);
+    if (!body)
+      return NULL;
+
+    return AstNode_new_for_in(var, iterable, body, loc);
+  }
+
+  AstNode *init = NULL;
+  if (p->current_token.type != TOKEN_SEMI) {
+    if (p->current_token.type == TOKEN_LET) {
+      init = Parser_parse_var_decl(p);
+    } else {
+      init = Parser_parse_expression(p, 0);
+      if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after for init"))
+        return NULL;
+    }
+  } else {
+    Parser_token_advance(p); // consume ';'
+  }
+
+  AstNode *cond = NULL;
+  if (p->current_token.type != TOKEN_SEMI) {
+    cond = Parser_parse_expression(p, 0);
+  }
+  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after for condition"))
+    return NULL;
+
+  AstNode *inc = NULL;
+  if (p->current_token.type != TOKEN_RPAREN) {
+    inc = Parser_parse_expression(p, 0);
+  }
+
+  if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after for loop header"))
+    return NULL;
+
+  AstNode *body = Parser_parse_statement(p);
+  if (!body)
+    return NULL;
+
+  return AstNode_new_for(init, cond, inc, body, loc);
+}
+
 static AstNode *Parser_parse_struct_decl(Parser *p) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume 'struct'
@@ -819,6 +909,8 @@ static AstNode *Parser_parse_struct_decl(Parser *p) {
 }
 
 static AstNode *Parser_parse_statement(Parser *p) {
+  Location loc = p->current_token.loc;
+
   switch (p->current_token.type) {
   case TOKEN_EOF:
     return NULL;
@@ -831,16 +923,19 @@ static AstNode *Parser_parse_statement(Parser *p) {
     return Parser_parse_print(p);
   case TOKEN_IF:
     return Parser_parse_if_stmt(p);
+  case TOKEN_WHILE:
+    return Parser_parse_while_stmt(p);
+  case TOKEN_FOR:
+    return Parser_parse_for_stmt(p);
   case TOKEN_DEFER: {
-    Location loc = p->current_token.loc;
     Parser_token_advance(p);
-
-    AstNode *deferred = Parser_parse_statement(p);
-
-    return AstNode_new_defer(deferred, loc);
+    return AstNode_new_defer(Parser_parse_statement(p), loc);
+  }
+  case TOKEN_LOOP: {
+    Parser_token_advance(p);
+    return AstNode_new_loop(Parser_parse_statement(p), loc);
   }
   case TOKEN_RETURN: {
-    Location loc = p->current_token.loc;
     Parser_token_advance(p);
 
     AstNode *expr = NULL;
@@ -858,8 +953,23 @@ static AstNode *Parser_parse_statement(Parser *p) {
     return Parser_parse_fn_decl(p);
   case TOKEN_STRUCT:
     return Parser_parse_struct_decl(p);
+  case TOKEN_BREAK: {
+    Parser_token_advance(p);
+    if (Parser_expect(p, TOKEN_SEMI, "Expected ';' after expression"))
+      return AstNode_new_break(loc);
+
+    Parser_sync(p);
+    return NULL;
+  }
+  case TOKEN_CONTINUE: {
+    Parser_token_advance(p);
+    if (Parser_expect(p, TOKEN_SEMI, "Expected ';' after expression"))
+      return AstNode_new_continue(loc);
+
+    Parser_sync(p);
+    return NULL;
+  }
   default: {
-    Location loc = p->current_token.loc;
     AstNode *expr = Parser_parse_expression(p, 0);
     if (Parser_expect(p, TOKEN_SEMI, "Expected ';' after expression"))
       return AstNode_new_expr_stmt(expr, loc);

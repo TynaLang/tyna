@@ -76,13 +76,15 @@ int main(int argc, char **argv) {
   TypeContext *type_ctx = type_context_create();
   AstNode *ast_root = Parser_process(&lexer, &eh, type_ctx);
 
-  SymbolTable table;
-  SymbolTable_init(&table, &eh, type_ctx);
-  Semantic_analysis(ast_root, &table);
+  // Semantic analysis
+  Sema sema;
+  Sema_init(&sema, &eh, type_ctx);
+  Sema_analyze(&sema, ast_root);
 
   Ast_print(ast_root, 2);
   if (eh.has_errors) {
     ErrorHandler_show_all(&eh);
+    Sema_finish(&sema);
     type_context_free(type_ctx);
     return 1;
   }
@@ -117,6 +119,7 @@ int main(int argc, char **argv) {
     break;
   }
 
+  Sema_finish(&sema);
   type_context_free(type_ctx);
   return 0;
 }

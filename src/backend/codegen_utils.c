@@ -98,7 +98,8 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     LLVMValueRef fat_ptr = cg_expression(cg, node->index.array);
     LLVMValueRef idx_val = cg_expression(cg, node->index.index);
     LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
-    LLVMValueRef index = cg_cast_value(cg, idx_val, i64_ty);
+    LLVMValueRef index =
+        cg_cast_value(cg, idx_val, node->index.index->resolved_type, i64_ty);
 
     LLVMValueRef rank =
         LLVMBuildExtractValue(cg->builder, fat_ptr, 0, "arr_rank");

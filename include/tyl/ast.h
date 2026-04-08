@@ -18,7 +18,14 @@ enum ArithmOp { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POW, OP_MOD };
 enum CompareOp { OP_LT, OP_GT, OP_LE, OP_GE };
 enum EqualityOp { OP_EQ, OP_NE };
 enum LogicalOp { OP_AND, OP_OR };
-enum UnaryOp { OP_NEG, OP_PRE_INC, OP_POST_INC, OP_PRE_DEC, OP_POST_DEC };
+enum UnaryOp {
+  OP_NEG,
+  OP_PRE_INC,
+  OP_POST_INC,
+  OP_PRE_DEC,
+  OP_POST_DEC,
+  OP_NOT
+};
 
 enum AstKind {
   NODE_AST_ROOT,
@@ -51,15 +58,24 @@ enum AstKind {
   NODE_BLOCK,
 
   NODE_FIELD,
-  NODE_STATIC_MEMBER,
   NODE_INDEX,
+  NODE_STATIC_MEMBER,
+  NODE_STRUCT_DECL,
+
   NODE_ARRAY_LITERAL,
   NODE_ARRAY_REPEAT,
+
   NODE_IF_STMT,
-  TOKEN_INDEX,
+  NODE_LOOP_STMT,
+  NODE_WHILE_STMT,
+  NODE_FOR_STMT,
+  NODE_FOR_IN_STMT,
+
+  NODE_BREAK,
+  NODE_CONTINUE,
+
   NODE_DEFER,
   NODE_INTRINSIC_COMPARE,
-  NODE_STRUCT_DECL
 };
 
 struct AstNode {
@@ -217,6 +233,28 @@ struct AstNode {
     } defer;
 
     struct {
+      AstNode *expr;
+    } loop;
+
+    struct {
+      AstNode *condition;
+      AstNode *body;
+    } while_stmt;
+
+    struct {
+      AstNode *init;
+      AstNode *condition;
+      AstNode *increment;
+      AstNode *body;
+    } for_stmt;
+
+    struct {
+      AstNode *var;
+      AstNode *iterable;
+      AstNode *body;
+    } for_in_stmt;
+
+    struct {
       AstNode *condition;
       AstNode *then_branch;
       AstNode *else_branch;
@@ -225,15 +263,19 @@ struct AstNode {
 };
 
 AstNode *AstNode_new_program(Location loc);
+
 AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, Type *type,
                               int is_const, Location loc);
 AstNode *AstNode_new_print_stmt(List values, Location loc);
+
 AstNode *AstNode_new_number(double value, StringView raw_text, Location loc);
 AstNode *AstNode_new_char(char value, Location loc);
 AstNode *AstNode_new_bool(int value, Location loc);
 AstNode *AstNode_new_string(StringView value, Location loc);
+
 AstNode *AstNode_new_var(StringView value, Location loc);
 AstNode *AstNode_new_array_literal(List items, Location loc);
+
 AstNode *AstNode_new_binary_arith(AstNode *left, AstNode *right, ArithmOp op,
                                   Location loc);
 AstNode *AstNode_new_binary_compare(AstNode *left, AstNode *right, CompareOp op,
@@ -243,25 +285,39 @@ AstNode *AstNode_new_binary_equality(AstNode *left, AstNode *right,
 AstNode *AstNode_new_binary_logical(AstNode *left, AstNode *right, LogicalOp op,
                                     Location loc);
 AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc);
+
 AstNode *AstNode_new_cast_expr(AstNode *expr, Type *type, Location loc);
 AstNode *AstNode_new_assign_expr(AstNode *target, AstNode *value, Location loc);
 AstNode *AstNode_new_expr_stmt(AstNode *expr, Location loc);
+
 AstNode *AstNode_new_call(AstNode *func, List args, Location loc);
 AstNode *AstNode_new_func_decl(StringView name, List params, Type *ret_type,
                                AstNode *body, Location loc);
 AstNode *AstNode_new_return(AstNode *expr, Location loc);
 AstNode *AstNode_new_param(StringView name, Type *type, Location loc);
 AstNode *AstNode_new_block(Location loc);
+
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc);
 AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc);
 AstNode *AstNode_new_static_member(StringView parent, StringView member,
                                    Location loc);
 AstNode *AstNode_new_array_repeat(AstNode *value, AstNode *count, Location loc);
+
 AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
                              AstNode *else_branch, Location loc);
 AstNode *AstNode_new_defer(AstNode *expr, Location loc);
+AstNode *AstNode_new_loop(AstNode *expr, Location loc);
+AstNode *AstNode_new_while(AstNode *condition, AstNode *body, Location loc);
+AstNode *AstNode_new_for(AstNode *init, AstNode *cond, AstNode *inc,
+                         AstNode *body, Location loc);
+AstNode *AstNode_new_for_in(AstNode *var, AstNode *iterable, AstNode *body,
+                            Location loc);
+AstNode *AstNode_new_break(Location loc);
+AstNode *AstNode_new_continue(Location loc);
+
 AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
                              AstNode *false_expr, Location loc);
+
 AstNode *AstNode_new_struct_decl(AstNode *name, List members, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
 
@@ -269,5 +325,6 @@ PrimitiveKind Token_token_to_type(TokenType t);
 
 void Ast_free(AstNode *node);
 void Ast_print(AstNode *node, int indent);
+bool type_is_lvalue(AstNode *node);
 
 #endif // TYL_AST_H

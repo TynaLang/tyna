@@ -161,6 +161,8 @@ Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx) {
   List_init(&cg->format_strings);
   List_init(&cg->string_pool);
   List_init(&cg->string_globals);
+  List_init(&cg->break_stack);
+  List_init(&cg->continue_stack);
 
   cg_initiate_system_functions(cg);
 
@@ -206,7 +208,7 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
                                           user_main->value, NULL, 0, call_name);
 
     if (!is_void) {
-      exit_code = cg_cast_value(cg, ret_val, i32_ty);
+      exit_code = cg_cast_value(cg, ret_val, NULL, i32_ty);
     }
   }
 

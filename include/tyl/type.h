@@ -15,7 +15,6 @@ enum TypeKind {
   KIND_PRIMITIVE,
   KIND_ARRAY,
   KIND_STRUCT,
-  // Future: KIND_POINTER
 };
 
 enum PrimitiveKind {
@@ -32,7 +31,7 @@ enum PrimitiveKind {
   PRIM_CHAR,
   PRIM_BOOL,
   PRIM_VOID,
-  PRIM_STRING, 
+  PRIM_STRING,
   PRIM_UNKNOWN
 };
 
@@ -41,19 +40,17 @@ typedef enum {
   BUILTIN_ARRAY_LEN,
 } BuiltinMember;
 
-typedef struct Member Member;
-
-struct Member {
+typedef struct Member {
   char *name;
   Type *type;
   BuiltinMember builtin_id;
   size_t offset;
-};
+} Member;
 
 struct Type {
   TypeKind kind;
   union {
-    PrimitiveKind primitive; // If KIND_PRIMITIVE
+    PrimitiveKind primitive;
     struct {
       Type *element;
       bool is_dynamic;
@@ -68,23 +65,39 @@ struct Type {
 
 struct TypeContext {
   Type *primitives[PRIM_UNKNOWN + 1];
-  List array_types; // List of Type*
+  List array_types;  // List<Type*>
+  List struct_types; // List<Type*>
 };
 
+// Lifecycle
 TypeContext *type_context_create();
 void type_context_free(TypeContext *ctx);
 
+// Type Retrieval (Interned)
 Type *type_get_primitive(TypeContext *ctx, PrimitiveKind primitive);
 Type *type_get_array(TypeContext *ctx, Type *element, bool is_dynamic,
                      size_t fixed_size);
 Type *type_get_struct(TypeContext *ctx, const char *name);
 
+// Member Management
 Member *type_get_member(Type *type, StringView name);
 void type_add_builtin_member(Type *type, const char *name, Type *member_type,
                              BuiltinMember builtin_id, size_t offset);
 void type_add_member(Type *type, const char *name, Type *member_type,
                      size_t offset);
 
+// Comparison & Analysis
 bool type_equals(Type *a, Type *b);
+const char *type_to_name(Type *type);
+int type_rank(Type *t);
+
+// Type Checks
+bool type_is_numeric(Type *t);
+bool type_is_bool(Type *t);
+bool type_is_unknown(Type *t);
+bool type_is_reference(Type *t);
+
+// Semantic Rules
+int type_can_implicitly_cast(Type *to, Type *from);
 
 #endif // TYL_TYPE_H

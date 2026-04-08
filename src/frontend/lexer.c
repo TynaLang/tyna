@@ -72,6 +72,18 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_DEFER;
   else if (sv_eq_cstr(text, "struct"))
     t.type = TOKEN_STRUCT;
+  else if (sv_eq_cstr(text, "loop"))
+    t.type = TOKEN_LOOP;
+  else if (sv_eq_cstr(text, "while"))
+    t.type = TOKEN_WHILE;
+  else if (sv_eq_cstr(text, "for"))
+    t.type = TOKEN_FOR;
+  else if (sv_eq_cstr(text, "in"))
+    t.type = TOKEN_IN;
+  else if (sv_eq_cstr(text, "break"))
+    t.type = TOKEN_BREAK;
+  else if (sv_eq_cstr(text, "continue"))
+    t.type = TOKEN_CONTINUE;
   else if (sv_eq_cstr(text, "int"))
     t.type = TOKEN_TYPE_INT;
   else if (sv_eq_cstr(text, "char"))
@@ -300,7 +312,7 @@ Token Token_advance(Lexer *l) {
     t.type = (peek(l) == '=') ? (advance(l), TOKEN_EQ) : TOKEN_ASSIGN;
     break;
   case '!':
-    t.type = (peek(l) == '=') ? (advance(l), TOKEN_NE) : TOKEN_ERROR;
+    t.type = (peek(l) == '=') ? (advance(l), TOKEN_NE) : TOKEN_NOT;
     break;
   case '<':
     t.type = (peek(l) == '=') ? (advance(l), TOKEN_LE) : TOKEN_LT;

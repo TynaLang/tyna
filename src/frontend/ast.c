@@ -189,6 +189,38 @@ AstNode *AstNode_new_defer(AstNode *expr, Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_loop(AstNode *expr, Location loc) {
+  AstNode *node = AstNode_new(NODE_LOOP_STMT, loc);
+  node->loop.expr = expr;
+  return node;
+}
+
+AstNode *AstNode_new_while(AstNode *condition, AstNode *body, Location loc) {
+  AstNode *node = AstNode_new(NODE_WHILE_STMT, loc);
+  node->while_stmt.condition = condition;
+  node->while_stmt.body = body;
+  return node;
+}
+
+AstNode *AstNode_new_for(AstNode *init, AstNode *cond, AstNode *inc,
+                         AstNode *body, Location loc) {
+  AstNode *node = AstNode_new(NODE_FOR_STMT, loc);
+  node->for_stmt.init = init;
+  node->for_stmt.condition = cond;
+  node->for_stmt.increment = inc;
+  node->for_stmt.body = body;
+  return node;
+}
+
+AstNode *AstNode_new_for_in(AstNode *var, AstNode *iterable, AstNode *body,
+                            Location loc) {
+  AstNode *node = AstNode_new(NODE_FOR_IN_STMT, loc);
+  node->for_in_stmt.var = var;
+  node->for_in_stmt.iterable = iterable;
+  node->for_in_stmt.body = body;
+  return node;
+}
+
 AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
                              AstNode *false_expr, Location loc) {
   AstNode *node = AstNode_new(NODE_TERNARY, loc);
@@ -235,11 +267,39 @@ AstNode *AstNode_new_array_repeat(AstNode *value, AstNode *count,
   return node;
 }
 
+AstNode *AstNode_new_break(Location loc) {
+  AstNode *node = AstNode_new(NODE_BREAK, loc);
+  return node;
+}
+
+AstNode *AstNode_new_continue(Location loc) {
+  AstNode *node = AstNode_new(NODE_CONTINUE, loc);
+  return node;
+}
+
+bool type_is_lvalue(AstNode *node) {
+  return node->tag == NODE_VAR || node->tag == NODE_FIELD ||
+         node->tag == NODE_INDEX;
+}
+
 void Ast_free(AstNode *node) {
   if (!node)
     return;
 
   switch (node->tag) {
+  case NODE_BREAK:
+  case NODE_CONTINUE:
+    // These node kinds have no structs
+    break;
+  case NODE_NUMBER:
+  case NODE_CHAR:
+  case NODE_BOOL:
+  case NODE_STRING:
+  case NODE_VAR:
+  case NODE_STATIC_MEMBER:
+  case NODE_PARAM:
+    // These nodes have no pointers
+    break;
   case NODE_AST_ROOT:
     for (size_t i = 0; i < node->ast_root.children.len; i++) {
       Ast_free((AstNode *)node->ast_root.children.items[i]);
@@ -255,12 +315,6 @@ void Ast_free(AstNode *node) {
       Ast_free((AstNode *)node->print_stmt.values.items[i]);
     }
     List_free(&node->print_stmt.values, 0);
-    break;
-  case NODE_NUMBER:
-  case NODE_CHAR:
-  case NODE_BOOL:
-  case NODE_STRING:
-  case NODE_VAR:
     break;
   case NODE_BINARY_ARITH:
     Ast_free(node->binary_arith.left);
@@ -310,16 +364,21 @@ void Ast_free(AstNode *node) {
     List_free(&node->func_decl.params, 0);
     Ast_free(node->func_decl.body);
     break;
+  case NODE_FIELD:
+    Ast_free(node->field.object);
+    break;
   case NODE_RETURN_STMT:
     Ast_free(node->return_stmt.expr);
-    break;
-  case NODE_PARAM:
     break;
   case NODE_BLOCK:
     for (size_t i = 0; i < node->block.statements.len; i++) {
       Ast_free((AstNode *)node->block.statements.items[i]);
     }
     List_free(&node->block.statements, 0);
+    break;
+  case NODE_INDEX:
+    Ast_free(node->index.index);
+    Ast_free(node->index.array);
     break;
   case NODE_IF_STMT:
     Ast_free(node->if_stmt.condition);
@@ -329,11 +388,49 @@ void Ast_free(AstNode *node) {
   case NODE_DEFER:
     Ast_free(node->defer.expr);
     break;
+  case NODE_LOOP_STMT:
+    Ast_free(node->loop.expr);
+    break;
+  case NODE_WHILE_STMT:
+    Ast_free(node->while_stmt.condition);
+    Ast_free(node->while_stmt.body);
+    break;
+  case NODE_FOR_STMT:
+    Ast_free(node->for_stmt.init);
+    Ast_free(node->for_stmt.condition);
+    Ast_free(node->for_stmt.increment);
+    Ast_free(node->for_stmt.body);
+    break;
+  case NODE_FOR_IN_STMT:
+    Ast_free(node->for_in_stmt.var);
+    Ast_free(node->for_in_stmt.iterable);
+    Ast_free(node->for_in_stmt.body);
+    break;
+  case NODE_ARRAY_LITERAL:
+    for (size_t i = 0; i < node->array_literal.items.len; i++) {
+      Ast_free((AstNode *)node->array_literal.items.items[i]);
+    }
+    List_free(&node->array_literal.items, 0);
+    break;
   case NODE_ARRAY_REPEAT:
     Ast_free(node->array_repeat.value);
     Ast_free(node->array_repeat.count);
     break;
+  case NODE_INTRINSIC_COMPARE:
+    Ast_free(node->intrinsic_compare.left);
+    Ast_free(node->intrinsic_compare.right);
+    break;
+  case NODE_STRUCT_DECL:
+    Ast_free(node->struct_decl.name);
+    for (size_t i = 0; i < node->struct_decl.members.len; i++) {
+      Ast_free((AstNode *)node->struct_decl.members.items[i]);
+    }
+    List_free(&node->struct_decl.members, 0);
+    break;
+
+    // end
   }
+
   free(node);
 }
 
@@ -443,6 +540,24 @@ void Ast_print(AstNode *node, int indent) {
     printf("RIGHT:\n");
     Ast_print(node->binary_compare.right, indent + 2);
     break;
+  case NODE_BINARY_EQUALITY:
+    printf("BINARY EQUALITY OP: %d\n", node->binary_equality.op);
+    print_indent(indent + 1);
+    printf("LEFT:\n");
+    Ast_print(node->binary_equality.left, indent + 2);
+    print_indent(indent + 1);
+    printf("RIGHT:\n");
+    Ast_print(node->binary_equality.right, indent + 2);
+    break;
+  case NODE_BINARY_LOGICAL:
+    printf("BINARY LOGICAL OP: %d\n", node->binary_logical.op);
+    print_indent(indent + 1);
+    printf("LEFT:\n");
+    Ast_print(node->binary_logical.left, indent + 2);
+    print_indent(indent + 1);
+    printf("RIGHT:\n");
+    Ast_print(node->binary_logical.right, indent + 2);
+    break;
   case NODE_UNARY:
     printf("UNARY OP: %d\n", node->unary.op);
     print_indent(indent + 1);
@@ -542,6 +657,54 @@ void Ast_print(AstNode *node, int indent) {
     printf("EXPR:\n");
     Ast_print(node->defer.expr, indent + 2);
     break;
+  case NODE_LOOP_STMT:
+    printf("LOOP\n");
+    print_indent(indent + 1);
+    printf("EXPR:\n");
+    Ast_print(node->loop.expr, indent + 2);
+    break;
+  case NODE_WHILE_STMT:
+    printf("WHILE_STMT\n");
+    print_indent(indent + 1);
+    printf("CONDITION:\n");
+    Ast_print(node->while_stmt.condition, indent + 2);
+    print_indent(indent + 1);
+    printf("BODY:\n");
+    Ast_print(node->while_stmt.body, indent + 2);
+    break;
+  case NODE_FOR_STMT:
+    printf("FOR_STMT\n");
+    if (node->for_stmt.init) {
+      print_indent(indent + 1);
+      printf("INIT:\n");
+      Ast_print(node->for_stmt.init, indent + 2);
+    }
+    if (node->for_stmt.condition) {
+      print_indent(indent + 1);
+      printf("CONDITION:\n");
+      Ast_print(node->for_stmt.condition, indent + 2);
+    }
+    if (node->for_stmt.increment) {
+      print_indent(indent + 1);
+      printf("INCREMENT:\n");
+      Ast_print(node->for_stmt.increment, indent + 2);
+    }
+    print_indent(indent + 1);
+    printf("BODY:\n");
+    Ast_print(node->for_stmt.body, indent + 2);
+    break;
+  case NODE_FOR_IN_STMT:
+    printf("FOR_IN_STMT\n");
+    print_indent(indent + 1);
+    printf("VAR:\n");
+    Ast_print(node->for_in_stmt.var, indent + 2);
+    print_indent(indent + 1);
+    printf("ITERABLE:\n");
+    Ast_print(node->for_in_stmt.iterable, indent + 2);
+    print_indent(indent + 1);
+    printf("BODY:\n");
+    Ast_print(node->for_in_stmt.body, indent + 2);
+    break;
   case NODE_ARRAY_LITERAL:
     printf("ARRAY_LITERAL\n");
     for (size_t i = 0; i < node->array_literal.items.len; i++) {
@@ -587,8 +750,22 @@ void Ast_print(AstNode *node, int indent) {
            SV_ARG(node->static_member.parent),
            SV_ARG(node->static_member.member));
     break;
-  default:
-    printf("UNKNOWN NODE %d\n", node->tag);
+  case NODE_STRUCT_DECL:
+    printf("STRUCT_DECL\n");
+    print_indent(indent + 1);
+    printf("NAME:\n");
+    Ast_print(node->struct_decl.name, indent + 2);
+    print_indent(indent + 1);
+    printf("MEMBERS:\n");
+    for (size_t i = 0; i < node->struct_decl.members.len; i++) {
+      Ast_print(node->struct_decl.members.items[i], indent + 2);
+    }
+    break;
+  case NODE_BREAK:
+    printf("BREAK\n");
+    break;
+  case NODE_CONTINUE:
+    printf("CONTINUE\n");
     break;
   }
 }

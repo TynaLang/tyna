@@ -63,10 +63,34 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     }
   }
 
+  if (t->kind == KIND_STRUCT) {
+    // Check if the named type already exists in the LLVM Context
+    LLVMTypeRef struct_ty =
+        LLVMGetTypeByName2(cg->context, t->data.structure.name);
+    if (struct_ty)
+      return struct_ty;
+
+    // Otherwise, create it (Named struct for recursion/interning)
+    struct_ty = LLVMStructCreateNamed(cg->context, t->data.structure.name);
+
+    // Convert Tyl members to LLVM types
+    unsigned count = t->members.len;
+    LLVMTypeRef *fields = xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
+    for (size_t i = 0; i < count; i++) {
+      Member *m = t->members.items[i];
+      fields[i] = cg_get_llvm_type(cg, m->type);
+    }
+
+    LLVMStructSetBody(struct_ty, fields, count, false);
+    free(fields);
+    return struct_ty;
+  }
+
   panic("Unknown type kind: %d", t->kind);
 }
 
-LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, LLVMTypeRef to_ty) {
+LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
+                           LLVMTypeRef to_ty) {
   if (!value) {
     fprintf(stderr, "Critical: Attempted to cast a NULL LLVMValueRef!\n");
     return NULL;
@@ -92,9 +116,27 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, LLVMTypeRef to_ty) {
     if (from_width > to_width) {
       return LLVMBuildTrunc(cg->builder, value, to_ty, "trunctmp");
     } else if (from_width < to_width) {
-      // TODO: Handle signed vs unsigned properly here (currently just
-      // sign-extends)
-      return LLVMBuildSExt(cg->builder, value, to_ty, "sexttmp");
+      // LLVM Strictness: use ZExt for unsigned, SExt for signed integers
+      bool is_unsigned = false;
+      if (from_t && from_t->kind == KIND_PRIMITIVE) {
+        switch (from_t->data.primitive) {
+        case PRIM_U8:
+        case PRIM_U16:
+        case PRIM_U32:
+        case PRIM_U64:
+          is_unsigned = true;
+          break;
+        default:
+          is_unsigned = false;
+          break;
+        }
+      }
+
+      if (is_unsigned) {
+        return LLVMBuildZExt(cg->builder, value, to_ty, "zexttmp");
+      } else {
+        return LLVMBuildSExt(cg->builder, value, to_ty, "sexttmp");
+      }
     }
   }
 
@@ -120,7 +162,8 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, LLVMTypeRef to_ty) {
   return value;
 }
 
-void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, LLVMValueRef *rhs) {
+void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, Type *l_t,
+                          LLVMValueRef *rhs, Type *r_t) {
   LLVMTypeRef l_ty = LLVMTypeOf(*lhs);
   LLVMTypeRef r_ty = LLVMTypeOf(*rhs);
 
@@ -130,13 +173,18 @@ void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, LLVMValueRef *rhs) {
   // Promote to Floating Point if either side is FP
   if (LLVMGetTypeKind(l_ty) == LLVMDoubleTypeKind ||
       LLVMGetTypeKind(l_ty) == LLVMFloatTypeKind) {
-    *rhs = cg_cast_value(cg, *rhs, l_ty);
+    *rhs = cg_cast_value(cg, *rhs, r_t, l_ty);
   } else if (LLVMGetTypeKind(r_ty) == LLVMDoubleTypeKind ||
              LLVMGetTypeKind(r_ty) == LLVMFloatTypeKind) {
-    *lhs = cg_cast_value(cg, *lhs, r_ty);
+    *lhs = cg_cast_value(cg, *lhs, l_t, r_ty);
   } else {
     // Otherwise, promote the smaller integer to the larger integer's type
-    // (Simplified: for now, just pick the RHS type)
-    *lhs = cg_cast_value(cg, *lhs, r_ty);
+    unsigned l_w = LLVMGetIntTypeWidth(l_ty);
+    unsigned r_w = LLVMGetIntTypeWidth(r_ty);
+    if (l_w < r_w) {
+      *lhs = cg_cast_value(cg, *lhs, l_t, r_ty);
+    } else {
+      *rhs = cg_cast_value(cg, *rhs, r_t, l_ty);
+    }
   }
 }
