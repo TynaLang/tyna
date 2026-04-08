@@ -6,49 +6,17 @@
 #include "tyl/utils.h"
 
 LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
-  if (t->kind == KIND_ARRAY ||
-      (t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING)) {
-    // Slice Representation: { i64 rank, ptr data, ptr dims }
-    // rank = number of dimensions overall
-    // data = pointer to underlying data
-    // dims = pointer to array of dimensions [len_0, len_1, ..., len_{rank-1}]
-    LLVMTypeRef element_type;
-    if (t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING) {
-      element_type = LLVMInt8TypeInContext(cg->context);
-    } else {
-      Type *base = t->data.array.element;
-      while (base->kind == KIND_ARRAY) {
-        base = base->data.array.element;
-      }
-      element_type = cg_get_llvm_type(cg, base);
-    }
-
-    LLVMTypeRef pointer_type = LLVMPointerType(element_type, 0);
-    LLVMTypeRef i64_type = LLVMInt64TypeInContext(cg->context);
-    LLVMTypeRef dims_ptr_type = LLVMPointerType(i64_type, 0);
-
-    LLVMTypeRef struct_fields[] = {i64_type, pointer_type, dims_ptr_type};
-    return LLVMStructTypeInContext(cg->context, struct_fields, 3, false);
-  }
-
   if (t->kind == KIND_PRIMITIVE) {
     switch (t->data.primitive) {
-    case PRIM_I8:
-    case PRIM_U8:
-      return LLVMInt8TypeInContext(cg->context);
-    case PRIM_I16:
-    case PRIM_U16:
-      return LLVMInt16TypeInContext(cg->context);
     case PRIM_I32:
-    case PRIM_U32:
       return LLVMInt32TypeInContext(cg->context);
     case PRIM_I64:
-    case PRIM_U64:
       return LLVMInt64TypeInContext(cg->context);
     case PRIM_F32:
       return LLVMFloatTypeInContext(cg->context);
     case PRIM_F64:
       return LLVMDoubleTypeInContext(cg->context);
+    case PRIM_U8:
     case PRIM_CHAR:
       return LLVMInt8TypeInContext(cg->context);
     case PRIM_BOOL:
@@ -56,31 +24,33 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     case PRIM_VOID:
       return LLVMVoidTypeInContext(cg->context);
     case PRIM_STRING:
-      panic("PRIM_STRING should be handled in KIND_ARRAY/Fat Pointer logic");
-    case PRIM_UNKNOWN:
+      return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
     default:
       panic("Unknown primitive kind: %d", t->data.primitive);
     }
   }
 
+  if (t->kind == KIND_POINTER) {
+    return LLVMPointerType(cg_get_llvm_type(cg, t->data.pointer_to), 0);
+  }
+
   if (t->kind == KIND_STRUCT) {
-    // Check if the named type already exists in the LLVM Context
-    LLVMTypeRef struct_ty =
-        LLVMGetTypeByName2(cg->context, t->data.structure.name);
+    // For structs, we use named types to support recursion and cache them
+    char buf[256];
+    snprintf(buf, sizeof(buf), SV_FMT, SV_ARG(t->name));
+    LLVMTypeRef struct_ty = LLVMGetTypeByName2(cg->context, buf);
     if (struct_ty)
       return struct_ty;
 
-    // Otherwise, create it (Named struct for recursion/interning)
-    struct_ty = LLVMStructCreateNamed(cg->context, t->data.structure.name);
+    struct_ty = LLVMStructCreateNamed(cg->context, buf);
 
-    // Convert Tyl members to LLVM types
     unsigned count = t->members.len;
-    LLVMTypeRef *fields = xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
+    LLVMTypeRef *fields =
+        xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
     for (size_t i = 0; i < count; i++) {
       Member *m = t->members.items[i];
       fields[i] = cg_get_llvm_type(cg, m->type);
     }
-
     LLVMStructSetBody(struct_ty, fields, count, false);
     free(fields);
     return struct_ty;

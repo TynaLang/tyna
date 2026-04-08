@@ -1,10 +1,18 @@
 // 4D zero-filled array test
-let width = 10;
-let height = 5;
-let depth = 5;
+const width = 10;
+const height = 5;
+const depth = 5;
 let arr = [0; width, height, depth];
 
+for (let i = 0; i < width; i++) {
+    for (let j = 0; j < height; j++) {
+        for (let k = 0; k < depth; k++) {
+            arr[i][j][k] = i + j + k; // Just filling it with some values for testing
+        }
+    }
+}
+
 // Print dimensions and some elements
-print("Dimensions:", width, height, depth);
+print("Dimensions: ", width, " ", height, " ", depth);
 print("arr[0][0][0]:", arr[0][0][0]);
-print("arr[9][4][4]:", arr[9][4][4]); 
+print("arr[90][4][40]:", arr[90][4][40]); 

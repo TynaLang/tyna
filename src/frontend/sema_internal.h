@@ -1,0 +1,31 @@
+#ifndef TYL_SEMA_INTERNAL_H
+#define TYL_SEMA_INTERNAL_H
+
+#include "tyl/semantic.h"
+
+// Sema Core
+Symbol *sema_resolve(Sema *s, StringView name);
+Symbol *sema_resolve_local(Sema *s, StringView name);
+Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
+                    Location loc);
+
+// Sema Decl
+void sema_register_func_signature(Sema *s, AstNode *node);
+
+// Sema Expr
+Type *sema_coerce(Sema *s, AstNode *expr, Type *target);
+Type *sema_check_expr(Sema *s, AstNode *node);
+bool type_is_array_struct(Type *type);
+
+// Sema Stmt
+void sema_scope_push(Sema *s);
+void sema_scope_pop(Sema *s);
+void sema_check_stmt(Sema *s, AstNode *node);
+
+// Sema Utils
+void sema_error(Sema *s, AstNode *n, const char *fmt, ...);
+void sema_error_at(Sema *s, Location loc, const char *fmt, ...);
+void sema_warning(Sema *s, AstNode *n, const char *fmt, ...);
+void sema_warning_at(Sema *s, Location loc, const char *fmt, ...);
+
+#endif

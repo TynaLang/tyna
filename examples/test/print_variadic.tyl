@@ -1,5 +1,5 @@
 // Print: variadic, multiple types
 let a = 1;
 let b = 2.5;
-let s = "sum";
-print(s, a, b); // sum 1 2.5
+let s = 's';
+print(s, a, b); // s 1 2.5

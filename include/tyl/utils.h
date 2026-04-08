@@ -26,6 +26,7 @@ int List_index_of(List *list, void *item);
 void *xmalloc(size_t size);
 void *xrealloc(void *ptr, size_t new_size);
 char *xstrdup(const char *s);
+void *xcalloc(size_t count, size_t size);
 
 noreturn void panic(const char *msg, ...);
 

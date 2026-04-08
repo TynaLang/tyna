@@ -278,8 +278,14 @@ AstNode *AstNode_new_continue(Location loc) {
 }
 
 bool type_is_lvalue(AstNode *node) {
-  return node->tag == NODE_VAR || node->tag == NODE_FIELD ||
-         node->tag == NODE_INDEX;
+  if (node->tag == NODE_VAR || node->tag == NODE_FIELD ||
+      node->tag == NODE_INDEX) {
+    return true;
+  }
+  if (node->tag == NODE_UNARY && node->unary.op == OP_DEREF) {
+    return true;
+  }
+  return false;
 }
 
 void Ast_free(AstNode *node) {
@@ -495,6 +501,10 @@ void Ast_print(AstNode *node, int indent) {
     printf("%s " SV_FMT " : %s\n", node->var_decl.is_const ? "CONST" : "LET",
            SV_ARG(node->var_decl.name->var.value),
            type_to_name(node->var_decl.declared_type));
+    if (node->resolved_type && node->resolved_type != node->var_decl.declared_type) {
+      print_indent(indent + 1);
+      printf("RESOLVED TYPE: %s\n", type_to_name(node->resolved_type));
+    }
     print_indent(indent + 1);
     printf("VALUE:\n");
     Ast_print(node->var_decl.value, indent + 2);
@@ -727,7 +737,7 @@ void Ast_print(AstNode *node, int indent) {
     Ast_print(node->field.object, indent + 2);
     break;
   case NODE_ARRAY_REPEAT:
-    printf("ARRAY_REPEAT\n");
+    printf("ARRAY_REPEAT (Type: %s)\n", type_to_name(node->resolved_type));
     print_indent(indent + 1);
     printf("VALUE:\n");
     Ast_print(node->array_repeat.value, indent + 2);

@@ -323,10 +323,10 @@ Token Token_advance(Lexer *l) {
 
   // Boolean logic
   case '&':
-    t.type = (peek(l) == '&') ? (advance(l), TOKEN_AND) : TOKEN_ERROR;
+    t.type = (peek(l) == '&') ? (advance(l), TOKEN_AND) : TOKEN_BIT_AND;
     break;
   case '|':
-    t.type = (peek(l) == '|') ? (advance(l), TOKEN_OR) : TOKEN_ERROR;
+    t.type = (peek(l) == '|') ? (advance(l), TOKEN_OR) : TOKEN_BIT_OR;
     break;
 
   default:

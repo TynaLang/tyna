@@ -103,7 +103,9 @@ int List_index_of(List *list, void *item) {
 noreturn void panic(const char *msg, ...) {
   va_list args;
   va_start(args, msg);
-  vfprintf(stderr, "[PANIC] %s\n", args);
+  fprintf(stderr, "[PANIC] ");
+  vfprintf(stderr, msg, args);
+  fprintf(stderr, "\n");
   va_end(args);
   exit(1);
 }

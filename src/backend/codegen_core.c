@@ -72,6 +72,16 @@ static void cg_initiate_system_functions(Codegen *cg) {
   cg_init_CGFunction(f_to_str, sv_from_parts("__tyl_array_to_str", 18),
                      to_str_val, to_str_type, true);
   List_push(&cg->system_functions, f_to_str);
+
+  // void panic(const char *msg, ...)
+  LLVMTypeRef panic_args[] = {ptr_ty};
+  LLVMTypeRef panic_type =
+      LLVMFunctionType(LLVMVoidTypeInContext(cg->context), panic_args, 1, true);
+  LLVMValueRef panic_val = LLVMAddFunction(cg->module, "panic", panic_type);
+  CGFunction *f_panic = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_panic, sv_from_parts("panic", 5), panic_val, panic_type,
+                     true);
+  List_push(&cg->system_functions, f_panic);
 }
 
 static bool cg_has_main(AstNode *root) {

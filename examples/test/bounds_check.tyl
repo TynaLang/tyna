@@ -1,0 +1,9 @@
+let arr: [int; 4] = [1, 2, 3, 4];
+let x = arr[5]; // Bounds check error: index 5, size 4
+let y = arr[-1]; // Negative index error: -1
+
+const SZ: int = 10;
+let arr2: [int; SZ] = [0; SZ];
+let z = arr2[SZ]; // Bounds check error: index 10, size 10
+
+let literal_access = [1, 2, 3][3]; // Bounds check error: index 3, size 3

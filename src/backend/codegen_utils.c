@@ -1,3 +1,4 @@
+#include <llvm-c/Core.h>
 #include <llvm-c/Types.h>
 
 #include "codegen_private.h"
@@ -18,62 +19,8 @@ LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name) {
   char *c_name = sv_to_cstr(name);
   LLVMValueRef alloca = LLVMBuildAlloca(tmp_builder, llvm_type, c_name);
 
-  // If it's a fixed-size array, we need to initialize the fat pointer (slice)
-  // to point to its own stack space if it's not a slice.
-  if (type->kind == KIND_ARRAY && !type->data.array.is_dynamic) {
-
-    Type *base = type;
-    size_t total_elements = 1;
-    while (base->kind == KIND_ARRAY && !base->data.array.is_dynamic) {
-      total_elements *= base->data.array.fixed_size;
-      base = base->data.array.element;
-    }
-
-    LLVMTypeRef base_llvm_ty = cg_get_llvm_type(cg, base);
-
-    LLVMValueRef flat_backing = LLVMBuildAlloca(
-        tmp_builder, LLVMArrayType(base_llvm_ty, total_elements), "flat_array");
-
-    LLVMTypeRef i64_type = LLVMInt64TypeInContext(cg->context);
-    LLVMValueRef len_val =
-        LLVMConstInt(i64_type, type->data.array.fixed_size, false);
-
-    LLVMValueRef first_elem_offset = LLVMConstInt(i64_type, 0, false);
-    LLVMValueRef data_ptr =
-        LLVMBuildGEP2(tmp_builder, base_llvm_ty, flat_backing,
-                      &first_elem_offset, 1, "flat_decay");
-
-    LLVMValueRef fat_ptr = LLVMGetUndef(llvm_type);
-    fat_ptr =
-        LLVMBuildInsertValue(tmp_builder, fat_ptr, len_val, 0, "slice_len");
-    fat_ptr =
-        LLVMBuildInsertValue(tmp_builder, fat_ptr, data_ptr, 1, "slice_data");
-
-    // Fix: Dimensions pointer for static arrays
-    // For static arrays, we need to provide a pointer to dimensions.
-    // For simplicity in the static stack allocation case, we can use a global
-    // or constant array for [len, 1] (len and stride of 1).
-    // However, to keep it consistent with how we handle static arrays
-    // elsewhere:
-    LLVMValueRef dims_vals[] = {len_val, LLVMConstInt(i64_type, 1, false)};
-    LLVMValueRef dims_arr = LLVMConstArray(i64_type, dims_vals, 2);
-    LLVMValueRef global_dims =
-        LLVMAddGlobal(cg->module, LLVMTypeOf(dims_arr), "static_array_dims");
-    LLVMSetInitializer(global_dims, dims_arr);
-    LLVMSetGlobalConstant(global_dims, true);
-    LLVMSetLinkage(global_dims, LLVMInternalLinkage);
-
-    LLVMValueRef dims_ptr = LLVMBuildBitCast(
-        tmp_builder, global_dims, LLVMPointerType(i64_type, 0), "dims_ptr");
-    fat_ptr =
-        LLVMBuildInsertValue(tmp_builder, fat_ptr, dims_ptr, 2, "slice_dims");
-
-    LLVMBuildStore(tmp_builder, fat_ptr, alloca);
-  } else if (type->kind == KIND_PRIMITIVE &&
-             type->data.primitive == PRIM_STRING) {
-    // Strings are initialized to empty
-    LLVMBuildStore(tmp_builder, LLVMConstNull(llvm_type), alloca);
-  }
+  // Initialize with zero/null for safety
+  LLVMBuildStore(tmp_builder, LLVMConstNull(llvm_type), alloca);
 
   free(c_name);
   LLVMDisposeBuilder(tmp_builder);
@@ -94,85 +41,138 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     return sym->value;
   }
 
+  case NODE_FIELD: {
+    LLVMValueRef obj_ptr = cg_get_address(cg, node->field.object);
+    if (!obj_ptr) {
+      return NULL;
+    }
+    Type *obj_type = node->field.object->resolved_type;
+    Member *m = type_get_member(obj_type, node->field.field);
+    if (!m)
+      return NULL;
+
+    return LLVMBuildStructGEP2(cg->builder, cg_get_llvm_type(cg, obj_type),
+                               obj_ptr, m->index, "field_addr");
+  }
+
+  case NODE_UNARY: {
+    if (node->unary.op == OP_DEREF) {
+      return cg_expression(cg, node->unary.expr);
+    }
+    return NULL;
+  }
+
   case NODE_INDEX: {
-    LLVMValueRef fat_ptr = cg_expression(cg, node->index.array);
-    LLVMValueRef idx_val = cg_expression(cg, node->index.index);
-    LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
-    LLVMValueRef index =
-        cg_cast_value(cg, idx_val, node->index.index->resolved_type, i64_ty);
+    LLVMValueRef array_struct_ptr = cg_get_address(cg, node->index.array);
+    LLVMTypeRef array_struct_ty =
+        cg_get_llvm_type(cg, node->index.array->resolved_type);
 
-    LLVMValueRef rank =
-        LLVMBuildExtractValue(cg->builder, fat_ptr, 0, "arr_rank");
-    LLVMValueRef data_ptr =
-        LLVMBuildExtractValue(cg->builder, fat_ptr, 1, "arr_ptr");
-    LLVMValueRef dims_ptr =
-        LLVMBuildExtractValue(cg->builder, fat_ptr, 2, "arr_dims");
+    // 1. Load rank
+    LLVMValueRef rank_ptr = LLVMBuildStructGEP2(
+        cg->builder, array_struct_ty, array_struct_ptr, 3, "rank_ptr");
+    LLVMValueRef rank_val = LLVMBuildLoad2(
+        cg->builder, LLVMInt64TypeInContext(cg->context), rank_ptr, "rank_val");
 
-    // Calculate stride (product of dims[1] through dims[rank-1])
-    LLVMBasicBlockRef current_bb_stride = LLVMGetInsertBlock(cg->builder);
-    LLVMValueRef func_stride = LLVMGetBasicBlockParent(current_bb_stride);
-    LLVMBasicBlockRef stride_loop_bb = LLVMAppendBasicBlockInContext(
-        cg->context, func_stride, "addr_stride_loop");
-    LLVMBasicBlockRef stride_after_bb = LLVMAppendBasicBlockInContext(
-        cg->context, func_stride, "addr_stride_done");
+    // 2. Load dims pointer
+    LLVMValueRef dims_ptr_ptr = LLVMBuildStructGEP2(
+        cg->builder, array_struct_ty, array_struct_ptr, 4, "dims_ptr_ptr");
+    LLVMValueRef dims_ptr = LLVMBuildLoad2(
+        cg->builder, LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0),
+        dims_ptr_ptr, "dims_ptr");
 
-    LLVMBuildBr(cg->builder, stride_loop_bb);
-    LLVMPositionBuilderAtEnd(cg->builder, stride_loop_bb);
+    // 3. Current index
+    LLVMValueRef index_val = cg_expression(cg, node->index.index);
+    LLVMValueRef index_i64 =
+        cg_cast_value(cg, index_val, node->index.index->resolved_type,
+                      LLVMInt64TypeInContext(cg->context));
 
-    LLVMValueRef phi_idx_stride =
-        LLVMBuildPhi(cg->builder, i64_ty, "stride_idx");
-    LLVMValueRef phi_val_stride =
-        LLVMBuildPhi(cg->builder, i64_ty, "stride_val");
+    // 4. Bounds check: index_i64 < dims[0]
+    LLVMValueRef dim0_ptr = LLVMBuildGEP2(
+        cg->builder, LLVMInt64TypeInContext(cg->context), dims_ptr,
+        (LLVMValueRef[]){
+            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0)},
+        1, "dim0_ptr");
+    LLVMValueRef dim0_val = LLVMBuildLoad2(
+        cg->builder, LLVMInt64TypeInContext(cg->context), dim0_ptr, "dim0_val");
 
-    LLVMValueRef dim_gep = LLVMBuildGEP2(cg->builder, i64_ty, dims_ptr,
-                                         &phi_idx_stride, 1, "dim_gep");
-    LLVMValueRef dim_val =
-        LLVMBuildLoad2(cg->builder, i64_ty, dim_gep, "dim_val");
-    LLVMValueRef next_val_stride =
-        LLVMBuildMul(cg->builder, phi_val_stride, dim_val, "next_stride");
-    LLVMValueRef next_idx_stride =
-        LLVMBuildAdd(cg->builder, phi_idx_stride,
-                     LLVMConstInt(i64_ty, 1, false), "next_idx");
+    LLVMValueRef in_bounds = LLVMBuildICmp(cg->builder, LLVMIntULT, index_i64,
+                                           dim0_val, "in_bounds");
 
-    LLVMValueRef stride_cond = LLVMBuildICmp(
-        cg->builder, LLVMIntULT, next_idx_stride, rank, "stride_cond");
-    LLVMBuildCondBr(cg->builder, stride_cond, stride_loop_bb, stride_after_bb);
+    LLVMBasicBlockRef fail_bb = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "bounds_fail");
+    LLVMBasicBlockRef ok_bb = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "bounds_ok");
 
-    LLVMAddIncoming(
-        phi_idx_stride,
-        (LLVMValueRef[]){LLVMConstInt(i64_ty, 1, false), next_idx_stride},
-        (LLVMBasicBlockRef[]){current_bb_stride, stride_loop_bb}, 2);
-    LLVMAddIncoming(
-        phi_val_stride,
-        (LLVMValueRef[]){LLVMConstInt(i64_ty, 1, false), next_val_stride},
-        (LLVMBasicBlockRef[]){current_bb_stride, stride_loop_bb}, 2);
+    LLVMBuildCondBr(cg->builder, in_bounds, ok_bb, fail_bb);
 
-    LLVMPositionBuilderAtEnd(cg->builder, stride_after_bb);
-    LLVMValueRef rank_gt_1 =
-        LLVMBuildICmp(cg->builder, LLVMIntUGT, rank,
-                      LLVMConstInt(i64_ty, 1, false), "rank_gt_1");
-    LLVMValueRef stride =
-        LLVMBuildSelect(cg->builder, rank_gt_1, next_val_stride,
-                        LLVMConstInt(i64_ty, 1, false), "final_stride");
+    // Fail block
+    LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
 
-    LLVMValueRef offset =
-        LLVMBuildMul(cg->builder, index, stride, "flat_offset");
+    // Call panic("Index out of bounds")
+    CGFunction *panic_fn = cg_find_function(cg, sv_from_parts("panic", 5));
+    LLVMValueRef msg_ptr = LLVMBuildGlobalStringPtr(
+        cg->builder, "Panic: Array Index Out of Bounds", "bounds_err_msg");
+    LLVMBuildCall2(cg->builder, panic_fn->type, panic_fn->value,
+                   (LLVMValueRef[]){msg_ptr}, 1, "");
 
-    Type *arr_type = node->index.array->resolved_type;
-    Type *base = (arr_type->kind == KIND_PRIMITIVE &&
-                  arr_type->data.primitive == PRIM_STRING)
-                     ? type_get_primitive(cg->type_ctx, PRIM_CHAR)
-                     : arr_type->data.array.element;
-    while (base->kind == KIND_ARRAY) {
-      base = base->data.array.element;
+    LLVMBuildUnreachable(cg->builder);
+
+    // Ok block
+    LLVMPositionBuilderAtEnd(cg->builder, ok_bb);
+
+    // 5. If this is a multi-dimensional access, we need to adjust the child's
+    // metadata.
+    // However, Node Index in Tyl seems to only handle one level at a time.
+    // If we have arr[i][j], the inner `arr[i]` returns an Array struct.
+    // We must ensure the returned Array struct has rank-1 and shifted dims.
+
+    LLVMValueRef data_ptr_gep = LLVMBuildStructGEP2(
+        cg->builder, array_struct_ty, array_struct_ptr, 0, "data_field_ptr");
+    LLVMTypeRef elem_ptr_ty = cg_get_llvm_type(
+        cg, type_get_pointer(cg->type_ctx, node->resolved_type));
+    LLVMValueRef actual_data_ptr =
+        LLVMBuildLoad2(cg->builder, elem_ptr_ty, data_ptr_gep, "load_data_ptr");
+
+    LLVMValueRef element_addr = LLVMBuildGEP2(
+        cg->builder, cg_get_llvm_type(cg, node->resolved_type), actual_data_ptr,
+        (LLVMValueRef[]){index_i64}, 1, "element_ptr");
+
+    // If the element is itself an array struct, we need to "monomorphize" it to
+    // the slice.
+    if (type_is_array_struct(node->resolved_type)) {
+      // Element is an array struct. We need to load it and fix rank/dims.
+      LLVMValueRef sub_array =
+          LLVMBuildLoad2(cg->builder, cg_get_llvm_type(cg, node->resolved_type),
+                         element_addr, "sub_array_load");
+
+      // new_rank = rank - 1
+      LLVMValueRef new_rank = LLVMBuildSub(
+          cg->builder, rank_val,
+          LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "new_rank");
+      sub_array =
+          LLVMBuildInsertValue(cg->builder, sub_array, new_rank, 3, "set_rank");
+
+      // new_dims = dims + 1
+      LLVMValueRef new_dims = LLVMBuildGEP2(
+          cg->builder, LLVMInt64TypeInContext(cg->context), dims_ptr,
+          (LLVMValueRef[]){
+              LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0)},
+          1, "new_dims_ptr");
+      sub_array =
+          LLVMBuildInsertValue(cg->builder, sub_array, new_dims, 4, "set_dims");
+
+      // Since we need to return an ADDRESS of this struct (if it's an l-value),
+      // we must spill it.
+      LLVMValueRef temp_alloca = cg_alloca_in_entry(
+          cg, node->resolved_type, sv_from_cstr("sub_array_slice"));
+      LLVMBuildStore(cg->builder, sub_array, temp_alloca);
+      return temp_alloca;
     }
 
-    return LLVMBuildGEP2(cg->builder, cg_get_llvm_type(cg, base), data_ptr,
-                         &offset, 1, "arr_index_gep");
+    return element_addr;
   }
 
   default:
-    fprintf(stderr, "Codegen: Cannot take address of node tag %d\n", node->tag);
     return NULL;
   }
 }

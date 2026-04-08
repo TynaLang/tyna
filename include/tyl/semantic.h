@@ -49,8 +49,8 @@ struct Sema {
   ErrorHandler *eh;
 };
 
-void Sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx);
-void Sema_analyze(Sema *s, AstNode *root);
-void Sema_finish(Sema *s);
+void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx);
+void sema_analyze(Sema *s, AstNode *root);
+void sema_finish(Sema *s);
 
 #endif // !SEMANTIC_H

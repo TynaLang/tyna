@@ -23,3 +23,11 @@ char *xstrdup(const char *s) {
   }
   return dup;
 }
+
+void *xcalloc(size_t count, size_t size) {
+  void *ptr = calloc(count, size);
+  if (!ptr) {
+    panic("Failed to allocate memory");
+  }
+  return ptr;
+}

@@ -92,4 +92,6 @@ size_t cg_string_pool_insert(Codegen *cg, StringView str);
 LLVMValueRef cg_get_address(Codegen *cg, AstNode *node);
 LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name);
 
+bool type_is_array_struct(Type *type);
+
 #endif

@@ -24,7 +24,9 @@ enum UnaryOp {
   OP_POST_INC,
   OP_PRE_DEC,
   OP_POST_DEC,
-  OP_NOT
+  OP_NOT,
+  OP_ADDR_OF,
+  OP_DEREF
 };
 
 enum AstKind {
