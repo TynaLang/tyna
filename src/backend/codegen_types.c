@@ -37,26 +37,78 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
   if (t->kind == KIND_STRUCT) {
     // For structs, we use named types to support recursion and cache them
     char buf[256];
-    snprintf(buf, sizeof(buf), SV_FMT, SV_ARG(t->name));
-    LLVMTypeRef struct_ty = LLVMGetTypeByName2(cg->context, buf);
-    if (struct_ty)
-      return struct_ty;
-
-    struct_ty = LLVMStructCreateNamed(cg->context, buf);
-
-    unsigned count = t->members.len;
-    LLVMTypeRef *fields =
-        xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
-    for (size_t i = 0; i < count; i++) {
-      Member *m = t->members.items[i];
-      fields[i] = cg_get_llvm_type(cg, m->type);
+    if (t->data.instance.from_template) {
+      snprintf(buf, sizeof(buf), "%.*s_instance_%p", (int)t->name.len,
+               t->name.data, (void *)t);
+    } else {
+      snprintf(buf, sizeof(buf), SV_FMT, SV_ARG(t->name));
     }
-    LLVMStructSetBody(struct_ty, fields, count, false);
-    free(fields);
+    LLVMTypeRef struct_ty = LLVMGetTypeByName2(cg->context, buf);
+    if (!struct_ty) {
+      struct_ty = LLVMStructCreateNamed(cg->context, buf);
+    }
+
+    // Check if body is already set
+    if (LLVMCountStructElementTypes(struct_ty) > 0 || t->members.len == 0) {
+      // If we have members but body is empty, we must set it.
+      // LLVM doesn't have an easy "isBodySet", but count > 0 is a hint.
+      // For empty structs, we might need a dummy field or handle them.
+    }
+
+    // To prevent infinite recursion, we only set body if not already done
+    // We use a simple bitmask or check for opaque status if possible.
+    if (LLVMIsOpaqueStruct(struct_ty)) {
+      unsigned count = t->members.len;
+      LLVMTypeRef *fields =
+          xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
+      for (size_t i = 0; i < count; i++) {
+        Member *m = t->members.items[i];
+        fields[i] = cg_get_llvm_type(cg, m->type);
+      }
+      LLVMStructSetBody(struct_ty, fields, count, false);
+      free(fields);
+    }
     return struct_ty;
   }
 
+  if (t->kind == KIND_TEMPLATE) {
+    // Templates themselves don't have a direct LLVM representation.
+    // They are lowered only when instantiated.
+    return NULL;
+  }
+
   panic("Unknown type kind: %d", t->kind);
+}
+
+void cg_lower_all_structs(Codegen *cg) {
+  // First pass: Create all named types to support recursion
+  for (size_t i = 0; i < cg->type_ctx->structs.len; i++) {
+    Type *t = cg->type_ctx->structs.items[i];
+    char buf[256];
+    snprintf(buf, sizeof(buf), SV_FMT, SV_ARG(t->name));
+    if (!LLVMGetTypeByName2(cg->context, buf)) {
+      LLVMStructCreateNamed(cg->context, buf);
+    }
+  }
+
+  // Also include template instances
+  for (size_t i = 0; i < cg->type_ctx->instances.len; i++) {
+    Type *t = cg->type_ctx->instances.items[i];
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%.*s_instance_%p", (int)t->name.len, t->name.data,
+             (void *)t);
+    if (!LLVMGetTypeByName2(cg->context, buf)) {
+      LLVMStructCreateNamed(cg->context, buf);
+    }
+  }
+
+  // Second pass: Populate bodies
+  for (size_t i = 0; i < cg->type_ctx->structs.len; i++) {
+    cg_get_llvm_type(cg, cg->type_ctx->structs.items[i]);
+  }
+  for (size_t i = 0; i < cg->type_ctx->instances.len; i++) {
+    cg_get_llvm_type(cg, cg->type_ctx->instances.items[i]);
+  }
 }
 
 LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,

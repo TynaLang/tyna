@@ -16,6 +16,14 @@ typedef struct Sema Sema;
 
 enum FuncStatus { FUNC_NONE, FUNC_FORWARD_DECL, FUNC_IMPLEMENTATION };
 
+typedef enum {
+  SYM_FIELD,
+  SYM_METHOD,
+  SYM_STATIC_METHOD,
+  SYM_VAR,  // General variables/params
+  SYM_FUNC, // General functions
+} SymbolKind;
+
 struct Symbol {
   StringView name;
   Type *type;
@@ -24,6 +32,7 @@ struct Symbol {
   AstNode *value;
   struct SemaScope *scope;
   FuncStatus func_status;
+  SymbolKind kind;
 };
 
 struct SemaScope {
@@ -50,6 +59,9 @@ struct Sema {
 };
 
 void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx);
+
+Symbol *sema_resolve(Sema *s, StringView name);
+void sema_prime_types(Sema *s);
 void sema_analyze(Sema *s, AstNode *root);
 void sema_finish(Sema *s);
 

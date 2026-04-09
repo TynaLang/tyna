@@ -1,4 +1,5 @@
 #include <llvm-c/Core.h>
+#include <stdio.h>
 
 #include "codegen_private.h"
 #include "tyl/ast.h"
@@ -88,7 +89,7 @@ static bool cg_has_main(AstNode *root) {
   for (size_t i = 0; i < root->ast_root.children.len; i++) {
     AstNode *child = root->ast_root.children.items[i];
     if (child->tag == NODE_FUNC_DECL &&
-        sv_eq_cstr(child->func_decl.name, "main")) {
+        sv_eq_cstr(child->func_decl.name->var.value, "main")) {
       return true;
     }
   }
@@ -176,37 +177,88 @@ Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx) {
 
   cg_initiate_system_functions(cg);
 
+  LLVMTypeRef i32_ty = LLVMInt32TypeInContext(cg->context);
+  LLVMTypeRef entry_ty = LLVMFunctionType(i32_ty, NULL, 0, 0);
+  LLVMValueRef entry_func = LLVMAddFunction(cg->module, "main", entry_ty);
+
+  LLVMBasicBlockRef entry_bb =
+      LLVMAppendBasicBlockInContext(cg->context, entry_func, "entry");
+  LLVMPositionBuilderAtEnd(cg->builder, entry_bb);
+
+  CGFunction *entry_fn = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(entry_fn, sv_from_cstr("__system__main__"), entry_func,
+                     entry_ty, true);
+
+  List_push(&cg->system_functions, entry_fn);
+
   return cg;
+}
+
+void Codegen_global(Codegen *cg, AstNode *ast_root) {
+  if (ast_root->tag != NODE_AST_ROOT)
+    panic("Expected AST root node");
+
+  CGFunction *entry_fn = cg_find_function(cg, sv_from_cstr("__system__main__"));
+
+  if (!entry_fn) {
+    Codegen_dump(cg);
+    panic("[Codegen_global] Internal error: entry function not found");
+  }
+
+  cg_lower_all_structs(cg);
+
+  cg_declare_functions(cg, ast_root);
+  cg_emit_functions(cg, ast_root);
+
+  // 1. SAVE whatever state the builder was in after emitting user functions
+  LLVMBasicBlockRef prev_bb = LLVMGetInsertBlock(cg->builder);
+  LLVMValueRef prev_func = cg->current_function;
+  CGFunction *prev_func_ref = cg->current_function_ref;
+
+  // 2. CONTEXT SWITCH: Tell the codegen state machine we are now inside
+  // __system__main__
+  cg->current_function = entry_fn->value;
+  cg->current_function_ref = entry_fn;
+
+  LLVMBasicBlockRef bb = LLVMGetFirstBasicBlock(entry_fn->value);
+  LLVMPositionBuilderAtEnd(cg->builder, bb);
+
+  // 3. Emit global statements (cg_alloca_in_entry will now work safely)
+  cg_emit_global_statements(cg, ast_root);
+
+  // 4. RESTORE the state machine back to what it was (usually NULL at this
+  // point)
+  cg->current_function = prev_func;
+  cg->current_function_ref = prev_func_ref;
+
+  if (prev_bb) {
+    LLVMPositionBuilderAtEnd(cg->builder, prev_bb);
+  }
 }
 
 void Codegen_program(Codegen *cg, AstNode *ast_root) {
   if (ast_root->tag != NODE_AST_ROOT)
     panic("Expected AST root node");
 
-  LLVMTypeRef i32_ty = LLVMInt32TypeInContext(cg->context);
-  LLVMTypeRef entry_ty = LLVMFunctionType(i32_ty, NULL, 0, 0);
-  LLVMValueRef entry_func = LLVMAddFunction(cg->module, "main", entry_ty);
-  LLVMBasicBlockRef entry_bb =
-      LLVMAppendBasicBlockInContext(cg->context, entry_func, "entry");
+  CGFunction *entry_fn = cg_find_function(cg, sv_from_cstr("__system__main__"));
+  if (!entry_fn)
+    panic("[Codegen_program] Internal error: entry function not found");
 
-  cg_declare_functions(cg, ast_root);
-  cg_emit_functions(cg, ast_root);
+  LLVMValueRef entry_func = entry_fn->value;
 
   cg->current_function = entry_func;
-  cg->current_function_ref = xmalloc(sizeof(CGFunction));
-  cg->current_function_ref->name = sv_from_parts("main", 4);
-  cg->current_function_ref->value = entry_func;
-  cg->current_function_ref->type = entry_ty;
+  cg->current_function_ref = entry_fn;
 
+  // Reliably jump back into the entry block we created in Codegen_new
+  LLVMBasicBlockRef entry_bb = LLVMGetFirstBasicBlock(entry_func);
   LLVMPositionBuilderAtEnd(cg->builder, entry_bb);
 
   cg_push_scope(cg);
 
-  cg_emit_global_statements(cg, ast_root);
-
+  LLVMTypeRef i32_ty = LLVMInt32TypeInContext(cg->context);
   LLVMValueRef exit_code = LLVMConstInt(i32_ty, 0, 0);
 
-  CGFunction *user_main = cg_find_function(cg, sv_from_parts("main", 4));
+  CGFunction *user_main = cg_find_function(cg, sv_from_cstr("main"));
 
   if (user_main) {
     LLVMTypeRef return_ty = LLVMGetReturnType(user_main->type);

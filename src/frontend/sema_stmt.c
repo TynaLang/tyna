@@ -143,7 +143,8 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     node->var_decl.declared_type = decl_type;
     node->resolved_type = decl_type;
 
-    Symbol *sym = sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
+    Symbol *sym =
+        sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
     if (sym) {
       sym->value = node->var_decl.value;
     }
@@ -174,7 +175,8 @@ void sema_check_stmt(Sema *s, AstNode *node) {
                    type_to_name(param->param.type));
       }
 
-      sema_define(s, param->param.name, param->param.type, false, param->loc);
+      sema_define(s, param->param.name->var.value, param->param.type, false,
+                  param->loc);
     }
 
     sema_check_stmt(s, node->func_decl.body);
@@ -330,40 +332,90 @@ void sema_check_stmt(Sema *s, AstNode *node) {
 
   case NODE_STRUCT_DECL: {
     StringView name = node->struct_decl.name->var.value;
+    Symbol *existing = sema_resolve(s, name);
+    Type *t = NULL;
 
-    if (sema_resolve_local(s, name)) {
-      sema_error(s, node, "Duplicate symbol '" SV_FMT "'", SV_ARG(name));
-      break;
+    if (existing) {
+      if (!existing->type->is_intrinsic) {
+        sema_error(s, node, "Duplicate symbol '" SV_FMT "'", SV_ARG(name));
+        break;
+      }
+      t = existing->type;
+    } else {
+      // Create new type (simplified; ideally handles templates vs structs)
+      if (node->struct_decl.placeholders.len > 0) {
+        t = xcalloc(1, sizeof(Type));
+        t->kind = KIND_TEMPLATE;
+        t->name = name;
+        List_init(&t->members);
+        List_init(&t->methods);
+        List_init(&t->data.template.placeholders);
+        List_init(&t->data.template.fields);
+
+        for (size_t i = 0; i < node->struct_decl.placeholders.len; i++) {
+          List_push(&t->data.template.placeholders,
+                    node->struct_decl.placeholders.items[i]);
+        }
+        List_push(&s->types->templates, t);
+      } else {
+        t = type_get_struct(s->types, name);
+        if (!t) {
+          sema_error(s, node, "Failed to create struct type");
+          break;
+        }
+      }
+      sema_define(s, name, t, true, node->loc);
     }
 
-    Type *struct_type = type_get_struct(s->types, name);
+    t->is_frozen = node->struct_decl.is_frozen;
 
-    if (!struct_type) {
-      sema_error(s, node, "Failed to create struct type");
-      break;
-    }
+    // Separate fields and methods
+    size_t offset = (existing && existing->type->is_intrinsic) ? t->size : 0;
 
-    sema_define(s, name, struct_type, true, node->loc);
-
-    size_t offset = 0;
     for (size_t i = 0; i < node->struct_decl.members.len; i++) {
       AstNode *mem = node->struct_decl.members.items[i];
-      Type *mem_type = mem->var_decl.declared_type;
 
-      if (!type_is_concrete(mem_type)) {
-        sema_error(s, mem, "Struct member type must be concrete (got '%s')",
-                   type_to_name(mem_type));
+      if (mem->tag == NODE_FUNC_DECL) {
+        // Handle method registration
+        Symbol *method_sym = xmalloc(sizeof(Symbol));
+        method_sym->name = mem->func_decl.name->var.value;
+        method_sym->type = mem->func_decl.return_type; // Placeholder for now
+        method_sym->kind =
+            mem->func_decl.is_static ? SYM_STATIC_METHOD : SYM_METHOD;
+        method_sym->value = mem;
+        List_push(&t->methods, method_sym);
         continue;
       }
 
-      char *c_mem_name = sv_to_cstr(mem->var_decl.name->var.value);
-      type_add_member(struct_type, c_mem_name, mem_type, offset);
-      free(c_mem_name);
+      // Handle fields
+      if (t->is_intrinsic && existing && node->struct_decl.is_frozen) {
+        // Technically we are "filling" an intrinsic that is already frozen
+        // But if the stdlib defines it, we allow it if it matches or we are
+        // initializing it. For this "Big Bang", we allow adding fields to
+        // intrinsics if they are not already populated.
+      }
 
+      Type *mem_type = mem->var_decl.declared_type;
+      char *c_mem_name = sv_to_cstr(mem->var_decl.name->var.value);
+
+      // Check for duplicate field
+      if (type_get_member(t, mem->var_decl.name->var.value)) {
+        if (!t->is_intrinsic) {
+          sema_error(s, mem, "Duplicate field '" SV_FMT "'",
+                     SV_ARG(mem->var_decl.name->var.value));
+        }
+        free(c_mem_name);
+        continue;
+      }
+
+      type_add_member(t, c_mem_name, mem_type, offset);
+      free(c_mem_name);
       offset += mem_type->size;
     }
 
-    struct_type->size = offset;
+    if (!existing || !existing->type->is_intrinsic) {
+      t->size = offset;
+    }
     break;
   }
 

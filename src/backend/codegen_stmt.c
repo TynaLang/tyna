@@ -198,6 +198,18 @@ void cg_statement(Codegen *cg, AstNode *node) {
     }
     break;
   }
+  case NODE_STRUCT_DECL:
+    // Struct declarations are now handled globally in cg_lower_all_structs
+    break;
+  case NODE_DEFER:
+    // TODO: Implement defer in codegen
+    break;
+  case NODE_INTRINSIC_COMPARE:
+    // TODO: Implement intrinsic compare
+    break;
+  case NODE_FOR_IN_STMT:
+    // TODO: Implement for-in
+    break;
   case NODE_FOR_STMT: {
     cg_push_scope(cg);
 

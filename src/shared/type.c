@@ -94,7 +94,11 @@ TypeContext *type_context_create() {
     ctx->primitives[i]->data.primitive = (PrimitiveKind)i;
     ctx->primitives[i]->size = type_get_primitive_size(i);
     List_init(&ctx->primitives[i]->members);
+    List_init(&ctx->primitives[i]->methods);
+    ctx->primitives[i]->is_frozen = false;
+    ctx->primitives[i]->is_intrinsic = false;
   }
+  List_init(&ctx->structs);
   List_init(&ctx->templates);
   List_init(&ctx->instances);
 
@@ -136,9 +140,9 @@ Type *type_get_pointer(TypeContext *ctx, Type *to) {
 }
 
 Type *type_get_struct(TypeContext *ctx, StringView name) {
-  for (size_t i = 0; i < ctx->instances.len; i++) {
-    Type *t = ctx->instances.items[i];
-    if (t->kind == KIND_STRUCT && sv_eq(t->name, name))
+  for (size_t i = 0; i < ctx->structs.len; i++) {
+    Type *t = ctx->structs.items[i];
+    if (sv_eq(t->name, name))
       return t;
   }
 
@@ -146,7 +150,7 @@ Type *type_get_struct(TypeContext *ctx, StringView name) {
   s->kind = KIND_STRUCT;
   s->name = name;
   List_init(&s->members);
-  List_push(&ctx->instances, s);
+  List_push(&ctx->structs, s);
   return s;
 }
 

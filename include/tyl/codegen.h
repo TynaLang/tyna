@@ -8,6 +8,7 @@
 typedef struct Codegen Codegen;
 
 Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx);
+void Codegen_global(Codegen *cg, AstNode *ast_root);
 void Codegen_program(Codegen *cg, AstNode *ast_root);
 void Codegen_dump(Codegen *cg);
 void Codegen_free(Codegen *cg);

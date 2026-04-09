@@ -102,8 +102,18 @@ struct AstNode {
 
     struct {
       AstNode *name;
-      List members; // List<AstNode* (NODE_VAR_DECL)>
+      List members;      // List<AstNode* (NODE_VAR_DECL or NODE_FUNC_DECL)>
+      List placeholders; // List<StringView*>
+      bool is_frozen;
     } struct_decl;
+
+    struct {
+      AstNode *name;
+      List params;
+      AstNode *body;
+      Type *return_type;
+      bool is_static;
+    } func_decl;
 
     struct {
       List children;
@@ -196,18 +206,11 @@ struct AstNode {
     } call;
 
     struct {
-      StringView name;
-      List params; // List<AstNode*> NODE_PARAM
-      Type *return_type;
-      AstNode *body; // NODE_BLOCK or NULL;
-    } func_decl;
-
-    struct {
       AstNode *expr; // Optional
     } return_stmt;
 
     struct {
-      StringView name;
+      AstNode *name;
       Type *type;
     } param;
 
@@ -293,10 +296,10 @@ AstNode *AstNode_new_assign_expr(AstNode *target, AstNode *value, Location loc);
 AstNode *AstNode_new_expr_stmt(AstNode *expr, Location loc);
 
 AstNode *AstNode_new_call(AstNode *func, List args, Location loc);
-AstNode *AstNode_new_func_decl(StringView name, List params, Type *ret_type,
-                               AstNode *body, Location loc);
+AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
+                               AstNode *body, bool is_static, Location loc);
 AstNode *AstNode_new_return(AstNode *expr, Location loc);
-AstNode *AstNode_new_param(StringView name, Type *type, Location loc);
+AstNode *AstNode_new_param(AstNode *name, Type *type, Location loc);
 AstNode *AstNode_new_block(Location loc);
 
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc);
@@ -320,7 +323,8 @@ AstNode *AstNode_new_continue(Location loc);
 AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
                              AstNode *false_expr, Location loc);
 
-AstNode *AstNode_new_struct_decl(AstNode *name, List members, Location loc);
+AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
+                                 bool is_frozen, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
 
 PrimitiveKind Token_token_to_type(TokenType t);

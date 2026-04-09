@@ -63,10 +63,14 @@ struct Type {
   } data;
 
   List members; // List<Member*> - Resolved for concrete types
+  List methods; // List<Symbol*> - New infrastructure for methods
+  bool is_frozen; // If true, fields cannot be added/modified.
+  bool is_intrinsic; // Identifies types the compiler "needs" (like Array)
 };
 
 struct TypeContext {
   Type *primitives[PRIM_UNKNOWN + 1];
+  List structs; // Generic structs
   List templates; // List<Type*>
   List instances; // List<Type*>
 };

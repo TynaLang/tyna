@@ -44,7 +44,7 @@ void cg_init_CGFunction(CGFunction *f, StringView name, LLVMValueRef value,
 }
 
 void cg_define_function(Codegen *cg, AstNode *node) {
-  StringView name = node->func_decl.name;
+  StringView name = node->func_decl.name->var.value;
   LLVMTypeRef ret_ty = cg_get_llvm_type(cg, node->func_decl.return_type);
 
   size_t param_count = node->func_decl.params.len;
@@ -52,29 +52,21 @@ void cg_define_function(Codegen *cg, AstNode *node) {
 
   LLVMTypeRef func_type = LLVMFunctionType(ret_ty, param_types, param_count, 0);
 
-  char *llvm_name;
-  if (sv_eq_cstr(name, "main"))
-    llvm_name = "_user_main";
-  else
-    llvm_name = sv_to_cstr(name);
-
+  char *llvm_name = sv_to_cstr(name);
   LLVMValueRef func = LLVMAddFunction(cg->module, llvm_name, func_type);
-  if (llvm_name != (void *)"_user_main")
-    free(llvm_name);
 
   CGFunction *f = malloc(sizeof(CGFunction));
-  f->name = name;
-  f->value = func;
-  f->type = func_type;
-  f->is_system = false;
+  cg_init_CGFunction(f, name, func, func_type, false);
   List_push(&cg->functions, f);
+
+  free(llvm_name);
 }
 
 void cg_emit_function_body(Codegen *cg, AstNode *node) {
-  CGFunction *f = cg_find_function(cg, node->func_decl.name);
+  CGFunction *f = cg_find_function(cg, node->func_decl.name->var.value);
   if (!f) {
     ErrorHandler_report(cg->eh, node->loc, "Function not found: " SV_FMT,
-                        SV_ARG(node->func_decl.name));
+                        SV_ARG(node->func_decl.name->var.value));
     return;
   }
 
@@ -94,7 +86,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
       continue;
     }
 
-    StringView param_name = param_node->param.name;
+    StringView param_name = param_node->param.name->var.value;
     Type *param_type = param_node->param.type;
 
     LLVMValueRef param_val = LLVMGetParam(f->value, (unsigned)i);

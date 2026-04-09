@@ -2,7 +2,7 @@
 #include "tyl/semantic.h"
 
 void sema_register_func_signature(Sema *s, AstNode *node) {
-  StringView name = node->func_decl.name;
+  StringView name = node->func_decl.name->var.value;
 
   if (sema_resolve_local(s, name)) {
     sema_error(s, node, "Redefinition of symbol '" SV_FMT "'", SV_ARG(name));

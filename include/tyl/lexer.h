@@ -35,6 +35,8 @@ typedef enum TokenType {
   TOKEN_IN,
   TOKEN_BREAK,
   TOKEN_CONTINUE,
+  TOKEN_FROZEN,
+  TOKEN_STATIC,
 
   // Identifiers
   TOKEN_IDENT,

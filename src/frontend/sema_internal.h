@@ -4,7 +4,6 @@
 #include "tyl/semantic.h"
 
 // Sema Core
-Symbol *sema_resolve(Sema *s, StringView name);
 Symbol *sema_resolve_local(Sema *s, StringView name);
 Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
                     Location loc);

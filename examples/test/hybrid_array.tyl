@@ -8,5 +8,6 @@ fn main() {
     // We need to provide a way to get data into it.
     // For now, let's just see if it compiles and passes Sema.
     let arr: i32[] = [1, 2, 3]; // This should ideally create an Array<i32> with data pointing to the array and len=3
+    let arr2: f32[] = [4f, 5f, 6f]; 
     print(arr.len);
 }

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "tyl/ast.h"
 #include "tyl/codegen.h"
 #include "tyl/lexer.h"
 #include "tyl/parser.h"
@@ -69,19 +70,50 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Frontend
+  // Initialize contexts
+  TypeContext *type_ctx = type_context_create();
+
+  // 1. Load and Parse Stdlib
+  const char *std_path = "stdlib/std.tyl";
+  const char *std_src = read_file(std_path);
+  AstNode *std_ast = NULL;
+  if (std_src) {
+    ErrorHandler std_eh;
+    ErrorHandler_init(&std_eh, std_src);
+    Lexer std_lexer = make_lexer(std_src, &std_eh);
+    std_ast = Parser_process(&std_lexer, &std_eh, type_ctx);
+  }
+
+  // 2. Load and Parse User Code
   ErrorHandler eh;
   ErrorHandler_init(&eh, src);
-  Lexer lexer = make_lexer(src, &eh);
-  TypeContext *type_ctx = type_context_create();
-  AstNode *ast_root = Parser_process(&lexer, &eh, type_ctx);
+  Lexer user_lexer = make_lexer(src, &eh);
+  AstNode *user_ast = Parser_process(&user_lexer, &eh, type_ctx);
 
-  // Semantic analysis
+  // 3. Initialize Sema
   Sema sema;
   sema_init(&sema, &eh, type_ctx);
-  sema_analyze(&sema, ast_root);
 
-  Ast_print(ast_root, 2);
+  // 4. Analyze Stdlib
+  if (std_ast) {
+    sema_analyze(&sema, std_ast);
+
+    printf("====  STDLIB AST  ====\n");
+    Ast_print(std_ast, 0);
+  }
+
+  // 5. Fallback Check for Array
+  Symbol *array_sym = sema_resolve(&sema, sv_from_parts("Array", 5));
+  if (!array_sym) {
+    sema_prime_types(&sema);
+  }
+
+  // 6. Analyze User Code
+  sema_analyze(&sema, user_ast);
+
+  printf("====  USER AST  ====\n");
+  Ast_print(user_ast, 0);
+
   if (eh.has_errors) {
     ErrorHandler_show_all(&eh);
     sema_finish(&sema);
@@ -91,7 +123,13 @@ int main(int argc, char **argv) {
 
   // Backend
   Codegen *cg = Codegen_new("tyl_module", type_ctx);
-  Codegen_program(cg, ast_root);
+
+  if (std_ast) {
+    Codegen_global(cg, std_ast);
+  }
+
+  Codegen_global(cg, user_ast);
+  Codegen_program(cg, user_ast);
 
   // Verification
   Runner_verify(cg);

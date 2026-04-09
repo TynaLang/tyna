@@ -737,11 +737,12 @@ static AstNode *Parser_parse_print(Parser *p) {
   return AstNode_new_print_stmt(values, loc);
 }
 
-static AstNode *Parser_parse_fn_decl(Parser *p) {
-  Location loc = p->current_token.loc;
+static AstNode *Parser_parse_fn_decl(Parser *p, bool is_static) {
   Parser_token_advance(p); // consume 'fn'
 
   Token ident = p->current_token;
+  Location loc = ident.loc;
+
   if (!Parser_expect(p, TOKEN_IDENT, "Expected function name"))
     return NULL;
 
@@ -756,6 +757,7 @@ static AstNode *Parser_parse_fn_decl(Parser *p) {
     Location p_loc = p->current_token.loc;
 
     StringView param_name = p->current_token.text;
+    AstNode *param_name_node = AstNode_new_var(param_name, p_loc);
     if (!Parser_expect(p, TOKEN_IDENT, "Expected parameter name")) {
       skip_to_next_param(p);
       continue;
@@ -772,7 +774,7 @@ static AstNode *Parser_parse_fn_decl(Parser *p) {
       continue;
     }
 
-    List_push(&params, AstNode_new_param(param_name, param_type, p_loc));
+    List_push(&params, AstNode_new_param(param_name_node, param_type, p_loc));
     if (p->current_token.type == TOKEN_COMMA)
       Parser_token_advance(p);
   }
@@ -802,7 +804,8 @@ static AstNode *Parser_parse_fn_decl(Parser *p) {
     Parser_sync(p);
   }
 
-  return AstNode_new_func_decl(ident.text, params, ret_type, body, loc);
+  return AstNode_new_func_decl(AstNode_new_var(ident.text, ident.loc), params,
+                               ret_type, body, is_static, loc);
 }
 
 static AstNode *Parser_parse_if_stmt(Parser *p) {
@@ -915,7 +918,7 @@ static AstNode *Parser_parse_for_stmt(Parser *p) {
   return AstNode_new_for(init, cond, inc, body, loc);
 }
 
-static AstNode *Parser_parse_struct_decl(Parser *p) {
+static AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume 'struct'
 
@@ -923,6 +926,27 @@ static AstNode *Parser_parse_struct_decl(Parser *p) {
   if (!Parser_expect(p, TOKEN_IDENT, "Expected struct name"))
     return NULL;
   AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
+
+  List placeholders;
+  List_init(&placeholders);
+  if (p->current_token.type == TOKEN_LT) {
+    Parser_token_advance(p);
+    while (p->current_token.type != TOKEN_GT &&
+           p->current_token.type != TOKEN_EOF) {
+      if (p->current_token.type != TOKEN_IDENT) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected placeholder name");
+        break;
+      }
+      StringView *pl = xmalloc(sizeof(StringView));
+      *pl = p->current_token.text;
+      List_push(&placeholders, pl);
+      Parser_token_advance(p);
+      if (p->current_token.type == TOKEN_COMMA)
+        Parser_token_advance(p);
+    }
+    Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+  }
 
   if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after struct name"))
     return NULL;
@@ -932,6 +956,19 @@ static AstNode *Parser_parse_struct_decl(Parser *p) {
 
   while (p->current_token.type != TOKEN_RBRACE &&
          p->current_token.type != TOKEN_EOF) {
+    bool is_static = false;
+    if (p->current_token.type == TOKEN_STATIC) {
+      is_static = true;
+      Parser_token_advance(p);
+    }
+
+    if (p->current_token.type == TOKEN_FN) {
+      AstNode *fn = Parser_parse_fn_decl(p, is_static);
+      if (fn)
+        List_push(&members, fn);
+      continue;
+    }
+
     Location mem_loc = p->current_token.loc;
     Token mem_ident = p->current_token;
     if (!Parser_expect(p, TOKEN_IDENT, "Expected member name")) {
@@ -962,7 +999,8 @@ static AstNode *Parser_parse_struct_decl(Parser *p) {
 
   Parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct members");
 
-  return AstNode_new_struct_decl(name_node, members, loc);
+  return AstNode_new_struct_decl(name_node, members, placeholders, is_frozen,
+                                 loc);
 }
 
 static AstNode *Parser_parse_statement(Parser *p) {
@@ -1007,9 +1045,27 @@ static AstNode *Parser_parse_statement(Parser *p) {
     return NULL;
   }
   case TOKEN_FN:
-    return Parser_parse_fn_decl(p);
+    return Parser_parse_fn_decl(p, false);
   case TOKEN_STRUCT:
-    return Parser_parse_struct_decl(p);
+    return Parser_parse_struct_decl(p, false);
+  case TOKEN_FROZEN: {
+    Parser_token_advance(p);
+    if (p->current_token.type != TOKEN_STRUCT) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected 'struct' after 'frozen'");
+      return NULL;
+    }
+    return Parser_parse_struct_decl(p, true);
+  }
+  case TOKEN_STATIC: {
+    Parser_token_advance(p);
+    if (p->current_token.type != TOKEN_FN) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected 'fn' after 'static'");
+      return NULL;
+    }
+    return Parser_parse_fn_decl(p, true);
+  }
   case TOKEN_BREAK: {
     Parser_token_advance(p);
     if (Parser_expect(p, TOKEN_SEMI, "Expected ';' after break"))

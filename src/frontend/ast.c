@@ -145,13 +145,14 @@ AstNode *AstNode_new_call(AstNode *func, List args, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_func_decl(StringView name, List params, Type *ret_type,
-                               AstNode *body, Location loc) {
+AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
+                               AstNode *body, bool is_static, Location loc) {
   AstNode *node = AstNode_new(NODE_FUNC_DECL, loc);
   node->func_decl.name = name;
   node->func_decl.params = params;
   node->func_decl.return_type = ret_type;
   node->func_decl.body = body;
+  node->func_decl.is_static = is_static;
   return node;
 }
 
@@ -161,7 +162,7 @@ AstNode *AstNode_new_return(AstNode *expr, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_param(StringView name, Type *type, Location loc) {
+AstNode *AstNode_new_param(AstNode *name, Type *type, Location loc) {
   AstNode *node = AstNode_new(NODE_PARAM, loc);
   node->param.name = name;
   node->param.type = type;
@@ -230,10 +231,13 @@ AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
   return node;
 }
 
-AstNode *AstNode_new_struct_decl(AstNode *name, List members, Location loc) {
+AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
+                                 bool is_frozen, Location loc) {
   AstNode *node = AstNode_new(NODE_STRUCT_DECL, loc);
   node->struct_decl.name = name;
   node->struct_decl.members = members;
+  node->struct_decl.placeholders = placeholders;
+  node->struct_decl.is_frozen = is_frozen;
   return node;
 }
 
@@ -501,7 +505,8 @@ void Ast_print(AstNode *node, int indent) {
     printf("%s " SV_FMT " : %s\n", node->var_decl.is_const ? "CONST" : "LET",
            SV_ARG(node->var_decl.name->var.value),
            type_to_name(node->var_decl.declared_type));
-    if (node->resolved_type && node->resolved_type != node->var_decl.declared_type) {
+    if (node->resolved_type &&
+        node->resolved_type != node->var_decl.declared_type) {
       print_indent(indent + 1);
       printf("RESOLVED TYPE: %s\n", type_to_name(node->resolved_type));
     }
@@ -591,7 +596,8 @@ void Ast_print(AstNode *node, int indent) {
     }
     break;
   case NODE_FUNC_DECL:
-    printf("FUNC DECL: " SV_FMT " RETURNS %s\n", SV_ARG(node->func_decl.name),
+    printf("FUNC DECL: " SV_FMT " RETURNS %s\n",
+           SV_ARG(node->func_decl.name->var.value),
            type_to_name(node->func_decl.return_type));
     print_indent(indent + 1);
     printf("PARAMS:\n");
@@ -612,7 +618,7 @@ void Ast_print(AstNode *node, int indent) {
     }
     break;
   case NODE_PARAM:
-    printf("PARAM: " SV_FMT " : %s\n", SV_ARG(node->param.name),
+    printf("PARAM: " SV_FMT " : %s\n", SV_ARG(node->param.name->var.value),
            type_to_name(node->param.type));
     break;
   case NODE_BLOCK:

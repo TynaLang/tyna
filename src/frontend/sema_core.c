@@ -1,12 +1,17 @@
 #include "sema_internal.h"
+#include "tyl/lexer.h"
 #include "tyl/semantic.h"
+#include <stdio.h>
 
-static void sema_prime_types(Sema *s) {
+void sema_prime_types(Sema *s) {
   // 1. Create the Template Type
   Type *array_tpl = xcalloc(1, sizeof(Type));
   array_tpl->kind = KIND_TEMPLATE;
   array_tpl->name = sv_from_parts("Array", 5);
+  array_tpl->is_intrinsic = true;
+  array_tpl->is_frozen = false;
   List_init(&array_tpl->members);
+  List_init(&array_tpl->methods);
   List_init(&array_tpl->data.template.placeholders);
   List_init(&array_tpl->data.template.fields);
 
@@ -15,10 +20,9 @@ static void sema_prime_types(Sema *s) {
   *t_placeholder = sv_from_parts("T", 1);
   List_push(&array_tpl->data.template.placeholders, t_placeholder);
 
-  // 3. Define the members (using PRIM_UNKNOWN/name "T" for the placeholder)
+  // 3. Define the members (using KIND_TEMPLATE for the placeholder)
   Type *t_type = xcalloc(1, sizeof(Type));
-  t_type->kind = KIND_PRIMITIVE;
-  t_type->data.primitive = PRIM_UNKNOWN;
+  t_type->kind = KIND_TEMPLATE;
   t_type->name = *t_placeholder;
 
   // data: ptr<T>
@@ -28,16 +32,20 @@ static void sema_prime_types(Sema *s) {
   // cap: i64
   type_add_member(array_tpl, "cap", type_get_primitive(s->types, PRIM_I64), 16);
   // rank: i64
-  type_add_member(array_tpl, "rank", type_get_primitive(s->types, PRIM_I64), 24);
+  type_add_member(array_tpl, "rank", type_get_primitive(s->types, PRIM_I64),
+                  24);
   // dims: ptr<i64>
-  type_add_member(array_tpl, "dims",
-                  type_get_pointer(s->types, type_get_primitive(s->types, PRIM_I64)),
-                  32);
+  type_add_member(
+      array_tpl, "dims",
+      type_get_pointer(s->types, type_get_primitive(s->types, PRIM_I64)), 32);
 
   array_tpl->size = 40; // ptr + i64 + i64 + i64 + ptr
 
   // 4. Register it in the context so check_array_expr can find it
   List_push(&s->types->templates, array_tpl);
+
+  // Define it in the global scope
+  sema_define(s, array_tpl->name, array_tpl, true, (Location){0, 0});
 }
 
 Symbol *sema_resolve(Sema *s, StringView name) {
@@ -80,6 +88,7 @@ Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
   sym->type = type;
   sym->is_const = is_const;
   sym->func_status = FUNC_NONE;
+  sym->kind = SYM_VAR; // Default to SYM_VAR
   sym->scope = s->scope;
 
   List_push(&s->scope->symbols, sym);
@@ -98,7 +107,6 @@ void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx) {
   s->scope = NULL;
 
   sema_scope_push(s);
-  sema_prime_types(s);
 }
 
 void sema_finish(Sema *s) {

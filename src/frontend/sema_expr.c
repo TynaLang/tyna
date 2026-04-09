@@ -115,16 +115,37 @@ bool type_is_array_struct(Type *type) {
 static Type *check_field(Sema *s, AstNode *node) {
   Type *obj_type = sema_check_expr(s, node->field.object);
 
-  if (obj_type->kind != KIND_STRUCT) {
+  // Auto-dereference for member access (standard in many languages)
+  while (obj_type->kind == KIND_POINTER) {
+    obj_type = obj_type->data.pointer_to;
+  }
+
+  if (obj_type->kind != KIND_STRUCT && obj_type->kind != KIND_TEMPLATE) {
     sema_error(s, node->field.object,
                "Member access only allowed on structs, got %s",
                type_to_name(obj_type));
     return type_get_primitive(s->types, PRIM_UNKNOWN);
   }
 
+  // 1. Is it a field?
   Member *m = type_get_member(obj_type, node->field.field);
   if (m) {
     return m->type;
+  }
+
+  // 2. Is it a method?
+  for (size_t i = 0; i < obj_type->methods.len; i++) {
+    Symbol *method = obj_type->methods.items[i];
+    if (sv_eq(method->name, node->field.field)) {
+      if (method->kind == SYM_METHOD) {
+        // Found instance method. Transform AST:
+        // instance.method(...) -> method(instance, ...)
+        // This transformation usually happens during call checking,
+        // but we'll mark the node so check_call knows what to do.
+        node->resolved_type = method->type; // This is the function type
+        return method->type;
+      }
+    }
   }
 
   sema_error(s, node, "Type %s has no member '" SV_FMT "'",
@@ -372,6 +393,43 @@ static Type *check_binary_logical(Sema *s, AstNode *node) {
 }
 
 static Type *check_call(Sema *s, AstNode *node) {
+  // If it's a method call: instance.method(args)
+  if (node->call.func->tag == NODE_FIELD) {
+    AstNode *field_node = node->call.func;
+    Type *obj_type = sema_check_expr(s, field_node->field.object);
+
+    // Auto-dereference
+    while (obj_type->kind == KIND_POINTER) {
+      obj_type = obj_type->data.pointer_to;
+    }
+
+    if (obj_type->kind == KIND_STRUCT || obj_type->kind == KIND_TEMPLATE) {
+      for (size_t i = 0; i < obj_type->methods.len; i++) {
+        Symbol *method = obj_type->methods.items[i];
+        if (sv_eq(method->name, field_node->field.field) &&
+            method->kind == SYM_METHOD) {
+          // Transformation: method(instance, args...)
+          List new_args;
+          List_init(&new_args);
+          // Prepend self
+          List_push(&new_args, field_node->field.object);
+          // Add remaining args
+          for (size_t j = 0; j < node->call.args.len; j++) {
+            List_push(&new_args, node->call.args.items[j]);
+          }
+
+          // Modify the call node to point to the method's AST function node
+          // This typically needs more handling for namespaces, so we use the
+          // symbol name for now
+          node->call.func = AstNode_new_var(method->name, field_node->loc);
+          node->call.args = new_args;
+
+          return check_call(s, node); // Recursively check the transformed call
+        }
+      }
+    }
+  }
+
   Type *func_type = sema_check_expr(s, node->call.func);
   if (func_type->kind == KIND_PRIMITIVE &&
       func_type->data.primitive == PRIM_UNKNOWN) {
@@ -596,6 +654,31 @@ static Type *check_ternary(Sema *s, AstNode *node) {
   return type_get_primitive(s->types, PRIM_UNKNOWN);
 }
 
+static Type *check_static_member(Sema *s, AstNode *node) {
+  Symbol *parent = sema_resolve(s, node->static_member.parent);
+  if (!parent ||
+      (parent->type->kind != KIND_STRUCT &&
+       parent->type->kind != KIND_TEMPLATE)) {
+    sema_error(s, node, "Undefined type '" SV_FMT "'",
+               SV_ARG(node->static_member.parent));
+    return type_get_primitive(s->types, PRIM_UNKNOWN);
+  }
+
+  Type *type = parent->type;
+  for (size_t i = 0; i < type->methods.len; i++) {
+    Symbol *method = type->methods.items[i];
+    if (sv_eq(method->name, node->static_member.member)) {
+      if (method->kind == SYM_STATIC_METHOD) {
+        return method->type;
+      }
+    }
+  }
+
+  sema_error(s, node, "Type %s has no static member '" SV_FMT "'",
+             type_to_name(type), SV_ARG(node->static_member.member));
+  return type_get_primitive(s->types, PRIM_UNKNOWN);
+}
+
 Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
   Type *expr_type = sema_check_expr(s, expr);
 
@@ -649,6 +732,10 @@ Type *sema_check_expr(Sema *s, AstNode *node) {
     break;
   case NODE_INDEX:
     type = check_index(s, node);
+    break;
+
+  case NODE_STATIC_MEMBER:
+    type = check_static_member(s, node);
     break;
 
   case NODE_UNARY:
