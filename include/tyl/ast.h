@@ -63,6 +63,7 @@ enum AstKind {
   NODE_INDEX,
   NODE_STATIC_MEMBER,
   NODE_STRUCT_DECL,
+  NODE_IMPL_DECL,
 
   NODE_ARRAY_LITERAL,
   NODE_ARRAY_REPEAT,
@@ -106,6 +107,11 @@ struct AstNode {
       List placeholders; // List<StringView*>
       bool is_frozen;
     } struct_decl;
+
+    struct {
+      AstNode *name;
+      List members; // List<AstNode* (NODE_FUNC_DECL)>
+    } impl_decl;
 
     struct {
       AstNode *name;
@@ -325,6 +331,7 @@ AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
 
 AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
                                  bool is_frozen, Location loc);
+AstNode *AstNode_new_impl_decl(AstNode *name, List members, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
 
 PrimitiveKind Token_token_to_type(TokenType t);

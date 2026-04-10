@@ -1,0 +1,8 @@
+fn main() {
+    let i: i32 = 42;
+    let u: u32 = (u32)i;
+    let f: f64 = (f64)u;
+    let g: f32 = 3.5f;
+    let h: i64 = (i64)g;
+    print(u, f, h);
+}

@@ -4,48 +4,55 @@
 #include <stdio.h>
 
 void sema_prime_types(Sema *s) {
-  // 1. Create the Template Type
-  Type *array_tpl = xcalloc(1, sizeof(Type));
-  array_tpl->kind = KIND_TEMPLATE;
-  array_tpl->name = sv_from_parts("Array", 5);
-  array_tpl->is_intrinsic = true;
-  array_tpl->is_frozen = false;
-  List_init(&array_tpl->members);
-  List_init(&array_tpl->methods);
-  List_init(&array_tpl->data.template.placeholders);
-  List_init(&array_tpl->data.template.fields);
+  Type *array_tpl = type_get_template(s->types, sv_from_parts("Array", 5));
+  if (!array_tpl) {
+    // 1. Create the Template Type
+    array_tpl = xcalloc(1, sizeof(Type));
+    array_tpl->kind = KIND_TEMPLATE;
+    array_tpl->name = sv_from_parts("Array", 5);
+    array_tpl->is_intrinsic = true;
+    array_tpl->is_frozen = false;
+    List_init(&array_tpl->members);
+    List_init(&array_tpl->methods);
+    List_init(&array_tpl->data.template.placeholders);
+    List_init(&array_tpl->data.template.fields);
 
-  // 2. Add the placeholder "T"
-  StringView *t_placeholder = xmalloc(sizeof(StringView));
-  *t_placeholder = sv_from_parts("T", 1);
-  List_push(&array_tpl->data.template.placeholders, t_placeholder);
+    // 2. Add the placeholder "T"
+    StringView *t_placeholder = xmalloc(sizeof(StringView));
+    *t_placeholder = sv_from_parts("T", 1);
+    List_push(&array_tpl->data.template.placeholders, t_placeholder);
 
-  // 3. Define the members (using KIND_TEMPLATE for the placeholder)
-  Type *t_type = xcalloc(1, sizeof(Type));
-  t_type->kind = KIND_TEMPLATE;
-  t_type->name = *t_placeholder;
+    // 3. Define the members (using KIND_TEMPLATE for the placeholder)
+    Type *t_type = xcalloc(1, sizeof(Type));
+    t_type->kind = KIND_TEMPLATE;
+    t_type->name = *t_placeholder;
 
-  // data: ptr<T>
-  type_add_member(array_tpl, "data", type_get_pointer(s->types, t_type), 0);
-  // len: i64
-  type_add_member(array_tpl, "len", type_get_primitive(s->types, PRIM_I64), 8);
-  // cap: i64
-  type_add_member(array_tpl, "cap", type_get_primitive(s->types, PRIM_I64), 16);
-  // rank: i64
-  type_add_member(array_tpl, "rank", type_get_primitive(s->types, PRIM_I64),
-                  24);
-  // dims: ptr<i64>
-  type_add_member(
-      array_tpl, "dims",
-      type_get_pointer(s->types, type_get_primitive(s->types, PRIM_I64)), 32);
+    // data: ptr<T>
+    type_add_member(array_tpl, "data", type_get_pointer(s->types, t_type), 0);
+    // len: i64
+    type_add_member(array_tpl, "len", type_get_primitive(s->types, PRIM_I64),
+                    8);
+    // cap: i64
+    type_add_member(array_tpl, "cap", type_get_primitive(s->types, PRIM_I64),
+                    16);
+    // rank: i64
+    type_add_member(array_tpl, "rank", type_get_primitive(s->types, PRIM_I64),
+                    24);
+    // dims: ptr<i64>
+    type_add_member(
+        array_tpl, "dims",
+        type_get_pointer(s->types, type_get_primitive(s->types, PRIM_I64)), 32);
 
-  array_tpl->size = 40; // ptr + i64 + i64 + i64 + ptr
+    array_tpl->size = 40; // ptr + i64 + i64 + i64 + ptr
 
-  // 4. Register it in the context so check_array_expr can find it
-  List_push(&s->types->templates, array_tpl);
+    // 4. Register it in the context so check_array_expr can find it
+    List_push(&s->types->templates, array_tpl);
+  }
 
-  // Define it in the global scope
-  sema_define(s, array_tpl->name, array_tpl, true, (Location){0, 0});
+  if (!sema_resolve(s, array_tpl->name)) {
+    // Define it in the current semantic scope only when needed.
+    sema_define(s, array_tpl->name, array_tpl, true, (Location){0, 0});
+  }
 }
 
 Symbol *sema_resolve(Sema *s, StringView name) {
@@ -123,6 +130,22 @@ void sema_analyze(Sema *s, AstNode *root) {
     AstNode *node = root->ast_root.children.items[i];
     if (node->tag == NODE_FUNC_DECL) {
       sema_register_func_signature(s, node);
+    } else if (node->tag == NODE_STRUCT_DECL) {
+      for (size_t j = 0; j < node->struct_decl.members.len; j++) {
+        AstNode *member = node->struct_decl.members.items[j];
+        if (member->tag == NODE_FUNC_DECL) {
+          sema_register_method_signature(s, member,
+                                        node->struct_decl.name->var.value);
+        }
+      }
+    } else if (node->tag == NODE_IMPL_DECL) {
+      for (size_t j = 0; j < node->impl_decl.members.len; j++) {
+        AstNode *member = node->impl_decl.members.items[j];
+        if (member->tag == NODE_FUNC_DECL) {
+          sema_register_method_signature(s, member,
+                                        node->impl_decl.name->var.value);
+        }
+      }
     }
   }
 

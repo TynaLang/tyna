@@ -55,8 +55,8 @@ static bool type_needs_inference(Type *t) {
   if (t->kind == KIND_TEMPLATE)
     return true;
 
-  if (t->kind == KIND_STRUCT && t->data.instance.from_template == NULL) {
-    return true;
+  if (t->kind == KIND_STRUCT && t->data.instance.from_template != NULL) {
+    return false;
   }
 
   return false;
@@ -75,7 +75,7 @@ static bool type_is_concrete(Type *t) {
 
   case KIND_STRUCT:
     if (t->data.instance.from_template == NULL)
-      return false;
+      return t->members.len > 0;
     for (size_t i = 0; i < t->data.instance.generic_args.len; i++) {
       Type *arg = t->data.instance.generic_args.items[i];
       if (!type_is_concrete(arg))
@@ -377,13 +377,24 @@ void sema_check_stmt(Sema *s, AstNode *node) {
 
       if (mem->tag == NODE_FUNC_DECL) {
         // Handle method registration
+        StringView method_name = mem->func_decl.name->var.value;
+        Symbol *resolved = sema_resolve(s, method_name);
+        StringView original_name = method_name;
+        if (resolved && resolved->original_name.len)
+          original_name = resolved->original_name;
+
         Symbol *method_sym = xmalloc(sizeof(Symbol));
-        method_sym->name = mem->func_decl.name->var.value;
+        method_sym->name = method_name;
+        method_sym->original_name = original_name;
         method_sym->type = mem->func_decl.return_type; // Placeholder for now
         method_sym->kind =
             mem->func_decl.is_static ? SYM_STATIC_METHOD : SYM_METHOD;
         method_sym->value = mem;
         List_push(&t->methods, method_sym);
+
+        if (mem->func_decl.body) {
+          sema_check_stmt(s, mem);
+        }
         continue;
       }
 
@@ -397,6 +408,9 @@ void sema_check_stmt(Sema *s, AstNode *node) {
 
       Type *mem_type = mem->var_decl.declared_type;
       char *c_mem_name = sv_to_cstr(mem->var_decl.name->var.value);
+      size_t align = mem_type->alignment ? mem_type->alignment : mem_type->size;
+      if (align == 0)
+        align = 1;
 
       // Check for duplicate field
       if (type_get_member(t, mem->var_decl.name->var.value)) {
@@ -408,13 +422,71 @@ void sema_check_stmt(Sema *s, AstNode *node) {
         continue;
       }
 
+      offset = align_to(offset, align);
       type_add_member(t, c_mem_name, mem_type, offset);
       free(c_mem_name);
       offset += mem_type->size;
+      if (align > t->alignment)
+        t->alignment = align;
     }
 
     if (!existing || !existing->type->is_intrinsic) {
-      t->size = offset;
+      t->size = align_to(offset, t->alignment ? t->alignment : 1);
+    }
+    break;
+  }
+
+  case NODE_IMPL_DECL: {
+    StringView name = node->impl_decl.name->var.value;
+    Symbol *existing = sema_resolve(s, name);
+    if (!existing || (existing->type->kind != KIND_STRUCT &&
+                      existing->type->kind != KIND_TEMPLATE)) {
+      sema_error(s, node, "Undefined type '%" SV_FMT "' or it is not a struct",
+                 SV_ARG(name));
+      break;
+    }
+    Type *t = existing->type;
+
+    for (size_t i = 0; i < node->impl_decl.members.len; i++) {
+      AstNode *mem = node->impl_decl.members.items[i];
+      if (mem->tag != NODE_FUNC_DECL) {
+        sema_error(s, mem, "Only functions are allowed in impl blocks");
+        continue;
+      }
+
+      StringView method_name = mem->func_decl.name->var.value;
+      bool duplicate = false;
+      for (size_t j = 0; j < t->methods.len; j++) {
+        Symbol *existing_method = t->methods.items[j];
+        if (sv_eq(existing_method->name, method_name)) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) {
+        sema_error(s, mem, "Duplicate method '%" SV_FMT "' on type %" SV_FMT "",
+                   SV_ARG(method_name), SV_ARG(name));
+        continue;
+      }
+
+      Symbol *resolved = sema_resolve(s, method_name);
+      StringView original_name = method_name;
+      if (resolved && resolved->original_name.len)
+        original_name = resolved->original_name;
+
+      Symbol *method_sym = xmalloc(sizeof(Symbol));
+      method_sym->name = method_name;
+      method_sym->original_name = original_name;
+      method_sym->type = mem->func_decl.return_type; // Placeholder for now
+      method_sym->kind =
+          mem->func_decl.is_static ? SYM_STATIC_METHOD : SYM_METHOD;
+      method_sym->value = mem;
+      List_push(&t->methods, method_sym);
+
+      // Analyze the method body now that the signature is registered.
+      if (mem->func_decl.body) {
+        sema_check_stmt(s, mem);
+      }
     }
     break;
   }

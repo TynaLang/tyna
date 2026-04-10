@@ -156,8 +156,32 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
   }
 }
 
+static LLVMTypeRef cg_const_target_type(Codegen *cg, AstNode *node) {
+  if (node->resolved_type)
+    return cg_get_llvm_type(cg, node->resolved_type);
+
+  switch (node->tag) {
+  case NODE_NUMBER: {
+    if (sv_contains(node->number.raw_text, '.') ||
+        sv_ends_with(node->number.raw_text, "f") ||
+        sv_ends_with(node->number.raw_text, "F")) {
+      return LLVMDoubleTypeInContext(cg->context);
+    }
+    return LLVMInt32TypeInContext(cg->context);
+  }
+  case NODE_BOOL:
+    return LLVMInt1TypeInContext(cg->context);
+  case NODE_CHAR:
+    return LLVMInt8TypeInContext(cg->context);
+  case NODE_STRING:
+    return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+  default:
+    panic("cg_const_expr received unknown constant node without resolved type");
+  }
+}
+
 static LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node) {
-  LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->resolved_type);
+  LLVMTypeRef target_ty = cg_const_target_type(cg, node);
 
   switch (node->tag) {
   case NODE_NUMBER: {
@@ -398,9 +422,20 @@ static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
     return LLVMBuildNeg(cg->builder, val, "negtmp");
   }
 
+  if (op == OP_NOT) {
+    LLVMValueRef val = cg_expression(cg, expr);
+    LLVMValueRef bool_val = cg_cast_value(cg, val, expr->resolved_type,
+                                          LLVMInt1TypeInContext(cg->context));
+    return LLVMBuildNot(cg->builder, bool_val, "nottmp");
+  }
+
   if (op == OP_DEREF) {
     LLVMValueRef ptr = cg_expression(cg, expr);
     return LLVMBuildLoad2(cg->builder, res_ty, ptr, "deref_load");
+  }
+
+  if (op == OP_ADDR_OF) {
+    return cg_get_address(cg, expr);
   }
 
   LLVMValueRef ptr = cg_get_address(cg, expr);
@@ -473,6 +508,9 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   if (!ptr)
     panic("Invalid assignment target");
   LLVMValueRef val = cg_expression(cg, node->assign_expr.value);
+  if (!node->assign_expr.target->resolved_type) {
+    panic("Assignment target has no resolved type");
+  }
   LLVMTypeRef target_ty =
       cg_get_llvm_type(cg, node->assign_expr.target->resolved_type);
   val =
@@ -531,6 +569,9 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
 static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
   AstNode *obj_node = node->field.object;
   Type *obj_type = obj_node->resolved_type;
+  while (obj_type && obj_type->kind == KIND_POINTER) {
+    obj_type = obj_type->data.pointer_to;
+  }
   Member *m = type_get_member(obj_type, node->field.field);
   if (!m)
     panic("Field not found");
@@ -541,13 +582,22 @@ static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
     obj_ptr = LLVMBuildAlloca(cg->builder, cg_get_llvm_type(cg, obj_type),
                               "tmp_obj_field");
     LLVMBuildStore(cg->builder, obj_val, obj_ptr);
+  } else {
+    Type *resolved = obj_node->resolved_type;
+    while (resolved && resolved->kind == KIND_POINTER) {
+      LLVMTypeRef load_ty = cg_get_llvm_type(cg, resolved);
+      obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
+      resolved = resolved->data.pointer_to;
+    }
   }
 
-  LLVMValueRef field_ptr =
-      LLVMBuildStructGEP2(cg->builder, cg_get_llvm_type(cg, obj_type), obj_ptr,
-                          m->index, "field_gep");
-  return LLVMBuildLoad2(cg->builder, cg_get_llvm_type(cg, m->type), field_ptr,
-                        "field_load");
+  LLVMTypeRef obj_type_llvm = cg_get_llvm_type(cg, obj_type);
+  LLVMTypeRef field_type_llvm = cg_get_llvm_type(cg, m->type);
+  LLVMValueRef field_ptr = LLVMBuildStructGEP2(cg->builder, obj_type_llvm,
+                                               obj_ptr, m->index, "field_gep");
+  LLVMValueRef field_val =
+      LLVMBuildLoad2(cg->builder, field_type_llvm, field_ptr, "field_load");
+  return field_val;
 }
 
 static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
@@ -559,26 +609,40 @@ static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
 
   size_t count = node->array_literal.items.len;
   LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
+  LLVMTypeRef array_ty = LLVMArrayType(llvm_elem_ty, count);
 
   // 1. Allocate space for the elements on the stack
-  LLVMValueRef raw_data_ptr = LLVMBuildAlloca(
-      cg->builder, LLVMArrayType(llvm_elem_ty, count), "array_lit_storage");
+  LLVMValueRef raw_data_ptr =
+      LLVMBuildAlloca(cg->builder, array_ty, "array_lit_storage");
 
-  // 2. Initialize the elements
+  // 2. Initialize the elements, using a single LLVMConstArray store when
+  //    all values are constant.
+  LLVMValueRef *const_values = xmalloc(sizeof(LLVMValueRef) * count);
+  bool all_const = true;
   for (size_t i = 0; i < count; i++) {
     AstNode *item = node->array_literal.items.items[i];
     LLVMValueRef val = cg_expression(cg, item);
-
-    // GEP to the i-th element
-    LLVMValueRef indices[] = {
-        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
-        LLVMConstInt(LLVMInt32TypeInContext(cg->context), i, 0)};
-    LLVMValueRef element_ptr =
-        LLVMBuildGEP2(cg->builder, LLVMArrayType(llvm_elem_ty, count),
-                      raw_data_ptr, indices, 2, "item_ptr");
-
-    LLVMBuildStore(cg->builder, val, element_ptr);
+    if (!LLVMIsConstant(val)) {
+      all_const = false;
+    }
+    const_values[i] = val;
   }
+
+  if (all_const) {
+    LLVMValueRef const_array =
+        LLVMConstArray(llvm_elem_ty, const_values, (unsigned)count);
+    LLVMBuildStore(cg->builder, const_array, raw_data_ptr);
+  } else {
+    for (size_t i = 0; i < count; i++) {
+      LLVMValueRef indices[] = {
+          LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
+          LLVMConstInt(LLVMInt32TypeInContext(cg->context), i, 0)};
+      LLVMValueRef element_ptr = LLVMBuildGEP2(
+          cg->builder, array_ty, raw_data_ptr, indices, 2, "item_ptr");
+      LLVMBuildStore(cg->builder, const_values[i], element_ptr);
+    }
+  }
+  free(const_values);
 
   // 3. Create the Array struct { data, len, cap }
   LLVMTypeRef struct_ty = cg_get_llvm_type(cg, inst_type);
@@ -600,29 +664,109 @@ static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
       LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, 0), 2,
       "set_cap");
 
-  // set rank to 1
-  array_struct = LLVMBuildInsertValue(
-      cg->builder, array_struct,
-      LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), 3, "set_rank");
+  // set rank to 1 by default
+  LLVMValueRef rank_val =
+      LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0);
+  LLVMValueRef dims_ptr = NULL;
 
-  // dims: ptr<i64> = [len]
-  LLVMValueRef dims_alloca = LLVMBuildAlloca(
-      cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 1),
-      "array_lit_dims");
-  LLVMValueRef d_idx[] = {
-      LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
-      LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0)};
-  LLVMValueRef d0_ptr = LLVMBuildGEP2(
-      cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 1),
-      dims_alloca, d_idx, 2, "d0_ptr");
-  LLVMBuildStore(cg->builder,
-                 LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, 0),
-                 d0_ptr);
-  LLVMValueRef dims_ptr_cast = LLVMBuildBitCast(
-      cg->builder, dims_alloca,
-      LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0), "dims_ptr");
-  array_struct = LLVMBuildInsertValue(cg->builder, array_struct, dims_ptr_cast,
-                                      4, "set_dims");
+  if (type_is_array_struct(elem_type)) {
+    // Nested arrays: inherit the inner rank and prefix it with this count.
+    LLVMTypeRef inner_ty = cg_get_llvm_type(cg, elem_type);
+    LLVMTypeRef array_ty = LLVMArrayType(inner_ty, count);
+    LLVMValueRef first_elem_ptr = LLVMBuildGEP2(
+        cg->builder, array_ty, raw_data_ptr,
+        (LLVMValueRef[]){
+            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0)},
+        2, "first_elem_ptr");
+
+    LLVMValueRef inner_rank_ptr = LLVMBuildStructGEP2(
+        cg->builder, inner_ty, first_elem_ptr, 3, "inner_rank_ptr");
+    LLVMValueRef inner_rank =
+        LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
+                       inner_rank_ptr, "inner_rank");
+    rank_val = LLVMBuildAdd(
+        cg->builder, inner_rank,
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "outer_rank");
+
+    LLVMValueRef inner_dims_ptr_ptr = LLVMBuildStructGEP2(
+        cg->builder, inner_ty, first_elem_ptr, 4, "inner_dims_ptr_ptr");
+    LLVMValueRef inner_dims_ptr = LLVMBuildLoad2(
+        cg->builder, LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0),
+        inner_dims_ptr_ptr, "inner_dims_ptr");
+
+    LLVMValueRef dims_mem =
+        LLVMBuildArrayAlloca(cg->builder, LLVMInt64TypeInContext(cg->context),
+                             rank_val, "array_lit_dims");
+
+    LLVMValueRef d0_ptr = LLVMBuildGEP2(
+        cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 0),
+        dims_mem,
+        (LLVMValueRef[]){
+            LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
+            LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0)},
+        2, "d0_ptr");
+    LLVMBuildStore(cg->builder,
+                   LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, 0),
+                   d0_ptr);
+
+    // Copy inner dims to dims[1..]
+    LLVMValueRef one = LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0);
+    LLVMValueRef idx = LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0);
+    LLVMValueRef inner_dim_ptr = inner_dims_ptr;
+    LLVMValueRef target_ptr = NULL;
+
+    // We only support copying the inner dims from the first element here.
+    // This is sufficient for nested initializer literals that use consistent
+    // inner array dimensions.
+    for (unsigned i = 1; i <= 1; i++) {
+      LLVMValueRef dst_ptr = LLVMBuildGEP2(
+          cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 0),
+          dims_mem,
+          (LLVMValueRef[]){
+              LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
+              LLVMConstInt(LLVMInt32TypeInContext(cg->context), i, 0)},
+          2, "dst_dim_ptr");
+      LLVMValueRef src_ptr = LLVMBuildGEP2(
+          cg->builder, LLVMInt64TypeInContext(cg->context), inner_dims_ptr,
+          (LLVMValueRef[]){
+              LLVMConstInt(LLVMInt64TypeInContext(cg->context), i - 1, 0)},
+          1, "src_dim_ptr");
+      LLVMValueRef src_val =
+          LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
+                         src_ptr, "src_dim_val");
+      LLVMBuildStore(cg->builder, src_val, dst_ptr);
+    }
+
+    dims_ptr = LLVMBuildBitCast(
+        cg->builder, dims_mem,
+        LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0), "dims_ptr");
+  } else {
+    array_struct = LLVMBuildInsertValue(
+        cg->builder, array_struct,
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), 3, "set_rank");
+
+    LLVMValueRef dims_alloca = LLVMBuildAlloca(
+        cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 1),
+        "array_lit_dims");
+    LLVMValueRef d_idx[] = {
+        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
+        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0)};
+    LLVMValueRef d0_ptr = LLVMBuildGEP2(
+        cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 1),
+        dims_alloca, d_idx, 2, "d0_ptr");
+    LLVMBuildStore(cg->builder,
+                   LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, 0),
+                   d0_ptr);
+    dims_ptr = LLVMBuildBitCast(
+        cg->builder, dims_alloca,
+        LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0), "dims_ptr");
+  }
+
+  array_struct =
+      LLVMBuildInsertValue(cg->builder, array_struct, rank_val, 3, "set_rank");
+  array_struct =
+      LLVMBuildInsertValue(cg->builder, array_struct, dims_ptr, 4, "set_dims");
 
   return array_struct;
 }

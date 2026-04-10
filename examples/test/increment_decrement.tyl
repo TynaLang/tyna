@@ -1,9 +1,0 @@
-// Increment and decrement
-let a = 5;
-print(++a); // 6
-print(a++); // 6
-print(a);   // 7
-let b = 10;
-print(--b); // 9
-print(b--); // 9
-print(b);   // 8

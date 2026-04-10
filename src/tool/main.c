@@ -98,8 +98,8 @@ int main(int argc, char **argv) {
   if (std_ast) {
     sema_analyze(&sema, std_ast);
 
-    printf("====  STDLIB AST  ====\n");
-    Ast_print(std_ast, 0);
+    // printf("====  STDLIB AST  ====\n");
+    // Ast_print(std_ast, 0);
   }
 
   // 5. Fallback Check for Array
@@ -111,8 +111,8 @@ int main(int argc, char **argv) {
   // 6. Analyze User Code
   sema_analyze(&sema, user_ast);
 
-  printf("====  USER AST  ====\n");
-  Ast_print(user_ast, 0);
+  // printf("====  USER AST  ====\n");
+  // Ast_print(user_ast, 0);
 
   if (eh.has_errors) {
     ErrorHandler_show_all(&eh);

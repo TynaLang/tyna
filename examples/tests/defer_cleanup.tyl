@@ -1,0 +1,6 @@
+fn main() {
+    defer {
+        print("deferred");
+    }
+    print("before");
+}

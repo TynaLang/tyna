@@ -1,0 +1,6 @@
+fn main() {
+    const pi: f64 = 3.14;
+    let count: u32 = 2;
+    let sum: u32 = count + 3;
+    print(pi, sum);
+}

@@ -1,0 +1,7 @@
+fn main() {
+    let x: i32 = 10;
+    let px: *i32 = &x;
+    print(*px);
+    *px = 20;
+    print(x);
+}

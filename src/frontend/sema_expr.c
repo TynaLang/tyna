@@ -6,6 +6,42 @@
 #include "sema_internal.h"
 #include "tyl/ast.h"
 
+static bool literal_fits_in_type(AstNode *node, Type *target) {
+  if (node->tag != NODE_NUMBER || !target || target->kind != KIND_PRIMITIVE)
+    return false;
+
+  if (sv_contains(node->number.raw_text, '.') ||
+      sv_ends_with(node->number.raw_text, "f") ||
+      sv_ends_with(node->number.raw_text, "F")) {
+    return false;
+  }
+
+  double val = node->number.value;
+  if (floor(val) != val)
+    return false;
+
+  switch (target->data.primitive) {
+  case PRIM_I8:
+    return val >= SCHAR_MIN && val <= SCHAR_MAX;
+  case PRIM_U8:
+    return val >= 0 && val <= UCHAR_MAX;
+  case PRIM_I16:
+    return val >= SHRT_MIN && val <= SHRT_MAX;
+  case PRIM_U16:
+    return val >= 0 && val <= USHRT_MAX;
+  case PRIM_I32:
+    return val >= INT_MIN && val <= INT_MAX;
+  case PRIM_U32:
+    return val >= 0 && val <= UINT_MAX;
+  case PRIM_I64:
+    return val >= (double)LLONG_MIN && val <= (double)LLONG_MAX;
+  case PRIM_U64:
+    return val >= 0 && val <= (double)ULLONG_MAX;
+  default:
+    return false;
+  }
+}
+
 static void check_literal_bounds(Sema *s, AstNode *node, Type *target) {
   if (node->tag != NODE_NUMBER || !target || target->kind != KIND_PRIMITIVE)
     return;
@@ -65,7 +101,9 @@ static void check_literal_bounds(Sema *s, AstNode *node, Type *target) {
 static Type *check_literal(Sema *s, AstNode *node) {
   switch (node->tag) {
   case NODE_NUMBER:
-    if (sv_contains(node->number.raw_text, '.')) {
+    if (sv_contains(node->number.raw_text, '.') ||
+        sv_ends_with(node->number.raw_text, "f") ||
+        sv_ends_with(node->number.raw_text, "F")) {
       return type_get_primitive(s->types,
                                 sv_ends_with(node->number.raw_text, "f") ||
                                         sv_ends_with(node->number.raw_text, "F")
@@ -136,9 +174,10 @@ static Type *check_field(Sema *s, AstNode *node) {
   // 2. Is it a method?
   for (size_t i = 0; i < obj_type->methods.len; i++) {
     Symbol *method = obj_type->methods.items[i];
-    if (sv_eq(method->name, node->field.field)) {
+    StringView lookup_name =
+        method->original_name.len ? method->original_name : method->name;
+    if (sv_eq(lookup_name, node->field.field)) {
       if (method->kind == SYM_METHOD) {
-        // Found instance method. Transform AST:
         // instance.method(...) -> method(instance, ...)
         // This transformation usually happens during call checking,
         // but we'll mark the node so check_call knows what to do.
@@ -396,7 +435,8 @@ static Type *check_call(Sema *s, AstNode *node) {
   // If it's a method call: instance.method(args)
   if (node->call.func->tag == NODE_FIELD) {
     AstNode *field_node = node->call.func;
-    Type *obj_type = sema_check_expr(s, field_node->field.object);
+    Type *orig_obj_type = sema_check_expr(s, field_node->field.object);
+    Type *obj_type = orig_obj_type;
 
     // Auto-dereference
     while (obj_type->kind == KIND_POINTER) {
@@ -406,13 +446,29 @@ static Type *check_call(Sema *s, AstNode *node) {
     if (obj_type->kind == KIND_STRUCT || obj_type->kind == KIND_TEMPLATE) {
       for (size_t i = 0; i < obj_type->methods.len; i++) {
         Symbol *method = obj_type->methods.items[i];
-        if (sv_eq(method->name, field_node->field.field) &&
+        StringView lookup_name =
+            method->original_name.len ? method->original_name : method->name;
+        if (sv_eq(lookup_name, field_node->field.field) &&
             method->kind == SYM_METHOD) {
           // Transformation: method(instance, args...)
           List new_args;
           List_init(&new_args);
+
+          AstNode *self_arg = field_node->field.object;
+          if (method->value && method->value->tag == NODE_FUNC_DECL &&
+              method->value->func_decl.params.len > 0) {
+            AstNode *first_param = method->value->func_decl.params.items[0];
+            Type *param_type = first_param->param.type;
+            if (param_type->kind == KIND_POINTER &&
+                orig_obj_type->kind != KIND_POINTER &&
+                type_equals(param_type->data.pointer_to, orig_obj_type)) {
+              self_arg = AstNode_new_unary(OP_ADDR_OF, field_node->field.object,
+                                           field_node->loc);
+            }
+          }
+
           // Prepend self
-          List_push(&new_args, field_node->field.object);
+          List_push(&new_args, self_arg);
           // Add remaining args
           for (size_t j = 0; j < node->call.args.len; j++) {
             List_push(&new_args, node->call.args.items[j]);
@@ -425,6 +481,25 @@ static Type *check_call(Sema *s, AstNode *node) {
           node->call.args = new_args;
 
           return check_call(s, node); // Recursively check the transformed call
+        }
+      }
+    }
+  }
+
+  if (node->call.func->tag == NODE_STATIC_MEMBER) {
+    AstNode *sm = node->call.func;
+    Symbol *parent = sema_resolve(s, sm->static_member.parent);
+    if (parent && (parent->type->kind == KIND_STRUCT ||
+                   parent->type->kind == KIND_TEMPLATE)) {
+      for (size_t i = 0; i < parent->type->methods.len; i++) {
+        Symbol *method = parent->type->methods.items[i];
+        if (method->kind != SYM_STATIC_METHOD)
+          continue;
+        StringView lookup_name =
+            method->original_name.len ? method->original_name : method->name;
+        if (sv_eq(lookup_name, sm->static_member.member)) {
+          node->call.func = AstNode_new_var(method->name, sm->loc);
+          return check_call(s, node);
         }
       }
     }
@@ -603,7 +678,7 @@ static Type *check_assignment(Sema *s, AstNode *node) {
     return type_get_primitive(s->types, PRIM_UNKNOWN);
   }
 
-  Type *rhs = sema_check_expr(s, node->assign_expr.value);
+  Type *rhs = sema_coerce(s, node->assign_expr.value, lhs);
   if (!type_can_implicitly_cast(lhs, rhs)) {
     sema_error(s, node, "Type mismatch in assignment: expected %s, got %s",
                type_to_name(lhs), type_to_name(rhs));
@@ -656,9 +731,8 @@ static Type *check_ternary(Sema *s, AstNode *node) {
 
 static Type *check_static_member(Sema *s, AstNode *node) {
   Symbol *parent = sema_resolve(s, node->static_member.parent);
-  if (!parent ||
-      (parent->type->kind != KIND_STRUCT &&
-       parent->type->kind != KIND_TEMPLATE)) {
+  if (!parent || (parent->type->kind != KIND_STRUCT &&
+                  parent->type->kind != KIND_TEMPLATE)) {
     sema_error(s, node, "Undefined type '" SV_FMT "'",
                SV_ARG(node->static_member.parent));
     return type_get_primitive(s->types, PRIM_UNKNOWN);
@@ -667,7 +741,9 @@ static Type *check_static_member(Sema *s, AstNode *node) {
   Type *type = parent->type;
   for (size_t i = 0; i < type->methods.len; i++) {
     Symbol *method = type->methods.items[i];
-    if (sv_eq(method->name, node->static_member.member)) {
+    StringView lookup_name =
+        method->original_name.len ? method->original_name : method->name;
+    if (sv_eq(lookup_name, node->static_member.member)) {
       if (method->kind == SYM_STATIC_METHOD) {
         return method->type;
       }
@@ -682,11 +758,12 @@ static Type *check_static_member(Sema *s, AstNode *node) {
 Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
   Type *expr_type = sema_check_expr(s, expr);
 
-  //  Literal Bounds Check
+  // Literal Bounds Check
   if (expr->tag == NODE_NUMBER || expr->tag == NODE_CHAR) {
     check_literal_bounds(s, expr, target);
 
-    if (type_can_implicitly_cast(target, expr_type)) {
+    if (type_can_implicitly_cast(target, expr_type) ||
+        (expr->tag == NODE_NUMBER && literal_fits_in_type(expr, target))) {
       expr->resolved_type = target;
       return target;
     }

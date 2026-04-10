@@ -1,0 +1,16 @@
+fn main() {
+    let total = 0;
+    for (let i = 0; i < 3; i = i + 1) {
+        for (let j = 0; j < 3; j = j + 1) {
+            if (j == 1) {
+                continue;
+            }
+            if (i == 2) {
+                break;
+            }
+            total = total + 1;
+            print(i, j);
+        }
+    }
+    print(total);
+}

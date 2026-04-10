@@ -53,7 +53,11 @@ void cg_pop_scope(Codegen *cg) {
   List *defer_list = List_pop(&cg->defers);
   for (int i = (int)defer_list->len - 1; i >= 0; i--) {
     AstNode *defer_node = defer_list->items[i];
-    cg_statement(cg, defer_node);
+    if (defer_node->tag == NODE_DEFER) {
+      cg_statement(cg, defer_node->defer.expr);
+    } else {
+      cg_statement(cg, defer_node);
+    }
   }
   List_free(defer_list, 0);
   free(defer_list);

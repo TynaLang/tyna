@@ -6,19 +6,29 @@
 #include "tyl/utils.h"
 
 LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
+  if (!t) {
+    panic("cg_get_llvm_type received NULL type");
+  }
+
   if (t->kind == KIND_PRIMITIVE) {
     switch (t->data.primitive) {
+    case PRIM_I8:
+    case PRIM_U8:
+    case PRIM_CHAR:
+      return LLVMInt8TypeInContext(cg->context);
+    case PRIM_I16:
+    case PRIM_U16:
+      return LLVMInt16TypeInContext(cg->context);
     case PRIM_I32:
+    case PRIM_U32:
       return LLVMInt32TypeInContext(cg->context);
     case PRIM_I64:
+    case PRIM_U64:
       return LLVMInt64TypeInContext(cg->context);
     case PRIM_F32:
       return LLVMFloatTypeInContext(cg->context);
     case PRIM_F64:
       return LLVMDoubleTypeInContext(cg->context);
-    case PRIM_U8:
-    case PRIM_CHAR:
-      return LLVMInt8TypeInContext(cg->context);
     case PRIM_BOOL:
       return LLVMInt1TypeInContext(cg->context);
     case PRIM_VOID:
@@ -48,15 +58,11 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
       struct_ty = LLVMStructCreateNamed(cg->context, buf);
     }
 
-    // Check if body is already set
-    if (LLVMCountStructElementTypes(struct_ty) > 0 || t->members.len == 0) {
-      // If we have members but body is empty, we must set it.
-      // LLVM doesn't have an easy "isBodySet", but count > 0 is a hint.
-      // For empty structs, we might need a dummy field or handle them.
+    if (!struct_ty || LLVMGetTypeKind(struct_ty) != LLVMStructTypeKind) {
+      panic("Expected LLVM struct type for '%s'", buf);
     }
 
-    // To prevent infinite recursion, we only set body if not already done
-    // We use a simple bitmask or check for opaque status if possible.
+
     if (LLVMIsOpaqueStruct(struct_ty)) {
       unsigned count = t->members.len;
       LLVMTypeRef *fields =
@@ -95,8 +101,8 @@ void cg_lower_all_structs(Codegen *cg) {
   for (size_t i = 0; i < cg->type_ctx->instances.len; i++) {
     Type *t = cg->type_ctx->instances.items[i];
     char buf[256];
-    snprintf(buf, sizeof(buf), "%.*s_instance_%p", (int)t->name.len, t->name.data,
-             (void *)t);
+    snprintf(buf, sizeof(buf), "%.*s_instance_%p", (int)t->name.len,
+             t->name.data, (void *)t);
     if (!LLVMGetTypeByName2(cg->context, buf)) {
       LLVMStructCreateNamed(cg->context, buf);
     }

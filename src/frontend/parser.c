@@ -61,6 +61,7 @@ static void Parser_sync(Parser *p) {
     case TOKEN_ELSE:
     case TOKEN_WHILE:
     case TOKEN_FOR:
+    case TOKEN_IMPL:
       return;
     default:
       Parser_token_advance(p);
@@ -82,7 +83,7 @@ static void skip_to_next_param(Parser *p) {
 
 static int is_type_token(TokenType t) {
   return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_VOID) || t == TOKEN_LBRACKET ||
-         t == TOKEN_IDENT;
+         t == TOKEN_STAR;
 }
 
 static int is_binary_operator(TokenType t) {
@@ -551,6 +552,12 @@ static AstNode *Parser_parse_expression(Parser *p, int min_bp) {
 
 static Type *Parser_parse_type_full(Parser *p) {
   Type *res = NULL;
+  int pointer_depth = 0;
+
+  while (p->current_token.type == TOKEN_STAR) {
+    pointer_depth++;
+    Parser_token_advance(p);
+  }
 
   // Handle prefix type operators: [T; N]
   if (p->current_token.type == TOKEN_LBRACKET) {
@@ -561,12 +568,8 @@ static Type *Parser_parse_type_full(Parser *p) {
 
     if (p->current_token.type == TOKEN_SEMI) {
       Parser_token_advance(p);
-      AstNode *count_node = Parser_parse_expression(p, 0);
-      if (type_is_numeric(count_node->resolved_type)) {
-        ErrorHandler_report(p->eh, p->current_token.loc, "Expected array size");
-        return NULL;
-      }
-      // Fixed-size array [T; N] -> for now, we'll just treat it as Array<T>
+      Parser_parse_expression(p, 0);
+      // Fixed-size array [T; N] currently aliases to Array<T>.
     }
 
     if (!Parser_expect(p, TOKEN_RBRACKET, "Expected ']' for array type"))
@@ -601,24 +604,8 @@ static Type *Parser_parse_type_full(Parser *p) {
     return NULL;
   }
 
-  // Handle postfix type operators: T[] for Array<T>
-  while (p->current_token.type == TOKEN_LBRACKET) {
-    Parser_token_advance(p);
-    if (!Parser_expect(p, TOKEN_RBRACKET, "Expected ']' for array type"))
-      return NULL;
-
-    Type *array_template =
-        type_get_template(p->type_ctx, sv_from_cstr("Array"));
-    if (!array_template) {
-      ErrorHandler_report(p->eh, p->current_token.loc,
-                          "Internal error: 'Array' template not registered");
-      return NULL;
-    }
-
-    List args;
-    List_init(&args);
-    List_push(&args, res);
-    res = type_get_instance(p->type_ctx, array_template, args);
+  while (pointer_depth-- > 0) {
+    res = type_get_pointer(p->type_ctx, res);
   }
 
   return res;
@@ -1003,6 +990,45 @@ static AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen) {
                                  loc);
 }
 
+static AstNode *Parser_parse_impl_decl(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'impl'
+
+  Token type_token = p->current_token;
+  if (!Parser_expect(p, TOKEN_IDENT, "Expected type name after 'impl'"))
+    return NULL;
+  AstNode *name_node = AstNode_new_var(type_token.text, type_token.loc);
+
+  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after impl type name"))
+    return NULL;
+
+  List members;
+  List_init(&members);
+
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    bool is_static = false;
+    if (p->current_token.type == TOKEN_STATIC) {
+      is_static = true;
+      Parser_token_advance(p);
+    }
+
+    if (p->current_token.type == TOKEN_FN) {
+      AstNode *fn = Parser_parse_fn_decl(p, is_static);
+      if (fn)
+        List_push(&members, fn);
+      continue;
+    }
+
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Expected function declaration inside impl block");
+    Parser_sync(p);
+  }
+
+  Parser_expect(p, TOKEN_RBRACE, "Expected '}' after impl members");
+  return AstNode_new_impl_decl(name_node, members, loc);
+}
+
 static AstNode *Parser_parse_statement(Parser *p) {
   Location loc = p->current_token.loc;
 
@@ -1048,6 +1074,8 @@ static AstNode *Parser_parse_statement(Parser *p) {
     return Parser_parse_fn_decl(p, false);
   case TOKEN_STRUCT:
     return Parser_parse_struct_decl(p, false);
+  case TOKEN_IMPL:
+    return Parser_parse_impl_decl(p);
   case TOKEN_FROZEN: {
     Parser_token_advance(p);
     if (p->current_token.type != TOKEN_STRUCT) {

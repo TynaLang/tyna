@@ -1,0 +1,16 @@
+struct Counter {
+    value: i32;
+}
+
+impl Counter {
+    static fn make(value: i32): Counter {
+        let c: Counter;
+        c.value = value;
+        return c;
+    }
+}
+
+fn main() {
+    let c = Counter::make(10);
+    print(c.value);
+}

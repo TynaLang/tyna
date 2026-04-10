@@ -1,7 +1,0 @@
-// Defer: cleanup
-let x = 1;
-{
-  defer print("cleanup");
-  print(x);
-}
-print("done");

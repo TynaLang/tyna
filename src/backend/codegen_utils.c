@@ -19,6 +19,12 @@ LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name) {
   char *c_name = sv_to_cstr(name);
   LLVMValueRef alloca = LLVMBuildAlloca(tmp_builder, llvm_type, c_name);
 
+  // Align the alloca to the type's natural alignment when available.
+  size_t align = type->alignment ? type->alignment : type->size;
+  if (align == 0)
+    align = 1;
+  LLVMSetAlignment(alloca, (unsigned)align);
+
   // Initialize with zero/null for safety
   LLVMBuildStore(tmp_builder, LLVMConstNull(llvm_type), alloca);
 
@@ -47,12 +53,38 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
       return NULL;
     }
     Type *obj_type = node->field.object->resolved_type;
+    if (node->field.object->tag == NODE_VAR) {
+      CGSymbol *sym =
+          CGSymbolTable_find(cg->current_scope, node->field.object->var.value);
+      if (sym && sym->type) {
+        obj_type = sym->type;
+      }
+    }
+    if (obj_type && obj_type->kind == KIND_POINTER) {
+      if (!obj_type->data.pointer_to) {
+        panic("Pointer object has no target type");
+      }
+      LLVMTypeRef load_ty = cg_get_llvm_type(cg, obj_type);
+      if (LLVMGetTypeKind(load_ty) != LLVMPointerTypeKind) {
+        panic("Expected pointer value type for pointer object");
+      }
+      obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
+      obj_type = obj_type->data.pointer_to;
+    }
+    if (!obj_type || obj_type->kind != KIND_STRUCT) {
+      panic("Expected FIELD object to resolve to a struct type");
+    }
+    LLVMTypeRef obj_ptr_ty = LLVMTypeOf(obj_ptr);
+    if (LLVMGetTypeKind(obj_ptr_ty) != LLVMPointerTypeKind) {
+      panic("Expected field object address to be a pointer");
+    }
     Member *m = type_get_member(obj_type, node->field.field);
     if (!m)
       return NULL;
-
-    return LLVMBuildStructGEP2(cg->builder, cg_get_llvm_type(cg, obj_type),
-                               obj_ptr, m->index, "field_addr");
+    LLVMTypeRef field_type = cg_get_llvm_type(cg, obj_type);
+    LLVMValueRef field_addr = LLVMBuildStructGEP2(
+        cg->builder, field_type, obj_ptr, m->index, "field_addr");
+    return field_addr;
   }
 
   case NODE_UNARY: {

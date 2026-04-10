@@ -88,6 +88,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_FROZEN;
   else if (sv_eq_cstr(text, "static"))
     t.type = TOKEN_STATIC;
+  else if (sv_eq_cstr(text, "impl"))
+    t.type = TOKEN_IMPL;
   else if (sv_eq_cstr(text, "int"))
     t.type = TOKEN_TYPE_INT;
   else if (sv_eq_cstr(text, "char"))

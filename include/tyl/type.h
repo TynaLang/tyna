@@ -96,6 +96,7 @@ bool type_equals(Type *a, Type *b);
 const char *type_to_name(Type *type);
 int type_rank(Type *t);
 size_t type_get_primitive_size(PrimitiveKind prim);
+size_t align_to(size_t value, size_t align);
 
 // Type Checks
 bool type_is_numeric(Type *t);

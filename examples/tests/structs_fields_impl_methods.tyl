@@ -1,0 +1,21 @@
+struct Point {
+    x: i64;
+    y: i64;
+}
+
+impl Point {
+    fn init(self: *Point): void {
+        self.x = 1;
+        self.y = 2;
+    }
+
+    fn sum(self: *Point): i64 {
+        return self.x + self.y;
+    }
+}
+
+fn main() {
+    let p: Point;
+    p.init();
+    print(p.sum());
+}

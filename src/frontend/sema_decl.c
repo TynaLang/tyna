@@ -1,5 +1,19 @@
 #include "sema_internal.h"
 #include "tyl/semantic.h"
+#include "tyl/utils.h"
+
+static StringView sema_mangle_method_name(StringView owner, StringView method) {
+  if (owner.len == 0)
+    return method;
+
+  char buf[512];
+  int len = snprintf(buf, sizeof(buf), "_TZN%zu%.*s%zu%.*s", owner.len,
+                     (int)owner.len, owner.data, method.len, (int)method.len,
+                     method.data);
+  char *heap = xmalloc(len + 1);
+  memcpy(heap, buf, len + 1);
+  return sv_from_parts(heap, len);
+}
 
 void sema_register_func_signature(Sema *s, AstNode *node) {
   StringView name = node->func_decl.name->var.value;
@@ -13,8 +27,33 @@ void sema_register_func_signature(Sema *s, AstNode *node) {
       sema_define(s, name, node->func_decl.return_type, true, node->loc);
 
   if (sym) {
+    sym->original_name = name;
     sym->func_status = node->func_decl.body ? FUNC_IMPLEMENTATION : FUNC_NONE;
     sym->value = node;
+  }
+}
+
+void sema_register_method_signature(Sema *s, AstNode *node,
+                                    StringView owner_name) {
+  StringView original_name = node->func_decl.name->var.value;
+  StringView mangled_name = sema_mangle_method_name(owner_name, original_name);
+
+  if (sema_resolve_local(s, mangled_name)) {
+    sema_error(s, node, "Redefinition of symbol '" SV_FMT "'",
+               SV_ARG(mangled_name));
+    return;
+  }
+
+  Symbol *sym = sema_define(s, mangled_name, node->func_decl.return_type, true,
+                            node->loc);
+
+  if (sym) {
+    sym->original_name = original_name;
+    sym->func_status = node->func_decl.body ? FUNC_IMPLEMENTATION : FUNC_NONE;
+    sym->value = node;
+    sym->kind = node->func_decl.is_static ? SYM_STATIC_METHOD : SYM_METHOD;
+
+    node->func_decl.name->var.value = mangled_name;
   }
 }
 

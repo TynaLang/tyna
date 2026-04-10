@@ -1,6 +1,0 @@
-// Error cases: type, bounds, const
-let arr = [1, 2, 3];
-print(arr[10]); // Out of bounds
-const c = 5;
-c = 6; // Should fail
-let b: bool = 1; // Should fail

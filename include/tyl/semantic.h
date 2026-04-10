@@ -26,6 +26,7 @@ typedef enum {
 
 struct Symbol {
   StringView name;
+  StringView original_name;
   Type *type;
   int is_const;
 

@@ -10,6 +10,8 @@ Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
 
 // Sema Decl
 void sema_register_func_signature(Sema *s, AstNode *node);
+void sema_register_method_signature(Sema *s, AstNode *node,
+                                    StringView owner_name);
 
 // Sema Expr
 Type *sema_coerce(Sema *s, AstNode *expr, Type *target);

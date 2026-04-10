@@ -1,0 +1,8 @@
+fn main() {
+    let s = "abc";
+    for (c in s) {
+        print(c);
+    }
+    let c: char = 'z';
+    print(c);
+}

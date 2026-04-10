@@ -40,6 +40,12 @@ size_t type_get_primitive_size(PrimitiveKind prim) {
   }
 }
 
+size_t align_to(size_t value, size_t align) {
+  if (align == 0)
+    return value;
+  return (value + align - 1) & ~(align - 1);
+}
+
 static void register_array_template(TypeContext *ctx) {
   Type *array_tmpl = xcalloc(1, sizeof(Type));
   array_tmpl->kind = KIND_TEMPLATE;
@@ -77,9 +83,8 @@ static void register_array_template(TypeContext *ctx) {
   type_add_member(array_tmpl, "rank", type_get_primitive(ctx, PRIM_I64), 24);
 
   // dims: ptr<i64>
-  type_add_member(
-      array_tmpl, "dims",
-      type_get_pointer(ctx, type_get_primitive(ctx, PRIM_I64)), 32);
+  type_add_member(array_tmpl, "dims",
+                  type_get_pointer(ctx, type_get_primitive(ctx, PRIM_I64)), 32);
 
   array_tmpl->size = 40;
 
@@ -93,6 +98,7 @@ TypeContext *type_context_create() {
     ctx->primitives[i]->kind = KIND_PRIMITIVE;
     ctx->primitives[i]->data.primitive = (PrimitiveKind)i;
     ctx->primitives[i]->size = type_get_primitive_size(i);
+    ctx->primitives[i]->alignment = ctx->primitives[i]->size;
     List_init(&ctx->primitives[i]->members);
     List_init(&ctx->primitives[i]->methods);
     ctx->primitives[i]->is_frozen = false;
@@ -135,6 +141,7 @@ Type *type_get_pointer(TypeContext *ctx, Type *to) {
   new_ptr->kind = KIND_POINTER;
   new_ptr->data.pointer_to = to;
   new_ptr->size = 8; // Assuming 64-bit
+  new_ptr->alignment = 8;
   List_push(&ctx->instances, new_ptr);
   return new_ptr;
 }
@@ -242,14 +249,14 @@ Type *type_get_instance(TypeContext *ctx, Type *template_type, List args) {
     if (align == 0)
       align = 1;
 
-    current_offset = (current_offset + align - 1) & ~(align - 1);
+    current_offset = align_to(current_offset, align);
     m->offset = current_offset;
     current_offset += m->type->size;
 
     if (align > max_align)
       max_align = align;
   }
-  inst->size = (current_offset + max_align - 1) & ~(max_align - 1);
+  inst->size = align_to(current_offset, max_align);
   inst->alignment = max_align;
 
   List_push(&ctx->instances, inst);
@@ -321,12 +328,26 @@ const char *type_to_name(Type *t) {
   case KIND_PRIMITIVE:
     depth--;
     switch (t->data.primitive) {
+    case PRIM_I8:
+      return "i8";
+    case PRIM_I16:
+      return "i16";
     case PRIM_I32:
       return "i32";
     case PRIM_I64:
       return "i64";
     case PRIM_U8:
       return "u8";
+    case PRIM_U16:
+      return "u16";
+    case PRIM_U32:
+      return "u32";
+    case PRIM_U64:
+      return "u64";
+    case PRIM_F32:
+      return "f32";
+    case PRIM_F64:
+      return "f64";
     case PRIM_CHAR:
       return "char";
     case PRIM_BOOL:
@@ -340,7 +361,8 @@ const char *type_to_name(Type *t) {
     }
   case KIND_POINTER: {
     static char pointer_buf[1024];
-    snprintf(pointer_buf, sizeof(pointer_buf), "ptr<%s>", type_to_name(t->data.pointer_to));
+    snprintf(pointer_buf, sizeof(pointer_buf), "ptr<%s>",
+             type_to_name(t->data.pointer_to));
     depth--;
     return pointer_buf;
   }
@@ -350,13 +372,13 @@ const char *type_to_name(Type *t) {
       char args_buf[512] = {0};
       strcat(args_buf, "<");
       for (size_t i = 0; i < t->data.instance.generic_args.len; i++) {
-        strcat(args_buf,
-               type_to_name(t->data.instance.generic_args.items[i]));
+        strcat(args_buf, type_to_name(t->data.instance.generic_args.items[i]));
         if (i < t->data.instance.generic_args.len - 1)
           strcat(args_buf, ", ");
       }
       strcat(args_buf, ">");
-      snprintf(struct_buf, sizeof(struct_buf), SV_FMT "%s", SV_ARG(t->name), args_buf);
+      snprintf(struct_buf, sizeof(struct_buf), SV_FMT "%s", SV_ARG(t->name),
+               args_buf);
     } else {
       snprintf(struct_buf, sizeof(struct_buf), SV_FMT, SV_ARG(t->name));
     }

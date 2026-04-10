@@ -132,6 +132,20 @@ static void cg_declare_functions(Codegen *cg, AstNode *root) {
     AstNode *node = root->ast_root.children.items[i];
     if (node->tag == NODE_FUNC_DECL) {
       cg_define_function(cg, node);
+    } else if (node->tag == NODE_STRUCT_DECL) {
+      for (size_t j = 0; j < node->struct_decl.members.len; j++) {
+        AstNode *member = node->struct_decl.members.items[j];
+        if (member->tag == NODE_FUNC_DECL) {
+          cg_define_function(cg, member);
+        }
+      }
+    } else if (node->tag == NODE_IMPL_DECL) {
+      for (size_t j = 0; j < node->impl_decl.members.len; j++) {
+        AstNode *member = node->impl_decl.members.items[j];
+        if (member->tag == NODE_FUNC_DECL) {
+          cg_define_function(cg, member);
+        }
+      }
     }
   }
 }
@@ -141,6 +155,20 @@ static void cg_emit_functions(Codegen *cg, AstNode *root) {
     AstNode *node = root->ast_root.children.items[i];
     if (node->tag == NODE_FUNC_DECL) {
       cg_emit_function_body(cg, node);
+    } else if (node->tag == NODE_STRUCT_DECL) {
+      for (size_t j = 0; j < node->struct_decl.members.len; j++) {
+        AstNode *member = node->struct_decl.members.items[j];
+        if (member->tag == NODE_FUNC_DECL) {
+          cg_emit_function_body(cg, member);
+        }
+      }
+    } else if (node->tag == NODE_IMPL_DECL) {
+      for (size_t j = 0; j < node->impl_decl.members.len; j++) {
+        AstNode *member = node->impl_decl.members.items[j];
+        if (member->tag == NODE_FUNC_DECL) {
+          cg_emit_function_body(cg, member);
+        }
+      }
     }
   }
 }
@@ -149,7 +177,8 @@ static void cg_emit_global_statements(Codegen *cg, AstNode *root) {
   for (size_t i = 0; i < root->ast_root.children.len; i++) {
     AstNode *node = root->ast_root.children.items[i];
 
-    if (node->tag == NODE_FUNC_DECL)
+    if (node->tag == NODE_FUNC_DECL || node->tag == NODE_STRUCT_DECL ||
+        node->tag == NODE_IMPL_DECL)
       continue;
 
     cg_statement(cg, node);

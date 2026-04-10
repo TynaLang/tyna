@@ -1,0 +1,10 @@
+fn main() {
+    let x = 7;
+    if (x % 2 == 0) {
+        print("even");
+    } else {
+        print("odd");
+    }
+    let y = x > 5 ? 42 : 13;
+    print(y);
+}

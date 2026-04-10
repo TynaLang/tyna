@@ -27,10 +27,11 @@ static LLVMTypeRef *cg_build_param_types(Codegen *cg, AstNode *func_node) {
   LLVMTypeRef *types = xmalloc(sizeof(LLVMTypeRef) * count);
   for (size_t i = 0; i < count; i++) {
     AstNode *param_node = (AstNode *)params.items[i];
-    if (param_node != NULL && param_node->tag == NODE_PARAM)
+    if (param_node != NULL && param_node->tag == NODE_PARAM) {
       types[i] = cg_get_llvm_type(cg, param_node->param.type);
-    else
+    } else {
       panic("Expected NODE_PARAM in function parameters");
+    }
   }
   return types;
 }
@@ -77,7 +78,6 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
   LLVMBasicBlockRef entry =
       LLVMAppendBasicBlockInContext(cg->context, f->value, "entry");
   LLVMPositionBuilderAtEnd(cg->builder, entry);
-
   cg_push_scope(cg);
 
   for (size_t i = 0; i < node->func_decl.params.len; i++) {
@@ -96,7 +96,6 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
     char buf[256];
     snprintf(buf, sizeof(buf), SV_FMT ".addr", SV_ARG(param_name));
     LLVMValueRef alloca = LLVMBuildAlloca(cg->builder, llvm_param_type, buf);
-
     LLVMBuildStore(cg->builder, param_val, alloca);
 
     CGSymbolTable_add(cg->current_scope, param_name, param_type, alloca);

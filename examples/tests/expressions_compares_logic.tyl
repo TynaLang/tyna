@@ -1,0 +1,8 @@
+fn main() {
+    let a: i32 = 3;
+    let b: i32 = 4;
+    print(a < b, a <= b, a == b, a != b, a > b, a >= b);
+    let flag = !(a > b) && (a != b);
+    let result = a < b ? 10 : 20;
+    print(flag, result);
+}

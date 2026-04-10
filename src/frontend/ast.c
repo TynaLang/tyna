@@ -241,6 +241,13 @@ AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
   return node;
 }
 
+AstNode *AstNode_new_impl_decl(AstNode *name, List members, Location loc) {
+  AstNode *node = AstNode_new(NODE_IMPL_DECL, loc);
+  node->impl_decl.name = name;
+  node->impl_decl.members = members;
+  return node;
+}
+
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc) {
   AstNode *node = AstNode_new(NODE_INDEX, loc);
   node->index.array = expr;
@@ -436,6 +443,13 @@ void Ast_free(AstNode *node) {
       Ast_free((AstNode *)node->struct_decl.members.items[i]);
     }
     List_free(&node->struct_decl.members, 0);
+    break;
+  case NODE_IMPL_DECL:
+    Ast_free(node->impl_decl.name);
+    for (size_t i = 0; i < node->impl_decl.members.len; i++) {
+      Ast_free((AstNode *)node->impl_decl.members.items[i]);
+    }
+    List_free(&node->impl_decl.members, 0);
     break;
 
     // end
@@ -775,6 +789,17 @@ void Ast_print(AstNode *node, int indent) {
     printf("MEMBERS:\n");
     for (size_t i = 0; i < node->struct_decl.members.len; i++) {
       Ast_print(node->struct_decl.members.items[i], indent + 2);
+    }
+    break;
+  case NODE_IMPL_DECL:
+    printf("IMPL_DECL\n");
+    print_indent(indent + 1);
+    printf("TYPE:\n");
+    Ast_print(node->impl_decl.name, indent + 2);
+    print_indent(indent + 1);
+    printf("MEMBERS:\n");
+    for (size_t i = 0; i < node->impl_decl.members.len; i++) {
+      Ast_print(node->impl_decl.members.items[i], indent + 2);
     }
     break;
   case NODE_BREAK:
