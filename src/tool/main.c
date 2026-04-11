@@ -10,6 +10,47 @@
 #include "tyl/semantic.h"
 #include "tyl/utils.h"
 
+static Module *module_find_by_name(Sema *sema, StringView name) {
+  for (size_t i = 0; i < sema->modules.len; i++) {
+    Module *module = sema->modules.items[i];
+    if (sv_eq_cstr(name, module->name))
+      return module;
+  }
+  return NULL;
+}
+
+static bool module_is_visited(List *visited, Module *module) {
+  for (size_t i = 0; i < visited->len; i++) {
+    if (visited->items[i] == module)
+      return true;
+  }
+  return false;
+}
+
+static void codegen_module_recursive(Codegen *cg, Sema *sema, Module *module,
+                                     List *visited) {
+  if (module_is_visited(visited, module)) {
+    return;
+  }
+
+  if (module->ast && module->ast->tag == NODE_AST_ROOT) {
+    for (size_t i = 0; i < module->ast->ast_root.children.len; i++) {
+      AstNode *child = module->ast->ast_root.children.items[i];
+      if (child->tag != NODE_IMPORT)
+        continue;
+
+      Module *dep = module_find_by_name(sema, child->import.alias);
+      if (!dep)
+        continue;
+
+      codegen_module_recursive(cg, sema, dep, visited);
+    }
+  }
+
+  Codegen_global(cg, module->ast);
+  List_push(visited, module);
+}
+
 typedef enum { MODE_COMPILE, MODE_JIT, MODE_EMIT_IR, MODE_DUMP } RunMode;
 
 void print_usage(const char *prog_name) {
@@ -70,31 +111,60 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Initialize contexts
+  char *resolved_main_path = realpath(file_path, NULL);
+  char *entry_dir = NULL;
+  if (resolved_main_path) {
+    entry_dir = xstrdup(resolved_main_path);
+    char *slash = strrchr(entry_dir, '/');
+    if (slash)
+      *slash = '\0';
+    else
+      entry_dir[0] = '\0';
+  } else {
+    entry_dir = xstrdup(file_path);
+    char *slash = strrchr(entry_dir, '/');
+    if (slash)
+      *slash = '\0';
+    else
+      strcpy(entry_dir, ".");
+  }
+
   TypeContext *type_ctx = type_context_create();
 
-  // 1. Load and Parse Stdlib
   const char *std_path = "stdlib/std.tyl";
   const char *std_src = read_file(std_path);
   AstNode *std_ast = NULL;
   if (std_src) {
     ErrorHandler std_eh;
-    ErrorHandler_init(&std_eh, std_src);
+    ErrorHandler_init(&std_eh, std_src, std_path, entry_dir);
     Lexer std_lexer = make_lexer(std_src, &std_eh);
     std_ast = Parser_process(&std_lexer, &std_eh, type_ctx);
   }
 
-  // 2. Load and Parse User Code
   ErrorHandler eh;
-  ErrorHandler_init(&eh, src);
+  ErrorHandler_init(&eh, src, file_path, entry_dir);
   Lexer user_lexer = make_lexer(src, &eh);
   AstNode *user_ast = Parser_process(&user_lexer, &eh, type_ctx);
 
-  // 3. Initialize Sema
   Sema sema;
   sema_init(&sema, &eh, type_ctx);
+  sema.entry_dir = entry_dir;
 
-  // 4. Analyze Stdlib
+  Module main_module = {0};
+  main_module.name = xstrdup("main");
+
+  if (resolved_main_path) {
+    main_module.abs_path = resolved_main_path;
+  } else {
+    main_module.abs_path = xstrdup(file_path);
+  }
+
+  main_module.ast = user_ast;
+  List_init(&main_module.symbols);
+  List_init(&main_module.exports);
+  main_module.is_analyzed = true;
+  sema.current_module = &main_module;
+
   if (std_ast) {
     sema_analyze(&sema, std_ast);
 
@@ -102,13 +172,11 @@ int main(int argc, char **argv) {
     // Ast_print(std_ast, 0);
   }
 
-  // 5. Fallback Check for Array
   Symbol *array_sym = sema_resolve(&sema, sv_from_parts("Array", 5));
   if (!array_sym) {
     sema_prime_types(&sema);
   }
 
-  // 6. Analyze User Code
   sema_analyze(&sema, user_ast);
 
   // printf("====  USER AST  ====\n");
@@ -121,17 +189,23 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Backend
   Codegen *cg = Codegen_new("tyl_module", type_ctx);
 
   if (std_ast) {
     Codegen_global(cg, std_ast);
   }
 
+  List visited_modules;
+  List_init(&visited_modules);
+  for (size_t i = 0; i < sema.modules.len; i++) {
+    Module *module = sema.modules.items[i];
+    codegen_module_recursive(cg, &sema, module, &visited_modules);
+  }
+  List_free(&visited_modules, 0);
+
   Codegen_global(cg, user_ast);
   Codegen_program(cg, user_ast);
 
-  // Verification
   Runner_verify(cg);
 
   switch (mode) {
@@ -158,6 +232,8 @@ int main(int argc, char **argv) {
   }
 
   sema_finish(&sema);
+  free((char *)main_module.name);
+  free(main_module.abs_path);
   type_context_free(type_ctx);
   return 0;
 }

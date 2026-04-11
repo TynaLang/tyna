@@ -41,6 +41,9 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
   }
 
   if (t->kind == KIND_POINTER) {
+    if (!t->data.pointer_to) {
+      panic("cg_get_llvm_type received pointer type with NULL target");
+    }
     return LLVMPointerType(cg_get_llvm_type(cg, t->data.pointer_to), 0);
   }
 
@@ -61,7 +64,6 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     if (!struct_ty || LLVMGetTypeKind(struct_ty) != LLVMStructTypeKind) {
       panic("Expected LLVM struct type for '%s'", buf);
     }
-
 
     if (LLVMIsOpaqueStruct(struct_ty)) {
       unsigned count = t->members.len;

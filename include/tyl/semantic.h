@@ -9,6 +9,7 @@
 typedef enum FuncStatus FuncStatus;
 
 typedef struct Symbol Symbol;
+typedef struct Module Module;
 
 typedef struct SemaScope SemaScope;
 typedef struct SemaJump SemaJump;
@@ -22,6 +23,7 @@ typedef enum {
   SYM_STATIC_METHOD,
   SYM_VAR,  // General variables/params
   SYM_FUNC, // General functions
+  SYM_MODULE,
 } SymbolKind;
 
 struct Symbol {
@@ -29,12 +31,24 @@ struct Symbol {
   StringView original_name;
   Type *type;
   int is_const;
+  int is_export;
+  int is_external;
 
   AstNode *value;
   struct SemaScope *scope;
   FuncStatus func_status;
   SymbolKind kind;
+  struct Module *module; // for SYM_MODULE symbols
 };
+
+typedef struct Module {
+  const char *name;
+  char *abs_path;
+  AstNode *ast;
+  List symbols; // List<Symbol*>
+  List exports; // List<Symbol*>
+  bool is_analyzed;
+} Module;
 
 struct SemaScope {
   SemaScope *parent;
@@ -55,8 +69,12 @@ struct Sema {
   Type *ret_type;
   AstNode *fn_node;
 
+  List modules; // List<Module*>
+  Module *current_module;
+
   TypeContext *types;
   ErrorHandler *eh;
+  char *entry_dir;
 };
 
 void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx);

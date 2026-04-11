@@ -61,9 +61,12 @@ void Runner_emit_object(Codegen *cg, const char *filename) {
 }
 
 void Runner_link_executable(const char *obj, const char *out) {
-  char cmd[512];
+  char cmd[1024];
 
-  snprintf(cmd, sizeof(cmd), "clang %s -o %s -lm", obj, out);
+  snprintf(cmd, sizeof(cmd),
+           "clang -Iinclude %s src/shared/alloc.c src/shared/utils.c "
+           "src/shared/runtime.c -o %s -lm",
+           obj, out);
 
   int res = system(cmd);
   if (res != 0) {
@@ -120,10 +123,7 @@ void Runner_jit(Codegen *cg) {
   }
 
   int (*entry_func)() = (int (*)())(uintptr_t)entry_addr;
-
-  printf("--- JIT Execution Started ---\n");
   int exit_code = entry_func();
-  printf("\n--- JIT Finished (Result: %d) ---\n", exit_code);
 
   LLVMOrcDisposeLLJIT(lljit);
   LLVMOrcDisposeThreadSafeContext(ts_ctx);

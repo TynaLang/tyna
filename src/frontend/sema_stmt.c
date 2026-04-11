@@ -102,12 +102,52 @@ void sema_check_stmt(Sema *s, AstNode *node) {
 
   switch (node->tag) {
 
-  case NODE_BLOCK: {
-    sema_scope_push(s);
-    for (size_t i = 0; i < node->block.statements.len; i++) {
-      sema_check_stmt(s, node->block.statements.items[i]);
+  case NODE_IMPORT: {
+    Module *module = module_resolve_or_load(
+        s, node->import.path,
+        s->current_module ? s->current_module->abs_path : ".");
+    if (!module)
+      return;
+
+    StringView name = node->import.alias;
+    if (sema_resolve_local(s, name)) {
+      sema_error(s, node, "Duplicate import alias '" SV_FMT "'", SV_ARG(name));
+      return;
     }
-    sema_scope_pop(s);
+
+    Symbol *sym = sema_define(
+        s, name, type_get_primitive(s->types, PRIM_UNKNOWN), false, node->loc);
+    if (sym) {
+      sym->kind = SYM_MODULE;
+      sym->module = module;
+      sym->is_export = false;
+      sym->is_external = false;
+      sym->value = NULL;
+    }
+
+    for (size_t i = 0; i < module->exports.len; i++) {
+      Symbol *export = module->exports.items[i];
+      StringView export_name = export->original_name.len ? export->original_name
+                                                        : export->name;
+      if (sema_resolve_local(s, export_name)) {
+        sema_error(s, node, "Duplicate imported symbol '" SV_FMT "'",
+                   SV_ARG(export_name));
+        continue;
+      }
+
+      Symbol *export_sym = sema_define(s, export_name, export->type, export->is_const,
+                                       node->loc);
+      if (!export_sym)
+        continue;
+
+      export_sym->original_name = export->original_name;
+      export_sym->value = export->value;
+      export_sym->kind = export->kind;
+      export_sym->func_status = export->func_status;
+      export_sym->is_external = export->is_external;
+      export_sym->is_export = false;
+      export_sym->module = module;
+    }
     break;
   }
 
@@ -147,6 +187,7 @@ void sema_check_stmt(Sema *s, AstNode *node) {
         sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
     if (sym) {
       sym->value = node->var_decl.value;
+      sym->is_export = node->var_decl.is_export;
     }
     break;
   }
@@ -190,6 +231,15 @@ void sema_check_stmt(Sema *s, AstNode *node) {
 
     s->ret_type = old_ret;
     s->fn_node = old_fn;
+    break;
+  }
+
+  case NODE_BLOCK: {
+    sema_scope_push(s);
+    for (size_t i = 0; i < node->block.statements.len; i++) {
+      sema_check_stmt(s, node->block.statements.items[i]);
+    }
+    sema_scope_pop(s);
     break;
   }
 
@@ -364,7 +414,10 @@ void sema_check_stmt(Sema *s, AstNode *node) {
           break;
         }
       }
-      sema_define(s, name, t, true, node->loc);
+      Symbol *sym = sema_define(s, name, t, true, node->loc);
+      if (sym) {
+        sym->is_export = node->struct_decl.is_export;
+      }
     }
 
     t->is_frozen = node->struct_decl.is_frozen;

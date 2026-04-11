@@ -1,0 +1,13 @@
+export struct Item {
+    id: i32;
+    name: str;
+}
+
+export impl Item {
+    static fn make(id: i32, name: str): Item {
+        let item: Item;
+        item.id = id;
+        item.name = name;
+        return item;
+    }
+}

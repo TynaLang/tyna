@@ -1,0 +1,50 @@
+import lib.item;
+
+export struct InventoryItem {
+    item: Item;
+    count: i32;
+}
+
+export struct Inventory {
+    items: [InventoryItem; 4];
+    len: i32;
+}
+
+export impl Inventory {
+    fn init(self: *Inventory): void {
+        self.len = 0;
+    }
+
+    fn add(self: *Inventory, item: Item): void {
+        for (let i = 0; i < self.len; i = i + 1) {
+            if (self.items[i].item.id == item.id) {
+                self.items[i].count = self.items[i].count + 1;
+                return;
+            }
+        }
+
+        if (self.len < 4) {
+            let entry: InventoryItem;
+            entry.item = item;
+            entry.count = 1;
+            self.items[self.len] = entry;
+            self.len = self.len + 1;
+        }
+    }
+
+    fn count(self: *Inventory): i32 {
+        let total: i32 = 0;
+        for (let i = 0; i < self.len; i = i + 1) {
+            total = total + self.items[i].count;
+        }
+        return total;
+    }
+
+    fn distinct_count(self: *Inventory): i32 {
+        return self.len;
+    }
+
+    fn get(self: *Inventory, index: i32): InventoryItem {
+        return self.items[index];
+    }
+}

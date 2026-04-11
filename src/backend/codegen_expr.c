@@ -19,9 +19,18 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
   }
 
   case NODE_FIELD: {
-    // Get the address of the parent struct
+    // Get the address of the parent struct or pointer-to-struct
     LLVMValueRef obj_ptr = cg_expression_addr(cg, node->field.object);
     Type *obj_type = node->field.object->resolved_type;
+
+    if (obj_type && obj_type->kind == KIND_POINTER) {
+      if (!obj_type->data.pointer_to) {
+        panic("Pointer object has no target type");
+      }
+      LLVMTypeRef load_ty = cg_get_llvm_type(cg, obj_type);
+      obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
+      obj_type = obj_type->data.pointer_to;
+    }
 
     // Find member index
     int index = -1;
@@ -31,6 +40,11 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
         index = i;
         break;
       }
+    }
+
+    if (index < 0) {
+      panic("Field '%.*s' not found on type %s", (int)node->field.field.len,
+            node->field.field.data, type_to_name(obj_type));
     }
 
     return LLVMBuildStructGEP2(cg->builder, cg_get_llvm_type(cg, obj_type),
@@ -410,7 +424,13 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
 static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
   UnaryOp op = node->unary.op;
   AstNode *expr = node->unary.expr;
-  LLVMTypeRef res_ty = cg_get_llvm_type(cg, node->resolved_type);
+  LLVMTypeRef res_ty = NULL;
+  if (op == OP_NEG || op == OP_DEREF) {
+    if (!node->resolved_type) {
+      panic("Unary expression has no resolved type");
+    }
+    res_ty = cg_get_llvm_type(cg, node->resolved_type);
+  }
 
   if (op == OP_NEG) {
     LLVMValueRef val = cg_expression(cg, expr);
@@ -511,10 +531,58 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   if (!node->assign_expr.target->resolved_type) {
     panic("Assignment target has no resolved type");
   }
+  if (!node->assign_expr.value->resolved_type) {
+    panic("Assignment RHS has no resolved type");
+  }
   LLVMTypeRef target_ty =
       cg_get_llvm_type(cg, node->assign_expr.target->resolved_type);
   val =
       cg_cast_value(cg, val, node->assign_expr.value->resolved_type, target_ty);
+
+  if (node->assign_expr.target->tag == NODE_INDEX) {
+    Type *array_type = node->assign_expr.target->index.array->resolved_type;
+    if (type_is_array_struct(array_type)) {
+      LLVMValueRef array_struct_ptr =
+          cg_get_address(cg, node->assign_expr.target->index.array);
+      if (!array_struct_ptr)
+        panic("Invalid array assignment target");
+
+      LLVMTypeRef array_ty = cg_get_llvm_type(cg, array_type);
+      LLVMValueRef len_ptr = LLVMBuildStructGEP2(
+          cg->builder, array_ty, array_struct_ptr, 1, "array_len_ptr");
+      LLVMValueRef curr_len =
+          LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
+                         len_ptr, "array_curr_len");
+      LLVMValueRef idx_val =
+          cg_expression(cg, node->assign_expr.target->index.index);
+      LLVMValueRef idx_i64 = cg_cast_value(
+          cg, idx_val, node->assign_expr.target->index.index->resolved_type,
+          LLVMInt64TypeInContext(cg->context));
+      LLVMValueRef is_append = LLVMBuildICmp(cg->builder, LLVMIntEQ, idx_i64,
+                                             curr_len, "array_is_append");
+      LLVMBasicBlockRef append_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "array_append");
+      LLVMBasicBlockRef skip_append_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "array_skip_append");
+      LLVMBasicBlockRef append_merge_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "array_append_merge");
+      LLVMBuildCondBr(cg->builder, is_append, append_bb, skip_append_bb);
+
+      LLVMPositionBuilderAtEnd(cg->builder, append_bb);
+      LLVMValueRef next_len =
+          LLVMBuildAdd(cg->builder, curr_len,
+                       LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0),
+                       "array_next_len");
+      LLVMBuildStore(cg->builder, next_len, len_ptr);
+      LLVMBuildBr(cg->builder, append_merge_bb);
+
+      LLVMPositionBuilderAtEnd(cg->builder, skip_append_bb);
+      LLVMBuildBr(cg->builder, append_merge_bb);
+
+      LLVMPositionBuilderAtEnd(cg->builder, append_merge_bb);
+    }
+  }
+
   LLVMBuildStore(cg->builder, val, ptr);
   return val;
 }
@@ -572,9 +640,15 @@ static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
   while (obj_type && obj_type->kind == KIND_POINTER) {
     obj_type = obj_type->data.pointer_to;
   }
+  if (!obj_type) {
+    panic("Field expression object has no resolved type");
+  }
   Member *m = type_get_member(obj_type, node->field.field);
   if (!m)
     panic("Field not found");
+  if (!m->type) {
+    panic("Field member has no type");
+  }
 
   LLVMValueRef obj_ptr = cg_get_address(cg, obj_node);
   if (!obj_ptr) {
@@ -601,13 +675,40 @@ static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
 }
 
 static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
-  Type *inst_type = node->resolved_type; // This is Array<T>
+  Type *inst_type = node->resolved_type;
+  if (!inst_type) {
+    if (node->array_literal.items.len == 0)
+      panic("Internal error: cannot infer type for empty array literal");
+
+    AstNode *first_item = node->array_literal.items.items[0];
+    if (!first_item || !first_item->resolved_type)
+      panic("Internal error: cannot infer array element type from first item");
+
+    Type *element_type = first_item->resolved_type;
+    Type *array_template =
+        type_get_template(cg->type_ctx, sv_from_parts("Array", 5));
+    if (!array_template)
+      panic("Internal error: Array template not registered in codegen");
+
+    List args;
+    List_init(&args);
+    List_push(&args, element_type);
+    inst_type = type_get_instance(cg->type_ctx, array_template, args);
+    List_free(&args, 0);
+    node->resolved_type = inst_type;
+  }
+
+  size_t count = node->array_literal.items.len;
+
   // Get the T* type (the type of the 'data' field)
   Member *data_mem = type_get_member(inst_type, sv_from_parts("data", 4));
+  if (!data_mem) {
+    panic("Internal error: array literal type '%s' has no data member",
+          type_to_name(inst_type));
+  }
   Type *ptr_type = data_mem->type;
   Type *elem_type = ptr_type->data.pointer_to;
 
-  size_t count = node->array_literal.items.len;
   LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
   LLVMTypeRef array_ty = LLVMArrayType(llvm_elem_ty, count);
 
@@ -773,16 +874,38 @@ static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
 
 static LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
   Type *inst_type = node->resolved_type;
-  Member *data_mem = type_get_member(inst_type, sv_from_parts("data", 4));
-  Type *ptr_type = data_mem->type;
-  Type *elem_type = ptr_type->data.pointer_to;
+  if (!inst_type) {
+    if (!node->array_repeat.value || !node->array_repeat.value->resolved_type)
+      panic("Internal error: cannot infer array repeat type from value");
 
-  LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
+    Type *element_type = node->array_repeat.value->resolved_type;
+    Type *array_template =
+        type_get_template(cg->type_ctx, sv_from_parts("Array", 5));
+    if (!array_template)
+      panic("Internal error: Array template not registered in codegen");
+
+    List args;
+    List_init(&args);
+    List_push(&args, element_type);
+    inst_type = type_get_instance(cg->type_ctx, array_template, args);
+    List_free(&args, 0);
+    node->resolved_type = inst_type;
+  }
+
   LLVMValueRef count_val = cg_expression(cg, node->array_repeat.count);
   count_val =
       cg_cast_value(cg, count_val, node->array_repeat.count->resolved_type,
                     LLVMInt64TypeInContext(cg->context));
 
+  Member *data_mem = type_get_member(inst_type, sv_from_parts("data", 4));
+  if (!data_mem) {
+    panic("Internal error: array repeat type '%s' has no data member",
+          type_to_name(inst_type));
+  }
+  Type *ptr_type = data_mem->type;
+  Type *elem_type = ptr_type->data.pointer_to;
+
+  LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
   LLVMValueRef raw_data_ptr = LLVMBuildArrayAlloca(
       cg->builder, llvm_elem_ty, count_val, "array_rep_storage");
 
@@ -960,6 +1083,9 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
   case NODE_FIELD:
     return cg_field_expr(cg, node);
   case NODE_INDEX: {
+    if (!node->resolved_type) {
+      panic("Internal error: indexed expression has no resolved type");
+    }
     LLVMValueRef element_ptr = cg_expression_addr(cg, node);
     return LLVMBuildLoad2(cg->builder,
                           cg_get_llvm_type(cg, node->resolved_type),

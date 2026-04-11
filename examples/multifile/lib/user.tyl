@@ -1,0 +1,20 @@
+import lib.item;
+import lib.inventory;
+
+export struct User {
+    name: str;
+    inventory: Inventory;
+}
+
+export impl User {
+    static fn create(name: str): User {
+        let user: User;
+        user.name = name;
+        user.inventory.init();
+        return user;
+    }
+
+    fn pick_item(self: *User, item: Item): void {
+        self.inventory.add(item);
+    }
+}

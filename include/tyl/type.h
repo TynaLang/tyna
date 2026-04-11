@@ -4,6 +4,7 @@
 #include "tyl/utils.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef struct Type Type;
 typedef struct TypeContext TypeContext;
@@ -48,6 +49,7 @@ struct Type {
   StringView name;
   size_t size;
   size_t alignment;
+  uint64_t fixed_array_len;
 
   union {
     PrimitiveKind primitive;
@@ -62,15 +64,15 @@ struct Type {
     } instance;
   } data;
 
-  List members; // List<Member*> - Resolved for concrete types
-  List methods; // List<Symbol*> - New infrastructure for methods
-  bool is_frozen; // If true, fields cannot be added/modified.
+  List members;      // List<Member*> - Resolved for concrete types
+  List methods;      // List<Symbol*> - New infrastructure for methods
+  bool is_frozen;    // If true, fields cannot be added/modified.
   bool is_intrinsic; // Identifies types the compiler "needs" (like Array)
 };
 
 struct TypeContext {
   Type *primitives[PRIM_UNKNOWN + 1];
-  List structs; // Generic structs
+  List structs;   // Generic structs
   List templates; // List<Type*>
   List instances; // List<Type*>
 };
@@ -85,6 +87,8 @@ Type *type_get_pointer(TypeContext *ctx, Type *to);
 Type *type_get_struct(TypeContext *ctx, StringView name);
 Type *type_get_template(TypeContext *ctx, StringView name);
 Type *type_get_instance(TypeContext *ctx, Type *template_type, List args);
+Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
+                              uint64_t fixed_array_len);
 
 // Member Management
 Member *type_get_member(Type *type, StringView name);

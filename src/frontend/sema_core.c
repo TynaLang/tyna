@@ -92,11 +92,16 @@ Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
 
   Symbol *sym = xmalloc(sizeof(Symbol));
   sym->name = name;
+  sym->original_name = name;
   sym->type = type;
   sym->is_const = is_const;
+  sym->is_export = false;
+  sym->is_external = false;
+  sym->value = NULL;
   sym->func_status = FUNC_NONE;
   sym->kind = SYM_VAR; // Default to SYM_VAR
   sym->scope = s->scope;
+  sym->module = NULL;
 
   List_push(&s->scope->symbols, sym);
   return sym;
@@ -112,14 +117,39 @@ void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx) {
   s->fn_node = NULL;
   s->jump = NULL;
   s->scope = NULL;
+  List_init(&s->modules);
+  s->current_module = NULL;
+  s->entry_dir = NULL;
 
   sema_scope_push(s);
+}
+
+static void module_free(Module *module) {
+  if (!module)
+    return;
+
+  Ast_free(module->ast);
+  for (size_t i = 0; i < module->symbols.len; i++) {
+    free(module->symbols.items[i]);
+  }
+  List_free(&module->symbols, 0);
+  List_free(&module->exports, 0);
+  free(module->abs_path);
+  free((char *)module->name);
+  free(module);
 }
 
 void sema_finish(Sema *s) {
   while (s->scope) {
     sema_scope_pop(s);
   }
+
+  for (size_t i = 0; i < s->modules.len; i++) {
+    module_free(s->modules.items[i]);
+  }
+  List_free(&s->modules, 0);
+  free(s->entry_dir);
+  s->entry_dir = NULL;
 }
 
 void sema_analyze(Sema *s, AstNode *root) {
@@ -135,7 +165,7 @@ void sema_analyze(Sema *s, AstNode *root) {
         AstNode *member = node->struct_decl.members.items[j];
         if (member->tag == NODE_FUNC_DECL) {
           sema_register_method_signature(s, member,
-                                        node->struct_decl.name->var.value);
+                                         node->struct_decl.name->var.value);
         }
       }
     } else if (node->tag == NODE_IMPL_DECL) {
@@ -143,7 +173,7 @@ void sema_analyze(Sema *s, AstNode *root) {
         AstNode *member = node->impl_decl.members.items[j];
         if (member->tag == NODE_FUNC_DECL) {
           sema_register_method_signature(s, member,
-                                        node->impl_decl.name->var.value);
+                                         node->impl_decl.name->var.value);
         }
       }
     }

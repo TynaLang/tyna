@@ -56,6 +56,29 @@ void __tyl_str_to_array(FatPtr *out, const FatPtr *str) {
   *out = (FatPtr){1, new_data, new_dims};
 }
 
+void __tyl_array_init_fixed(void *arr, int64_t elem_size, int64_t fixed_len) {
+  if (!arr || fixed_len <= 0 || elem_size <= 0)
+    return;
+
+  // Array layout: data, len, cap, rank, dims
+  void **data_ptr = (void **)arr;
+  int64_t *len_ptr = (int64_t *)((char *)arr + 8);
+  int64_t *cap_ptr = (int64_t *)((char *)arr + 16);
+  int64_t *rank_ptr = (int64_t *)((char *)arr + 24);
+  int64_t **dims_ptr = (int64_t **)((char *)arr + 32);
+
+  if (*data_ptr)
+    return;
+
+  *data_ptr = malloc(elem_size * fixed_len);
+  *len_ptr = 0;
+  *cap_ptr = fixed_len;
+  *rank_ptr = 1;
+  *dims_ptr = malloc(sizeof(int64_t) * 1);
+  if (*dims_ptr)
+    (*dims_ptr)[0] = fixed_len;
+}
+
 void __tyl_array_to_str(FatPtr *out, const FatPtr *arr) {
   int64_t arr_len = (arr->rank > 0 && arr->dims) ? arr->dims[0] : 0;
   if (arr_len <= 0) {

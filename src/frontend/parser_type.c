@@ -15,13 +15,29 @@ Type *Parser_parse_type_full(Parser *p) {
     if (!elementType)
       return NULL;
 
+    size_t array_len = 0;
     if (p->current_token.type == TOKEN_SEMI) {
       Parser_token_advance(p);
-      Parser_parse_expression(p, 0);
+      AstNode *len_expr = Parser_parse_expression(p, 0);
+      if (!len_expr || len_expr->tag != NODE_NUMBER ||
+          sv_contains(len_expr->number.raw_text, '.') ||
+          sv_ends_with(len_expr->number.raw_text, "f") ||
+          sv_ends_with(len_expr->number.raw_text, "F")) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Array length must be an integer literal");
+        return NULL;
+      }
+      array_len = (size_t)len_expr->number.value;
     }
 
     if (!Parser_expect(p, TOKEN_RBRACKET, "Expected ']' for array type"))
       return NULL;
+
+    if (array_len == 0) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Fixed array length must be greater than zero");
+      return NULL;
+    }
 
     Type *array_template =
         type_get_template(p->type_ctx, sv_from_cstr("Array"));
@@ -34,7 +50,9 @@ Type *Parser_parse_type_full(Parser *p) {
     List args;
     List_init(&args);
     List_push(&args, elementType);
-    res = type_get_instance(p->type_ctx, array_template, args);
+    res = type_get_instance_fixed(p->type_ctx, array_template, args,
+                                  (uint64_t)array_len);
+    List_free(&args, 0);
   } else {
     PrimitiveKind kind = Token_token_to_type(p->current_token.type);
     if (kind != PRIM_UNKNOWN) {

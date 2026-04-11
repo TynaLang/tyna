@@ -200,11 +200,17 @@ static Type *resolve_placeholder(TypeContext *ctx, Type *blueprint,
 
 // Monomorphization engine
 Type *type_get_instance(TypeContext *ctx, Type *template_type, List args) {
+  return type_get_instance_fixed(ctx, template_type, args, 0);
+}
+
+Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
+                              uint64_t fixed_array_len) {
   // Check if instance already exists
   for (size_t i = 0; i < ctx->instances.len; i++) {
     Type *inst = ctx->instances.items[i];
     if (inst->kind == KIND_STRUCT &&
-        inst->data.instance.from_template == template_type) {
+        inst->data.instance.from_template == template_type &&
+        inst->fixed_array_len == fixed_array_len) {
       if (inst->data.instance.generic_args.len == args.len) {
         bool match = true;
         for (size_t j = 0; j < args.len; j++) {
@@ -223,6 +229,7 @@ Type *type_get_instance(TypeContext *ctx, Type *template_type, List args) {
   Type *inst = xcalloc(1, sizeof(Type));
   inst->kind = KIND_STRUCT;
   inst->name = template_type->name; // In a real impl, concat names
+  inst->fixed_array_len = fixed_array_len;
   inst->data.instance.from_template = template_type;
   List_init(&inst->data.instance.generic_args);
   for (size_t i = 0; i < args.len; i++) {
@@ -274,6 +281,9 @@ void type_add_member(Type *type, const char *name, Type *member_type,
 }
 
 Member *type_get_member(Type *type, StringView name) {
+  if (!type)
+    return NULL;
+
   for (size_t i = 0; i < type->members.len; i++) {
     Member *m = type->members.items[i];
     if (sv_eq(sv_from_cstr(m->name), name))
@@ -300,17 +310,8 @@ bool type_equals(Type *a, Type *b) {
       return false;
     if (a->data.instance.from_template != b->data.instance.from_template)
       return false;
-    if (a->data.instance.generic_args.len != b->data.instance.generic_args.len)
+    if (a->fixed_array_len != b->fixed_array_len)
       return false;
-    for (size_t i = 0; i < a->data.instance.generic_args.len; i++) {
-      if (!type_equals(a->data.instance.generic_args.items[i],
-                       b->data.instance.generic_args.items[i])) {
-        return false;
-      }
-    }
-    return true;
-  default:
-    return false;
   }
 }
 
@@ -375,6 +376,12 @@ const char *type_to_name(Type *t) {
         strcat(args_buf, type_to_name(t->data.instance.generic_args.items[i]));
         if (i < t->data.instance.generic_args.len - 1)
           strcat(args_buf, ", ");
+      }
+      if (t->fixed_array_len > 0) {
+        char len_buf[32];
+        snprintf(len_buf, sizeof(len_buf), ";%llu",
+                 (unsigned long long)t->fixed_array_len);
+        strcat(args_buf, len_buf);
       }
       strcat(args_buf, ">");
       snprintf(struct_buf, sizeof(struct_buf), SV_FMT "%s", SV_ARG(t->name),

@@ -2,6 +2,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "sema_internal.h"
 #include "tyl/ast.h"
@@ -431,6 +432,8 @@ static Type *check_binary_logical(Sema *s, AstNode *node) {
   }
 }
 
+static Type *sema_find_type_by_name(Sema *s, StringView name);
+
 static Type *check_call(Sema *s, AstNode *node) {
   // If it's a method call: instance.method(args)
   if (node->call.func->tag == NODE_FIELD) {
@@ -474,9 +477,19 @@ static Type *check_call(Sema *s, AstNode *node) {
             List_push(&new_args, node->call.args.items[j]);
           }
 
-          // Modify the call node to point to the method's AST function node
-          // This typically needs more handling for namespaces, so we use the
-          // symbol name for now
+          // Ensure the mangled method symbol is visible in the current scope.
+          if (!sema_resolve(s, method->name)) {
+            Symbol *alias = sema_define(s, method->name, method->type, true,
+                                        field_node->loc);
+            if (alias) {
+              alias->original_name = method->original_name;
+              alias->value = method->value;
+              alias->kind = method->kind;
+              alias->is_export = false;
+            }
+          }
+
+          // Modify the call node to use the mangled method symbol.
           node->call.func = AstNode_new_var(method->name, field_node->loc);
           node->call.args = new_args;
 
@@ -489,15 +502,28 @@ static Type *check_call(Sema *s, AstNode *node) {
   if (node->call.func->tag == NODE_STATIC_MEMBER) {
     AstNode *sm = node->call.func;
     Symbol *parent = sema_resolve(s, sm->static_member.parent);
-    if (parent && (parent->type->kind == KIND_STRUCT ||
-                   parent->type->kind == KIND_TEMPLATE)) {
-      for (size_t i = 0; i < parent->type->methods.len; i++) {
-        Symbol *method = parent->type->methods.items[i];
+    Type *parent_type =
+        parent ? parent->type
+               : sema_find_type_by_name(s, sm->static_member.parent);
+    if (parent_type && (parent_type->kind == KIND_STRUCT ||
+                        parent_type->kind == KIND_TEMPLATE)) {
+      for (size_t i = 0; i < parent_type->methods.len; i++) {
+        Symbol *method = parent_type->methods.items[i];
         if (method->kind != SYM_STATIC_METHOD)
           continue;
         StringView lookup_name =
             method->original_name.len ? method->original_name : method->name;
         if (sv_eq(lookup_name, sm->static_member.member)) {
+          if (!sema_resolve(s, method->name)) {
+            Symbol *alias =
+                sema_define(s, method->name, method->type, true, sm->loc);
+            if (alias) {
+              alias->original_name = method->original_name;
+              alias->value = method->value;
+              alias->kind = method->kind;
+              alias->is_export = false;
+            }
+          }
           node->call.func = AstNode_new_var(method->name, sm->loc);
           return check_call(s, node);
         }
@@ -546,7 +572,8 @@ static Type *check_call(Sema *s, AstNode *node) {
       }
       for (size_t i = 0;
            i < node->call.args.len && i < fn_decl->func_decl.params.len; i++) {
-        Type *arg_type = sema_check_expr(s, node->call.args.items[i]);
+        AstNode *arg_node = node->call.args.items[i];
+        Type *arg_type = sema_check_expr(s, arg_node);
         AstNode *param_node = fn_decl->func_decl.params.items[i];
         Type *param_type = param_node->param.type;
         if (!type_can_implicitly_cast(param_type, arg_type)) {
@@ -629,6 +656,12 @@ static Type *check_array_expr(Sema *s, AstNode *node) {
   Type *instance = type_get_instance(s->types, array_template, args);
   List_free(&args, 0); // Cleanup temporary list
 
+  // Assign the resolved type on the literal/repeat node itself so codegen
+  // can rely on it without needing extra inference later.
+  if (node) {
+    node->resolved_type = instance;
+  }
+
   // RECURSIVE CHECK: If this is an ARRAY_REPEAT, we must ensure we return
   // Array<T> where T is the result of the inner repeat. The parser generates
   // these nested for [value; c1, c2, c3]
@@ -692,6 +725,20 @@ static Type *check_cast(Sema *s, AstNode *node) {
   return node->cast_expr.target_type;
 }
 
+static Type *sema_find_type_by_name(Sema *s, StringView name) {
+  for (size_t i = 0; i < s->types->structs.len; i++) {
+    Type *t = s->types->structs.items[i];
+    if (sv_eq(t->name, name))
+      return t;
+  }
+  for (size_t i = 0; i < s->types->instances.len; i++) {
+    Type *t = s->types->instances.items[i];
+    if (sv_eq(t->name, name))
+      return t;
+  }
+  return NULL;
+}
+
 static Type *check_ternary(Sema *s, AstNode *node) {
   Type *cond = sema_check_expr(s, node->ternary.condition);
   if (!type_is_bool(cond)) {
@@ -731,14 +778,19 @@ static Type *check_ternary(Sema *s, AstNode *node) {
 
 static Type *check_static_member(Sema *s, AstNode *node) {
   Symbol *parent = sema_resolve(s, node->static_member.parent);
-  if (!parent || (parent->type->kind != KIND_STRUCT &&
-                  parent->type->kind != KIND_TEMPLATE)) {
+  Type *type = NULL;
+  if (parent) {
+    type = parent->type;
+  } else {
+    type = sema_find_type_by_name(s, node->static_member.parent);
+  }
+
+  if (!type || (type->kind != KIND_STRUCT && type->kind != KIND_TEMPLATE)) {
     sema_error(s, node, "Undefined type '" SV_FMT "'",
                SV_ARG(node->static_member.parent));
     return type_get_primitive(s->types, PRIM_UNKNOWN);
   }
 
-  Type *type = parent->type;
   for (size_t i = 0; i < type->methods.len; i++) {
     Symbol *method = type->methods.items[i];
     StringView lookup_name =
@@ -771,25 +823,29 @@ Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
 
   // Exact match or implicit cast
   if (type_can_implicitly_cast(target, expr_type)) {
+    expr->resolved_type = target;
     return target;
   }
 
   // Inference support
   if (target->kind == KIND_PRIMITIVE &&
       target->data.primitive == PRIM_UNKNOWN) {
+    expr->resolved_type = expr_type;
     return expr_type;
   }
 
   sema_error(s, expr, "Type mismatch: expected %s, got %s",
              type_to_name(target), type_to_name(expr_type));
+  expr->resolved_type = expr_type;
   return expr_type;
 }
 
 Type *sema_check_expr(Sema *s, AstNode *node) {
   if (!node)
     return type_get_primitive(s->types, PRIM_UNKNOWN);
-  if (node->resolved_type)
+  if (node->resolved_type) {
     return node->resolved_type;
+  }
 
   Type *type = type_get_primitive(s->types, PRIM_UNKNOWN);
 
@@ -831,6 +887,8 @@ Type *sema_check_expr(Sema *s, AstNode *node) {
     type = check_call(s, node);
     break;
   case NODE_ARRAY_LITERAL:
+    type = check_array_expr(s, node);
+    break;
   case NODE_ARRAY_REPEAT:
     type = check_array_expr(s, node);
     break;

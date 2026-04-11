@@ -64,6 +64,7 @@ enum AstKind {
   NODE_STATIC_MEMBER,
   NODE_STRUCT_DECL,
   NODE_IMPL_DECL,
+  NODE_IMPORT,
 
   NODE_ARRAY_LITERAL,
   NODE_ARRAY_REPEAT,
@@ -106,6 +107,7 @@ struct AstNode {
       List members;      // List<AstNode* (NODE_VAR_DECL or NODE_FUNC_DECL)>
       List placeholders; // List<StringView*>
       bool is_frozen;
+      bool is_export;
     } struct_decl;
 
     struct {
@@ -119,6 +121,8 @@ struct AstNode {
       AstNode *body;
       Type *return_type;
       bool is_static;
+      bool is_export;
+      bool is_external;
     } func_decl;
 
     struct {
@@ -135,6 +139,7 @@ struct AstNode {
       AstNode *value;
       Type *declared_type;
       int is_const;
+      bool is_export;
     } var_decl;
 
     struct {
@@ -270,13 +275,20 @@ struct AstNode {
       AstNode *then_branch;
       AstNode *else_branch;
     } if_stmt;
+
+    struct {
+      StringView path;
+      StringView alias;
+    } import;
   };
 };
 
 AstNode *AstNode_new_program(Location loc);
+AstNode *AstNode_new_import(StringView path, StringView alias, Location loc);
 
 AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, Type *type,
-                              int is_const, Location loc);
+                              int is_const, bool is_export,
+                              Location loc);
 AstNode *AstNode_new_print_stmt(List values, Location loc);
 
 AstNode *AstNode_new_number(double value, StringView raw_text, Location loc);
@@ -303,7 +315,8 @@ AstNode *AstNode_new_expr_stmt(AstNode *expr, Location loc);
 
 AstNode *AstNode_new_call(AstNode *func, List args, Location loc);
 AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
-                               AstNode *body, bool is_static, Location loc);
+                               AstNode *body, bool is_static, bool is_export,
+                               bool is_external, Location loc);
 AstNode *AstNode_new_return(AstNode *expr, Location loc);
 AstNode *AstNode_new_param(AstNode *name, Type *type, Location loc);
 AstNode *AstNode_new_block(Location loc);
@@ -330,7 +343,8 @@ AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
                              AstNode *false_expr, Location loc);
 
 AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
-                                 bool is_frozen, Location loc);
+                                 bool is_frozen, bool is_export,
+                                 Location loc);
 AstNode *AstNode_new_impl_decl(AstNode *name, List members, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
 

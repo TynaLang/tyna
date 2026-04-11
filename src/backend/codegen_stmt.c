@@ -6,20 +6,45 @@
 #include <string.h>
 
 void cg_var_decl(Codegen *cg, AstNode *node) {
-  LLVMValueRef alloca = cg_alloca_in_entry(cg, node->var_decl.declared_type,
-                                           node->var_decl.name->var.value);
+  bool is_global_decl =
+      cg->current_function_ref &&
+      sv_eq(cg->current_function_ref->name, sv_from_cstr("__system__main__"));
+
+  LLVMTypeRef llvm_type = cg_get_llvm_type(cg, node->var_decl.declared_type);
+  LLVMValueRef ptr;
+
+  if (is_global_decl) {
+    char *name = sv_to_cstr(node->var_decl.name->var.value);
+    ptr = LLVMAddGlobal(cg->module, llvm_type, name);
+    free(name);
+
+    LLVMSetInitializer(ptr, LLVMConstNull(llvm_type));
+    if (node->var_decl.is_const) {
+      LLVMSetGlobalConstant(ptr, true);
+    }
+  } else {
+    ptr = cg_alloca_in_entry(cg, node->var_decl.declared_type,
+                             node->var_decl.name->var.value);
+  }
 
   CGSymbolTable_add(cg->current_scope, node->var_decl.name->var.value,
-                    node->var_decl.declared_type, alloca);
+                    node->var_decl.declared_type, ptr);
 
   if (node->var_decl.value) {
     LLVMValueRef init_val = cg_expression(cg, node->var_decl.value);
-
     LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->var_decl.declared_type);
     init_val = cg_cast_value(cg, init_val, node->var_decl.value->resolved_type,
                              target_ty);
 
-    LLVMBuildStore(cg->builder, init_val, alloca);
+    if (is_global_decl) {
+      if (LLVMIsConstant(init_val)) {
+        LLVMSetInitializer(ptr, init_val);
+      } else {
+        LLVMBuildStore(cg->builder, init_val, ptr);
+      }
+    } else {
+      LLVMBuildStore(cg->builder, init_val, ptr);
+    }
   }
 }
 
@@ -248,6 +273,9 @@ void cg_statement(Codegen *cg, AstNode *node) {
   case NODE_STRUCT_DECL:
     // Struct declarations are now handled globally in cg_lower_all_structs
     break;
+  case NODE_IMPORT:
+    // Imports are handled during semantic analysis and do not emit code.
+    break;
   case NODE_DEFER: {
     if (cg->defers.len == 0)
       panic("Defer outside of scope");
@@ -257,7 +285,7 @@ void cg_statement(Codegen *cg, AstNode *node) {
     break;
   }
   case NODE_INTRINSIC_COMPARE:
-    // TODO: Implement intrinsic compare
+    panic("Intrinsic compare is not supported");
     break;
   case NODE_FOR_IN_STMT: {
     cg_push_scope(cg);

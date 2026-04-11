@@ -22,7 +22,7 @@ AstNode *Parser_parse_block(Parser *p) {
   return block;
 }
 
-AstNode *Parser_parse_var_decl(Parser *p) {
+AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
   int is_const = (p->current_token.type == TOKEN_CONST);
   Parser_token_advance(p);
 
@@ -51,7 +51,7 @@ AstNode *Parser_parse_var_decl(Parser *p) {
     if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
       return NULL;
 
-    return AstNode_new_var_decl(name, value, declared_type, is_const,
+    return AstNode_new_var_decl(name, value, declared_type, is_const, false,
                                 ident.loc);
   } else {
     if (declared_type->kind == KIND_PRIMITIVE &&
@@ -65,8 +65,55 @@ AstNode *Parser_parse_var_decl(Parser *p) {
                        "Expected ';' or '=' after identifier/type"))
       return NULL;
 
-    return AstNode_new_var_decl(name, NULL, declared_type, is_const, ident.loc);
+    return AstNode_new_var_decl(name, NULL, declared_type, is_const, false,
+                                ident.loc);
   }
+}
+
+static AstNode *Parser_parse_import(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'import'
+
+  StringView path;
+  StringView alias;
+  size_t cursor = p->lexer->cursor - p->current_token.text.len;
+
+  AstNode *path_expr = Parser_parse_expression(p, 0);
+
+  if (!path_expr) {
+    ErrorHandler_report(p->eh, loc, "Expected module path after 'import'");
+    return NULL;
+  }
+
+  if (path_expr->tag == NODE_VAR) {
+    path = path_expr->var.value;
+    alias = path_expr->var.value;
+  } else if (path_expr->tag == NODE_FIELD) {
+    AstNode *root = path_expr;
+    while (root->tag == NODE_FIELD) {
+      root = root->field.object;
+    }
+    if (root->tag != NODE_VAR) {
+      ErrorHandler_report(
+          p->eh, loc,
+          "Expected module path to be an identifier or dotted path");
+      return NULL;
+    }
+
+    alias = path_expr->field.field;
+    const char *end = alias.data + alias.len;
+    path = (StringView){.data = p->lexer->src + cursor,
+                        .len = (size_t)(end - (p->lexer->src + cursor))};
+  } else {
+    ErrorHandler_report(
+        p->eh, loc, "Expected module path to be an identifier or dotted path");
+    return NULL;
+  }
+
+  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after import statement"))
+    return NULL;
+
+  return AstNode_new_import(path, alias, loc);
 }
 
 AstNode *Parser_parse_print(Parser *p) {
@@ -106,7 +153,8 @@ AstNode *Parser_parse_print(Parser *p) {
   return AstNode_new_print_stmt(values, loc);
 }
 
-AstNode *Parser_parse_fn_decl(Parser *p, bool is_static) {
+AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
+                              bool is_external) {
   Parser_token_advance(p); // consume 'fn'
 
   Token ident = p->current_token;
@@ -174,7 +222,8 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static) {
   }
 
   return AstNode_new_func_decl(AstNode_new_var(ident.text, ident.loc), params,
-                               ret_type, body, is_static, loc);
+                               ret_type, body, is_static, is_export,
+                               is_external, loc);
 }
 
 AstNode *Parser_parse_if_stmt(Parser *p) {
@@ -255,7 +304,7 @@ AstNode *Parser_parse_for_stmt(Parser *p) {
   AstNode *init = NULL;
   if (p->current_token.type != TOKEN_SEMI) {
     if (p->current_token.type == TOKEN_LET) {
-      init = Parser_parse_var_decl(p);
+      init = Parser_parse_var_decl(p, false);
     } else {
       init = Parser_parse_expression(p, 0);
       if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after for init"))
@@ -287,7 +336,7 @@ AstNode *Parser_parse_for_stmt(Parser *p) {
   return AstNode_new_for(init, cond, inc, body, loc);
 }
 
-AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen) {
+AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume 'struct'
 
@@ -332,7 +381,7 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen) {
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = Parser_parse_fn_decl(p, is_static);
+      AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
       if (fn)
         List_push(&members, fn);
       continue;
@@ -362,14 +411,15 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen) {
     }
 
     AstNode *mem_name = AstNode_new_var(mem_ident.text, mem_ident.loc);
-    AstNode *mem_decl = AstNode_new_var_decl(mem_name, NULL, type, 0, mem_loc);
+    AstNode *mem_decl =
+        AstNode_new_var_decl(mem_name, NULL, type, 0, false, mem_loc);
     List_push(&members, mem_decl);
   }
 
   Parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct members");
 
   return AstNode_new_struct_decl(name_node, members, placeholders, is_frozen,
-                                 loc);
+                                 false, loc);
 }
 
 AstNode *Parser_parse_impl_decl(Parser *p) {
@@ -396,7 +446,7 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = Parser_parse_fn_decl(p, is_static);
+      AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
       if (fn)
         List_push(&members, fn);
       continue;
@@ -413,13 +463,31 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
 
 AstNode *Parser_parse_statement(Parser *p) {
   Location loc = p->current_token.loc;
+  bool is_export = false;
+  bool is_external = false;
+
+  while (p->current_token.type == TOKEN_EXPORT ||
+         p->current_token.type == TOKEN_EXTERNAL) {
+    if (p->current_token.type == TOKEN_EXPORT) {
+      is_export = true;
+      Parser_token_advance(p);
+      continue;
+    }
+    if (p->current_token.type == TOKEN_EXTERNAL) {
+      is_external = true;
+      Parser_token_advance(p);
+      continue;
+    }
+  }
 
   switch (p->current_token.type) {
   case TOKEN_EOF:
     return NULL;
+  case TOKEN_IMPORT:
+    return Parser_parse_import(p);
   case TOKEN_LET:
   case TOKEN_CONST:
-    return Parser_parse_var_decl(p);
+    return Parser_parse_var_decl(p, is_export);
   case TOKEN_LBRACE:
     return Parser_parse_block(p);
   case TOKEN_PRINT:
@@ -453,9 +521,9 @@ AstNode *Parser_parse_statement(Parser *p) {
     return NULL;
   }
   case TOKEN_FN:
-    return Parser_parse_fn_decl(p, false);
+    return Parser_parse_fn_decl(p, false, is_export, is_external);
   case TOKEN_STRUCT:
-    return Parser_parse_struct_decl(p, false);
+    return Parser_parse_struct_decl(p, false, is_export);
   case TOKEN_IMPL:
     return Parser_parse_impl_decl(p);
   case TOKEN_FROZEN: {
@@ -465,7 +533,7 @@ AstNode *Parser_parse_statement(Parser *p) {
                           "Expected 'struct' after 'frozen'");
       return NULL;
     }
-    return Parser_parse_struct_decl(p, true);
+    return Parser_parse_struct_decl(p, true, is_export);
   }
   case TOKEN_STATIC: {
     Parser_token_advance(p);
@@ -474,7 +542,7 @@ AstNode *Parser_parse_statement(Parser *p) {
                           "Expected 'fn' after 'static'");
       return NULL;
     }
-    return Parser_parse_fn_decl(p, true);
+    return Parser_parse_fn_decl(p, true, is_export, is_external);
   }
   case TOKEN_BREAK: {
     Parser_token_advance(p);

@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,9 +7,45 @@
 #include "tyl/errors.h"
 #include "tyl/lexer.h"
 
-void ErrorHandler_init(ErrorHandler *eh, const char *src) {
+static char *path_trim_relative(const char *path, const char *entry_path) {
+  if (!path)
+    return xstrdup("<unknown>");
+
+  if (!entry_path)
+    return xstrdup(path);
+
+  char resolved_path[PATH_MAX];
+  char resolved_entry[PATH_MAX];
+  if (!realpath(path, resolved_path) || !realpath(entry_path, resolved_entry)) {
+    return xstrdup(path);
+  }
+
+  char *entry_dir = xstrdup(resolved_entry);
+  char *slash = strrchr(entry_dir, '/');
+  if (slash) {
+    *slash = '\0';
+  } else {
+    entry_dir[0] = '\0';
+  }
+
+  size_t prefix_len = strlen(entry_dir);
+  char *result = NULL;
+  if (prefix_len > 0 && strncmp(resolved_path, entry_dir, prefix_len) == 0 &&
+      resolved_path[prefix_len] == '/') {
+    result = xstrdup(resolved_path + prefix_len + 1);
+  } else {
+    result = xstrdup(path);
+  }
+
+  free(entry_dir);
+  return result;
+}
+
+void ErrorHandler_init(ErrorHandler *eh, const char *src, const char *path,
+                       const char *entry_path) {
   List_init(&eh->errors);
   eh->src = src;
+  eh->path = path_trim_relative(path, entry_path);
   eh->has_errors = 0;
 }
 
@@ -16,6 +53,7 @@ void ErrorHandler_free(ErrorHandler *eh) {
   for (size_t i = 0; i < eh->errors.len; i++) {
     free(eh->errors.items[i]);
   }
+  free(eh->path);
 }
 
 void ErrorHandler_show_all(ErrorHandler *eh) {
@@ -100,12 +138,12 @@ void ErrorHandler_report_level(ErrorHandler *eh, Location loc, ErrorLevel level,
 
   char final_msg[2048];
   snprintf(final_msg, sizeof(final_msg),
-           "%s%s\x1b[0m at line %zu, col %zu: %s\n"
+           "%s%s\x1b[0m at %s:%zu:%zu: %s\n"
            "  |\n"
            "%zu | %s\n"
            "  | %s\n",
-           color_prefix, level_str, loc.line, loc.col, msg_buf, loc.line,
-           source_line, caret_str);
+           color_prefix, level_str, eh->path ? eh->path : "<unknown>", loc.line,
+           loc.col, msg_buf, loc.line, source_line, caret_str);
 
   free(source_line);
   free(caret_str);

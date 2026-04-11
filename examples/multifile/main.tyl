@@ -1,0 +1,89 @@
+import lib.user;
+import lib.item;
+import lib.inventory;
+
+const MAX_ITEMS: i32 = 4;
+
+fn total_item_quantity(inv: *Inventory): i32 {
+    return inv.count();
+}
+
+fn mean_item_id(inv: *Inventory): f64 {
+    let total_count: i32 = inv.count();
+    if (total_count == 0) {
+        return 0.0;
+    }
+
+    let weighted_id_sum: i32 = 0;
+    for (let i = 0; i < inv.distinct_count(); i = i + 1) {
+        let entry = inv.get(i);
+        weighted_id_sum = weighted_id_sum + entry.item.id * entry.count;
+    }
+
+    return (f64)weighted_id_sum / (f64)total_count;
+}
+
+fn is_expensive(item: Item): bool {
+    return item.id > 1 ? true : false;
+}
+
+fn main() {
+    defer {
+        print("=== program exit ===");
+    }
+
+    let sword = Item::make(1, "Sword");
+    let potion = Item::make(2, "Potion");
+    let shield = Item::make(3, "Shield");
+    let apple = Item::make(4, "Apple");
+
+    let alice = User::create("Alice");
+    alice.pick_item(sword);
+    alice.pick_item(potion);
+    alice.pick_item(shield);
+    alice.pick_item(shield);
+    alice.pick_item(potion);
+
+    let has_space: bool = alice.inventory.distinct_count() < MAX_ITEMS;
+    print(alice.name, " can carry more distinct item types? ", has_space);
+
+    if (has_space) {
+        alice.pick_item(apple);
+    }
+
+    let inventory = alice.inventory;
+
+    print("Inventory summary for ", alice.name, ":");
+    print("distinct item types = ", inventory.distinct_count());
+    print("total quantity = ", total_item_quantity(&inventory));
+    print("mean weighted item id = ", mean_item_id(&inventory));
+
+    for (entry in alice.inventory.items) {
+        print("- ", entry.item.name, " x", entry.count, " expensive=", is_expensive(entry.item));
+    }
+
+    for (let i = 0; i < alice.inventory.distinct_count(); i = i + 1) {
+        let entry = alice.inventory.get(i);
+        print("indexed[", i, "] = ", entry.item.name, " (x", entry.count, ")");
+    }
+
+    let index: i32 = 0;
+    while (index < alice.inventory.distinct_count()) {
+        let entry = alice.inventory.get(index);
+        print("while[", index, "] = ", entry.item.name, " count=", entry.count);
+        index = index + 1;
+    }
+
+    let repeated = [7; 4];
+    let matrix = [[1, 2], [3, 4]];
+    print("fixed repeated array =", repeated[0], repeated[1], repeated[2], repeated[3]);
+    for (row in matrix) {
+        for (value in row) {
+            print("matrix value =", value);
+        }
+    }
+
+    let x: i32 = 42;
+    let px: *i32 = &x;
+    print("pointer dereference =", *px);
+}

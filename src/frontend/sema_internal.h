@@ -23,6 +23,12 @@ void sema_scope_push(Sema *s);
 void sema_scope_pop(Sema *s);
 void sema_check_stmt(Sema *s, AstNode *node);
 
+// Module helpers
+Module *module_find_by_path(Sema *s, const char *abs_path);
+Module *module_resolve_or_load(Sema *s, StringView import_path,
+                               const char *current_file_path);
+Symbol *module_lookup_export(Module *module, StringView name);
+
 // Sema Utils
 void sema_error(Sema *s, AstNode *n, const char *fmt, ...);
 void sema_error_at(Sema *s, Location loc, const char *fmt, ...);

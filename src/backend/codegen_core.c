@@ -74,6 +74,17 @@ static void cg_initiate_system_functions(Codegen *cg) {
                      to_str_val, to_str_type, true);
   List_push(&cg->system_functions, f_to_str);
 
+  // void __tyl_array_init_fixed(void *arr, i64 elem_size, i64 len)
+  LLVMTypeRef init_fixed_args[] = {ptr_ty, i64_ty, i64_ty};
+  LLVMTypeRef init_fixed_type = LLVMFunctionType(
+      LLVMVoidTypeInContext(cg->context), init_fixed_args, 3, false);
+  LLVMValueRef init_fixed_val =
+      LLVMAddFunction(cg->module, "__tyl_array_init_fixed", init_fixed_type);
+  CGFunction *f_init_fixed = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_init_fixed, sv_from_cstr("__tyl_array_init_fixed"),
+                     init_fixed_val, init_fixed_type, true);
+  List_push(&cg->system_functions, f_init_fixed);
+
   // void panic(const char *msg, ...)
   LLVMTypeRef panic_args[] = {ptr_ty};
   LLVMTypeRef panic_type =
@@ -237,28 +248,26 @@ void Codegen_global(Codegen *cg, AstNode *ast_root) {
   cg_lower_all_structs(cg);
 
   cg_declare_functions(cg, ast_root);
-  cg_emit_functions(cg, ast_root);
 
-  // 1. SAVE whatever state the builder was in after emitting user functions
-  LLVMBasicBlockRef prev_bb = LLVMGetInsertBlock(cg->builder);
-  LLVMValueRef prev_func = cg->current_function;
   CGFunction *prev_func_ref = cg->current_function_ref;
+  LLVMValueRef prev_func = cg->current_function;
+  LLVMBasicBlockRef prev_bb = LLVMGetInsertBlock(cg->builder);
 
-  // 2. CONTEXT SWITCH: Tell the codegen state machine we are now inside
-  // __system__main__
   cg->current_function = entry_fn->value;
   cg->current_function_ref = entry_fn;
 
   LLVMBasicBlockRef bb = LLVMGetFirstBasicBlock(entry_fn->value);
   LLVMPositionBuilderAtEnd(cg->builder, bb);
 
-  // 3. Emit global statements (cg_alloca_in_entry will now work safely)
   cg_emit_global_statements(cg, ast_root);
 
-  // 4. RESTORE the state machine back to what it was (usually NULL at this
-  // point)
   cg->current_function = prev_func;
   cg->current_function_ref = prev_func_ref;
+  if (prev_bb) {
+    LLVMPositionBuilderAtEnd(cg->builder, prev_bb);
+  }
+
+  cg_emit_functions(cg, ast_root);
 
   if (prev_bb) {
     LLVMPositionBuilderAtEnd(cg->builder, prev_bb);
@@ -278,7 +287,6 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
   cg->current_function = entry_func;
   cg->current_function_ref = entry_fn;
 
-  // Reliably jump back into the entry block we created in Codegen_new
   LLVMBasicBlockRef entry_bb = LLVMGetFirstBasicBlock(entry_func);
   LLVMPositionBuilderAtEnd(cg->builder, entry_bb);
 

@@ -1,4 +1,5 @@
 #include <llvm-c/Core.h>
+#include <llvm-c/Target.h>
 #include <llvm-c/Types.h>
 
 #include "codegen_private.h"
@@ -60,30 +61,37 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
         obj_type = sym->type;
       }
     }
-    if (obj_type && obj_type->kind == KIND_POINTER) {
+    if (!obj_type) {
+      panic("Expected FIELD object to have a resolved type");
+    }
+    LLVMTypeRef llvm_obj_type = cg_get_llvm_type(cg, obj_type);
+    (void)llvm_obj_type;
+    if (obj_type->kind == KIND_POINTER) {
       if (!obj_type->data.pointer_to) {
         panic("Pointer object has no target type");
       }
+      Type *target = obj_type->data.pointer_to;
       LLVMTypeRef load_ty = cg_get_llvm_type(cg, obj_type);
-      if (LLVMGetTypeKind(load_ty) != LLVMPointerTypeKind) {
-        panic("Expected pointer value type for pointer object");
-      }
       obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
-      obj_type = obj_type->data.pointer_to;
+      obj_type = target;
     }
-    if (!obj_type || obj_type->kind != KIND_STRUCT) {
-      panic("Expected FIELD object to resolve to a struct type");
+    if (obj_type->kind != KIND_STRUCT) {
+      panic("Expected FIELD object to resolve to a struct type, got %s",
+            type_to_name(obj_type));
     }
     LLVMTypeRef obj_ptr_ty = LLVMTypeOf(obj_ptr);
     if (LLVMGetTypeKind(obj_ptr_ty) != LLVMPointerTypeKind) {
       panic("Expected field object address to be a pointer");
     }
+    LLVMTypeRef struct_ty = cg_get_llvm_type(cg, obj_type);
     Member *m = type_get_member(obj_type, node->field.field);
     if (!m)
       return NULL;
-    LLVMTypeRef field_type = cg_get_llvm_type(cg, obj_type);
+    if (!m->type) {
+      panic("Field member has no type");
+    }
     LLVMValueRef field_addr = LLVMBuildStructGEP2(
-        cg->builder, field_type, obj_ptr, m->index, "field_addr");
+        cg->builder, struct_ty, obj_ptr, m->index, "field_addr");
     return field_addr;
   }
 
@@ -96,6 +104,8 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
 
   case NODE_INDEX: {
     LLVMValueRef array_struct_ptr = cg_get_address(cg, node->index.array);
+    Type *array_type = node->index.array->resolved_type;
+
     LLVMTypeRef array_struct_ty =
         cg_get_llvm_type(cg, node->index.array->resolved_type);
 
@@ -105,12 +115,19 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     LLVMValueRef rank_val = LLVMBuildLoad2(
         cg->builder, LLVMInt64TypeInContext(cg->context), rank_ptr, "rank_val");
 
-    // 2. Load dims pointer
-    LLVMValueRef dims_ptr_ptr = LLVMBuildStructGEP2(
-        cg->builder, array_struct_ty, array_struct_ptr, 4, "dims_ptr_ptr");
-    LLVMValueRef dims_ptr = LLVMBuildLoad2(
-        cg->builder, LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0),
-        dims_ptr_ptr, "dims_ptr");
+    LLVMValueRef dim0_val = NULL;
+    LLVMValueRef dims_ptr = NULL;
+    if (array_type->fixed_array_len > 0) {
+      dim0_val = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                              array_type->fixed_array_len, 0);
+    } else {
+      // 2. Load dims pointer
+      LLVMValueRef dims_ptr_ptr = LLVMBuildStructGEP2(
+          cg->builder, array_struct_ty, array_struct_ptr, 4, "dims_ptr_ptr");
+      dims_ptr = LLVMBuildLoad2(
+          cg->builder, LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0),
+          dims_ptr_ptr, "dims_ptr");
+    }
 
     // 3. Current index
     LLVMValueRef index_val = cg_expression(cg, node->index.index);
@@ -118,14 +135,37 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
         cg_cast_value(cg, index_val, node->index.index->resolved_type,
                       LLVMInt64TypeInContext(cg->context));
 
-    // 4. Bounds check: index_i64 < dims[0]
-    LLVMValueRef dim0_ptr = LLVMBuildGEP2(
-        cg->builder, LLVMInt64TypeInContext(cg->context), dims_ptr,
-        (LLVMValueRef[]){
-            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0)},
-        1, "dim0_ptr");
-    LLVMValueRef dim0_val = LLVMBuildLoad2(
-        cg->builder, LLVMInt64TypeInContext(cg->context), dim0_ptr, "dim0_val");
+    // If this array has a fixed compile-time length, ensure its runtime
+    // metadata is initialized before accessing data.
+    if (array_type->fixed_array_len > 0) {
+      Type *elem_type = array_type->data.instance.generic_args.items[0];
+      CGFunction *init_fixed =
+          cg_find_function(cg, sv_from_cstr("__tyl_array_init_fixed"));
+      if (!init_fixed) {
+        panic("Internal error: fixed array init function missing");
+      }
+      LLVMTypeRef void_ptr_ty =
+          LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+      LLVMValueRef array_struct_ptr_i8 = LLVMBuildBitCast(
+          cg->builder, array_struct_ptr, void_ptr_ty, "fixed_array_ptr");
+      LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
+      const char *data_layout = LLVMGetDataLayout(cg->module);
+      LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+      unsigned long long elem_size_bytes = LLVMABISizeOfType(td, llvm_elem_ty);
+      LLVMDisposeTargetData(td);
+      LLVMValueRef elem_size =
+          LLVMConstInt(LLVMInt64TypeInContext(cg->context), elem_size_bytes, 0);
+      LLVMValueRef fixed_len = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                                            array_type->fixed_array_len, 0);
+      LLVMBuildCall2(
+          cg->builder, init_fixed->type, init_fixed->value,
+          (LLVMValueRef[]){array_struct_ptr_i8, elem_size, fixed_len}, 3, "");
+    }
+
+    // 4. Bounds check: index_i64 < dim0
+    if (!dim0_val) {
+      panic("Internal error: fixed array bounds value not set");
+    }
 
     LLVMValueRef in_bounds = LLVMBuildICmp(cg->builder, LLVMIntULT, index_i64,
                                            dim0_val, "in_bounds");
@@ -136,20 +176,13 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
         cg->context, cg->current_function, "bounds_ok");
 
     LLVMBuildCondBr(cg->builder, in_bounds, ok_bb, fail_bb);
-
-    // Fail block
     LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
-
-    // Call panic("Index out of bounds")
     CGFunction *panic_fn = cg_find_function(cg, sv_from_parts("panic", 5));
     LLVMValueRef msg_ptr = LLVMBuildGlobalStringPtr(
         cg->builder, "Panic: Array Index Out of Bounds", "bounds_err_msg");
     LLVMBuildCall2(cg->builder, panic_fn->type, panic_fn->value,
                    (LLVMValueRef[]){msg_ptr}, 1, "");
-
     LLVMBuildUnreachable(cg->builder);
-
-    // Ok block
     LLVMPositionBuilderAtEnd(cg->builder, ok_bb);
 
     // 5. If this is a multi-dimensional access, we need to adjust the child's

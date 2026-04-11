@@ -22,12 +22,13 @@ AstNode *AstNode_new_program(Location loc) {
 }
 
 AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, Type *type,
-                              int is_const, Location loc) {
+                              int is_const, bool is_export, Location loc) {
   AstNode *node = AstNode_new(NODE_VAR_DECL, loc);
   node->var_decl.name = name;
   node->var_decl.value = value;
   node->var_decl.declared_type = type;
   node->var_decl.is_const = is_const;
+  node->var_decl.is_export = is_export;
   return node;
 }
 
@@ -146,13 +147,16 @@ AstNode *AstNode_new_call(AstNode *func, List args, Location loc) {
 }
 
 AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
-                               AstNode *body, bool is_static, Location loc) {
+                               AstNode *body, bool is_static, bool is_export,
+                               bool is_external, Location loc) {
   AstNode *node = AstNode_new(NODE_FUNC_DECL, loc);
   node->func_decl.name = name;
   node->func_decl.params = params;
   node->func_decl.return_type = ret_type;
   node->func_decl.body = body;
   node->func_decl.is_static = is_static;
+  node->func_decl.is_export = is_export;
+  node->func_decl.is_external = is_external;
   return node;
 }
 
@@ -181,6 +185,13 @@ AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
   node->if_stmt.condition = condition;
   node->if_stmt.then_branch = then_branch;
   node->if_stmt.else_branch = else_branch;
+  return node;
+}
+
+AstNode *AstNode_new_import(StringView path, StringView alias, Location loc) {
+  AstNode *node = AstNode_new(NODE_IMPORT, loc);
+  node->import.path = path;
+  node->import.alias = alias;
   return node;
 }
 
@@ -232,12 +243,13 @@ AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
 }
 
 AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
-                                 bool is_frozen, Location loc) {
+                                 bool is_frozen, bool is_export, Location loc) {
   AstNode *node = AstNode_new(NODE_STRUCT_DECL, loc);
   node->struct_decl.name = name;
   node->struct_decl.members = members;
   node->struct_decl.placeholders = placeholders;
   node->struct_decl.is_frozen = is_frozen;
+  node->struct_decl.is_export = is_export;
   return node;
 }
 
@@ -450,6 +462,9 @@ void Ast_free(AstNode *node) {
       Ast_free((AstNode *)node->impl_decl.members.items[i]);
     }
     List_free(&node->impl_decl.members, 0);
+    break;
+  case NODE_IMPORT:
+    // import path and alias are views into source text, no heap ownership
     break;
 
     // end
@@ -755,6 +770,10 @@ void Ast_print(AstNode *node, int indent) {
     print_indent(indent + 1);
     printf("OBJECT:\n");
     Ast_print(node->field.object, indent + 2);
+    break;
+  case NODE_IMPORT:
+    printf("IMPORT: path='" SV_FMT "' alias='" SV_FMT "'\n",
+           SV_ARG(node->import.path), SV_ARG(node->import.alias));
     break;
   case NODE_ARRAY_REPEAT:
     printf("ARRAY_REPEAT (Type: %s)\n", type_to_name(node->resolved_type));
