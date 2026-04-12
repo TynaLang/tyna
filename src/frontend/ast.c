@@ -253,6 +253,17 @@ AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
   return node;
 }
 
+AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
+                                bool is_frozen, bool is_export, Location loc) {
+  AstNode *node = AstNode_new(NODE_UNION_DECL, loc);
+  node->union_decl.name = name;
+  node->union_decl.members = members;
+  node->union_decl.placeholders = placeholders;
+  node->union_decl.is_frozen = is_frozen;
+  node->union_decl.is_export = is_export;
+  return node;
+}
+
 AstNode *AstNode_new_impl_decl(AstNode *name, List members, Location loc) {
   AstNode *node = AstNode_new(NODE_IMPL_DECL, loc);
   node->impl_decl.name = name;
@@ -455,6 +466,13 @@ void Ast_free(AstNode *node) {
       Ast_free((AstNode *)node->struct_decl.members.items[i]);
     }
     List_free(&node->struct_decl.members, 0);
+    break;
+  case NODE_UNION_DECL:
+    Ast_free(node->union_decl.name);
+    for (size_t i = 0; i < node->union_decl.members.len; i++) {
+      Ast_free((AstNode *)node->union_decl.members.items[i]);
+    }
+    List_free(&node->union_decl.members, 0);
     break;
   case NODE_IMPL_DECL:
     Ast_free(node->impl_decl.name);
@@ -808,6 +826,17 @@ void Ast_print(AstNode *node, int indent) {
     printf("MEMBERS:\n");
     for (size_t i = 0; i < node->struct_decl.members.len; i++) {
       Ast_print(node->struct_decl.members.items[i], indent + 2);
+    }
+    break;
+  case NODE_UNION_DECL:
+    printf("UNION_DECL\n");
+    print_indent(indent + 1);
+    printf("NAME:\n");
+    Ast_print(node->union_decl.name, indent + 2);
+    print_indent(indent + 1);
+    printf("MEMBERS:\n");
+    for (size_t i = 0; i < node->union_decl.members.len; i++) {
+      Ast_print(node->union_decl.members.items[i], indent + 2);
     }
     break;
   case NODE_IMPL_DECL:

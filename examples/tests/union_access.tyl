@@ -1,0 +1,43 @@
+union MyUnion {
+    a: i32;
+    b: f32;
+    c: char;
+}
+
+let x: MyUnion;
+
+x.a = 42;
+print(x.a);
+
+x.b = 3.25f;
+print(x.b);
+
+x.a = 123;
+print(x.a);
+
+let z: MyUnion;
+z.a = 65;
+print(z.c);
+
+let y: MyUnion;
+y.b = 4.5f;
+print(y.b);
+
+struct Point {
+    x: f32;
+    y: f32;
+}
+
+union FloatOrPoint {
+    f: f32;
+    p: Point;
+}
+
+let u: FloatOrPoint;
+u.p.x = 1.5f;
+u.p.y = 2.5f;
+print(u.p.x);
+print(u.p.y);
+
+u.f = 4.75f;
+print(u.f);

@@ -58,6 +58,29 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     return LLVMPointerType(cg_get_llvm_type(cg, t->data.pointer_to), 0);
   }
 
+  if (t->kind == KIND_UNION) {
+    char buf[256];
+    if (t->name.len > 0) {
+      snprintf(buf, sizeof(buf), "union_%.*s", (int)t->name.len, t->name.data);
+    } else {
+      snprintf(buf, sizeof(buf), "anon_union_%p", (void *)t);
+    }
+    LLVMTypeRef union_ty = LLVMGetTypeByName2(cg->context, buf);
+    if (!union_ty) {
+      union_ty = LLVMStructCreateNamed(cg->context, buf);
+    }
+    if (!union_ty || LLVMGetTypeKind(union_ty) != LLVMStructTypeKind) {
+      panic("Expected LLVM struct type for union '%s'", buf);
+    }
+    if (LLVMIsOpaqueStruct(union_ty)) {
+      unsigned count = 1;
+      LLVMTypeRef bytes = LLVMArrayType(LLVMInt8TypeInContext(cg->context),
+                                        (unsigned)(t->size > 0 ? t->size : 1));
+      LLVMStructSetBody(union_ty, &bytes, count, false);
+    }
+    return union_ty;
+  }
+
   if (t->kind == KIND_STRUCT) {
     // For structs, we use named types to support recursion and cache them
     char buf[256];

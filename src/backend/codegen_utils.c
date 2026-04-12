@@ -75,14 +75,39 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
       obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
       obj_type = target;
     }
-    if (obj_type->kind != KIND_STRUCT) {
-      panic("Expected FIELD object to resolve to a struct type, got %s",
-            type_to_name(obj_type));
+    if (obj_type->kind != KIND_STRUCT && obj_type->kind != KIND_UNION) {
+      panic(
+          "Expected FIELD object to resolve to a struct or union type, got %s",
+          type_to_name(obj_type));
     }
     LLVMTypeRef obj_ptr_ty = LLVMTypeOf(obj_ptr);
     if (LLVMGetTypeKind(obj_ptr_ty) != LLVMPointerTypeKind) {
       panic("Expected field object address to be a pointer");
     }
+
+    if (obj_type->kind == KIND_UNION) {
+      Type *owner = NULL;
+      Member *m = type_find_union_field(obj_type, node->field.field, &owner);
+      if (!m)
+        return NULL;
+      if (!m->type) {
+        panic("Field member has no type");
+      }
+      LLVMTypeRef owner_ty = cg_get_llvm_type(cg, owner);
+      LLVMValueRef owner_ptr =
+          LLVMBuildBitCast(cg->builder, obj_ptr, LLVMPointerType(owner_ty, 0),
+                           "union_owner_ptr");
+      LLVMTypeRef field_ty = cg_get_llvm_type(cg, m->type);
+      if (owner == obj_type || owner->kind == KIND_UNION) {
+        return LLVMBuildBitCast(cg->builder, owner_ptr,
+                                LLVMPointerType(field_ty, 0),
+                                "union_field_addr");
+      }
+      LLVMValueRef field_addr = LLVMBuildStructGEP2(
+          cg->builder, owner_ty, owner_ptr, m->index, "union_field_addr");
+      return field_addr;
+    }
+
     LLVMTypeRef struct_ty = cg_get_llvm_type(cg, obj_type);
     Member *m = type_get_member(obj_type, node->field.field);
     if (!m)

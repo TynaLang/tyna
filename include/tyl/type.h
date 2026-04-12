@@ -16,6 +16,7 @@ enum TypeKind {
   KIND_PRIMITIVE,
   KIND_POINTER,  // New: ptr<T>
   KIND_STRUCT,   // Concrete Instance (Sized)
+  KIND_UNION,    // Concrete Union (Sized)
   KIND_TEMPLATE, // Generic Blueprint (Unsized)
 };
 
@@ -84,7 +85,10 @@ void type_context_free(TypeContext *ctx);
 // Type Retrieval
 Type *type_get_primitive(TypeContext *ctx, PrimitiveKind primitive);
 Type *type_get_pointer(TypeContext *ctx, Type *to);
+Type *type_get_named(TypeContext *ctx, StringView name);
 Type *type_get_struct(TypeContext *ctx, StringView name);
+Type *type_get_union(TypeContext *ctx, StringView name);
+Type *type_get_union_anonymous(TypeContext *ctx, List types);
 Type *type_get_template(TypeContext *ctx, StringView name);
 Type *type_get_instance(TypeContext *ctx, Type *template_type, List args);
 Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
@@ -92,6 +96,7 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
 
 // Member Management
 Member *type_get_member(Type *type, StringView name);
+Member *type_find_union_field(Type *type, StringView name, Type **out_owner);
 void type_add_member(Type *type, const char *name, Type *member_type,
                      size_t offset);
 

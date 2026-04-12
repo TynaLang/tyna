@@ -652,7 +652,12 @@ static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
   if (!obj_type) {
     panic("Field expression object has no resolved type");
   }
+
+  Type *owner = obj_type;
   Member *m = type_get_member(obj_type, node->field.field);
+  if (!m && obj_type->kind == KIND_UNION) {
+    m = type_find_union_field(obj_type, node->field.field, &owner);
+  }
   if (!m)
     panic("Field not found");
   if (!m->type) {
@@ -672,6 +677,24 @@ static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
       obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
       resolved = resolved->data.pointer_to;
     }
+  }
+
+  if (obj_type->kind == KIND_UNION) {
+    LLVMTypeRef owner_ty = cg_get_llvm_type(cg, owner);
+    LLVMValueRef owner_ptr = LLVMBuildBitCast(
+        cg->builder, obj_ptr, LLVMPointerType(owner_ty, 0), "union_owner_ptr");
+    LLVMTypeRef field_type_llvm = cg_get_llvm_type(cg, m->type);
+    if (owner == obj_type || owner->kind == KIND_UNION) {
+      LLVMValueRef field_ptr = LLVMBuildBitCast(
+          cg->builder, owner_ptr, LLVMPointerType(field_type_llvm, 0),
+          "union_field_ptr");
+      return LLVMBuildLoad2(cg->builder, field_type_llvm, field_ptr,
+                            "field_load");
+    }
+    LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+        cg->builder, owner_ty, owner_ptr, m->index, "union_field_ptr");
+    return LLVMBuildLoad2(cg->builder, field_type_llvm, field_ptr,
+                          "field_load");
   }
 
   LLVMTypeRef obj_type_llvm = cg_get_llvm_type(cg, obj_type);

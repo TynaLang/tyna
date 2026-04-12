@@ -74,6 +74,7 @@ static bool type_is_concrete(Type *t) {
     return type_is_concrete(t->data.pointer_to);
 
   case KIND_STRUCT:
+  case KIND_UNION:
     if (t->data.instance.from_template == NULL)
       return t->members.len > 0;
     for (size_t i = 0; i < t->data.instance.generic_args.len; i++) {
@@ -488,7 +489,104 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     }
     break;
   }
+  case NODE_UNION_DECL: {
+    StringView name = node->union_decl.name->var.value;
+    Symbol *existing = sema_resolve(s, name);
+    Type *t = NULL;
 
+    if (existing) {
+      if (!existing->type->is_intrinsic) {
+        sema_error(s, node, "Duplicate symbol '" SV_FMT "'", SV_ARG(name));
+        break;
+      }
+      t = existing->type;
+    } else {
+      if (node->union_decl.placeholders.len > 0) {
+        t = xcalloc(1, sizeof(Type));
+        t->kind = KIND_TEMPLATE;
+        t->name = name;
+        List_init(&t->members);
+        List_init(&t->methods);
+        List_init(&t->data.template.placeholders);
+        List_init(&t->data.template.fields);
+
+        for (size_t i = 0; i < node->union_decl.placeholders.len; i++) {
+          List_push(&t->data.template.placeholders,
+                    node->union_decl.placeholders.items[i]);
+        }
+        List_push(&s->types->templates, t);
+      } else {
+        t = type_get_union(s->types, name);
+        if (!t) {
+          sema_error(s, node, "Failed to create union type");
+          break;
+        }
+      }
+      Symbol *sym = sema_define(s, name, t, true, node->loc);
+      if (sym) {
+        sym->is_export = node->union_decl.is_export;
+      }
+    }
+
+    t->is_frozen = node->union_decl.is_frozen;
+
+    size_t max_size = 0;
+    size_t max_align = 1;
+
+    for (size_t i = 0; i < node->union_decl.members.len; i++) {
+      AstNode *mem = node->union_decl.members.items[i];
+
+      if (mem->tag == NODE_FUNC_DECL) {
+        StringView method_name = mem->func_decl.name->var.value;
+        Symbol *resolved = sema_resolve(s, method_name);
+        StringView original_name = method_name;
+        if (resolved && resolved->original_name.len)
+          original_name = resolved->original_name;
+
+        Symbol *method_sym = xmalloc(sizeof(Symbol));
+        method_sym->name = method_name;
+        method_sym->original_name = original_name;
+        method_sym->type = mem->func_decl.return_type;
+        method_sym->kind =
+            mem->func_decl.is_static ? SYM_STATIC_METHOD : SYM_METHOD;
+        method_sym->value = mem;
+        List_push(&t->methods, method_sym);
+
+        if (mem->func_decl.body) {
+          sema_check_stmt(s, mem);
+        }
+        continue;
+      }
+
+      Type *mem_type = mem->var_decl.declared_type;
+      char *c_mem_name = sv_to_cstr(mem->var_decl.name->var.value);
+      size_t align = mem_type->alignment ? mem_type->alignment : mem_type->size;
+      if (align == 0)
+        align = 1;
+
+      if (type_get_member(t, mem->var_decl.name->var.value)) {
+        if (!t->is_intrinsic) {
+          sema_error(s, mem, "Duplicate field '" SV_FMT "'",
+                     SV_ARG(mem->var_decl.name->var.value));
+        }
+        free(c_mem_name);
+        continue;
+      }
+
+      type_add_member(t, c_mem_name, mem_type, 0);
+      free(c_mem_name);
+      if (mem_type->size > max_size)
+        max_size = mem_type->size;
+      if (align > max_align)
+        max_align = align;
+    }
+
+    if (!existing || !existing->type->is_intrinsic) {
+      t->alignment = max_align;
+      t->size = align_to(max_size, max_align);
+    }
+    break;
+  }
   case NODE_IMPL_DECL: {
     StringView name = node->impl_decl.name->var.value;
     Symbol *existing = sema_resolve(s, name);
@@ -499,9 +597,11 @@ void sema_check_stmt(Sema *s, AstNode *node) {
       t = sema_find_type_by_name(s, name);
     }
     if (!t ||
-        (t->kind != KIND_STRUCT && t->kind != KIND_TEMPLATE &&
+        (t->kind != KIND_STRUCT && t->kind != KIND_UNION &&
+         t->kind != KIND_TEMPLATE &&
          !(t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING))) {
-      sema_error(s, node, "Undefined type '%" SV_FMT "' or it is not a struct",
+      sema_error(s, node,
+                 "Undefined type '%" SV_FMT "' or it is not a struct/union",
                  SV_ARG(name));
       break;
     }

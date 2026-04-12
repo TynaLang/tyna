@@ -422,6 +422,92 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
                                  false, loc);
 }
 
+AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'union'
+
+  Token name_token = p->current_token;
+  if (!Parser_expect(p, TOKEN_IDENT, "Expected union name"))
+    return NULL;
+  AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
+
+  List placeholders;
+  List_init(&placeholders);
+  if (p->current_token.type == TOKEN_LT) {
+    Parser_token_advance(p);
+    while (p->current_token.type != TOKEN_GT &&
+           p->current_token.type != TOKEN_EOF) {
+      if (p->current_token.type != TOKEN_IDENT) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected placeholder name");
+        break;
+      }
+      StringView *pl = xmalloc(sizeof(StringView));
+      *pl = p->current_token.text;
+      List_push(&placeholders, pl);
+      Parser_token_advance(p);
+      if (p->current_token.type == TOKEN_COMMA)
+        Parser_token_advance(p);
+    }
+    Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+  }
+
+  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after union name"))
+    return NULL;
+
+  List members;
+  List_init(&members);
+
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    bool is_static = false;
+    if (p->current_token.type == TOKEN_STATIC) {
+      is_static = true;
+      Parser_token_advance(p);
+    }
+
+    if (p->current_token.type == TOKEN_FN) {
+      AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
+      if (fn)
+        List_push(&members, fn);
+      continue;
+    }
+
+    Location mem_loc = p->current_token.loc;
+    Token mem_ident = p->current_token;
+    if (!Parser_expect(p, TOKEN_IDENT, "Expected member name")) {
+      Parser_sync(p);
+      continue;
+    }
+
+    if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after member name")) {
+      Parser_sync(p);
+      continue;
+    }
+
+    Type *type = Parser_parse_type_full(p);
+    if (!type) {
+      Parser_sync(p);
+      continue;
+    }
+
+    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after member type")) {
+      Parser_sync(p);
+      continue;
+    }
+
+    AstNode *mem_name = AstNode_new_var(mem_ident.text, mem_ident.loc);
+    AstNode *mem_decl =
+        AstNode_new_var_decl(mem_name, NULL, type, 0, false, mem_loc);
+    List_push(&members, mem_decl);
+  }
+
+  Parser_expect(p, TOKEN_RBRACE, "Expected '}' after union members");
+
+  return AstNode_new_union_decl(name_node, members, placeholders, is_frozen,
+                                false, loc);
+}
+
 AstNode *Parser_parse_impl_decl(Parser *p) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume 'impl'
@@ -524,16 +610,21 @@ AstNode *Parser_parse_statement(Parser *p) {
     return Parser_parse_fn_decl(p, false, is_export, is_external);
   case TOKEN_STRUCT:
     return Parser_parse_struct_decl(p, false, is_export);
+  case TOKEN_UNION:
+    return Parser_parse_union_decl(p, false, is_export);
   case TOKEN_IMPL:
     return Parser_parse_impl_decl(p);
   case TOKEN_FROZEN: {
     Parser_token_advance(p);
-    if (p->current_token.type != TOKEN_STRUCT) {
+    if (p->current_token.type != TOKEN_STRUCT &&
+        p->current_token.type != TOKEN_UNION) {
       ErrorHandler_report(p->eh, p->current_token.loc,
-                          "Expected 'struct' after 'frozen'");
+                          "Expected 'struct' or 'union' after 'frozen'");
       return NULL;
     }
-    return Parser_parse_struct_decl(p, true, is_export);
+    if (p->current_token.type == TOKEN_STRUCT)
+      return Parser_parse_struct_decl(p, true, is_export);
+    return Parser_parse_union_decl(p, true, is_export);
   }
   case TOKEN_STATIC: {
     Parser_token_advance(p);

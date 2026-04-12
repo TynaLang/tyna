@@ -159,9 +159,10 @@ static Type *check_field(Sema *s, AstNode *node) {
     obj_type = obj_type->data.pointer_to;
   }
 
-  if (obj_type->kind != KIND_STRUCT && obj_type->kind != KIND_TEMPLATE) {
+  if (obj_type->kind != KIND_STRUCT && obj_type->kind != KIND_UNION &&
+      obj_type->kind != KIND_TEMPLATE) {
     sema_error(s, node->field.object,
-               "Member access only allowed on structs, got %s",
+               "Member access only allowed on structs or unions, got %s",
                type_to_name(obj_type));
     return type_get_primitive(s->types, PRIM_UNKNOWN);
   }
@@ -170,6 +171,14 @@ static Type *check_field(Sema *s, AstNode *node) {
   Member *m = type_get_member(obj_type, node->field.field);
   if (m) {
     return m->type;
+  }
+
+  if (obj_type->kind == KIND_UNION) {
+    Type *owner = NULL;
+    m = type_find_union_field(obj_type, node->field.field, &owner);
+    if (m) {
+      return m->type;
+    }
   }
 
   // 2. Is it a method?

@@ -273,7 +273,8 @@ void cg_statement(Codegen *cg, AstNode *node) {
     break;
   }
   case NODE_STRUCT_DECL:
-    // Struct declarations are now handled globally in cg_lower_all_structs
+  case NODE_UNION_DECL:
+    // Type declarations are handled globally in cg_lower_all_structs
     break;
   case NODE_IMPORT:
     // Imports are handled during semantic analysis and do not emit code.

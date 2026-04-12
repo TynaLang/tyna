@@ -101,6 +101,8 @@ Type *Parser_parse_type_full(Parser *p) {
           Type *template_type = type_get_template(p->type_ctx, name);
           if (!template_type) {
             res = type_get_struct(p->type_ctx, name);
+            if (!res)
+              res = type_get_union(p->type_ctx, name);
           } else {
             res = type_get_instance(p->type_ctx, template_type, args);
           }
@@ -109,7 +111,9 @@ Type *Parser_parse_type_full(Parser *p) {
         if (sv_eq_cstr(name, "String")) {
           res = type_get_primitive(p->type_ctx, PRIM_STRING);
         } else {
-          res = type_get_struct(p->type_ctx, name);
+          res = type_get_named(p->type_ctx, name);
+          if (!res)
+            res = type_get_struct(p->type_ctx, name);
         }
       }
     }
@@ -118,6 +122,40 @@ Type *Parser_parse_type_full(Parser *p) {
   if (!res) {
     ErrorHandler_report(p->eh, p->current_token.loc, "Expected type");
     return NULL;
+  }
+
+  if (p->current_token.type == TOKEN_BIT_OR) {
+    List union_members;
+    List_init(&union_members);
+
+    if (res->kind == KIND_UNION) {
+      for (size_t i = 0; i < res->members.len; i++) {
+        Member *m = res->members.items[i];
+        List_push(&union_members, m->type);
+      }
+    } else {
+      List_push(&union_members, res);
+    }
+
+    while (p->current_token.type == TOKEN_BIT_OR) {
+      Parser_token_advance(p);
+      Type *next_type = Parser_parse_type_full(p);
+      if (!next_type) {
+        List_free(&union_members, 0);
+        return NULL;
+      }
+      if (next_type->kind == KIND_UNION) {
+        for (size_t i = 0; i < next_type->members.len; i++) {
+          Member *m = next_type->members.items[i];
+          List_push(&union_members, m->type);
+        }
+      } else {
+        List_push(&union_members, next_type);
+      }
+    }
+
+    res = type_get_union_anonymous(p->type_ctx, union_members);
+    List_free(&union_members, 0);
   }
 
   while (pointer_depth-- > 0) {

@@ -149,19 +149,104 @@ Type *type_get_pointer(TypeContext *ctx, Type *to) {
   return new_ptr;
 }
 
-Type *type_get_struct(TypeContext *ctx, StringView name) {
+Type *type_get_named(TypeContext *ctx, StringView name) {
   for (size_t i = 0; i < ctx->structs.len; i++) {
     Type *t = ctx->structs.items[i];
     if (sv_eq(t->name, name))
       return t;
   }
+  return NULL;
+}
+
+Type *type_get_struct(TypeContext *ctx, StringView name) {
+  Type *existing = type_get_named(ctx, name);
+  if (existing)
+    return existing;
 
   Type *s = xcalloc(1, sizeof(Type));
   s->kind = KIND_STRUCT;
   s->name = name;
   List_init(&s->members);
+  List_init(&s->methods);
+  s->alignment = 0;
+  s->size = 0;
+  s->is_frozen = false;
+  s->is_intrinsic = false;
   List_push(&ctx->structs, s);
   return s;
+}
+
+Type *type_get_union(TypeContext *ctx, StringView name) {
+  Type *existing = type_get_named(ctx, name);
+  if (existing) {
+    if (existing->kind == KIND_UNION)
+      return existing;
+    if (existing->kind == KIND_STRUCT && existing->members.len == 0 &&
+        !existing->is_intrinsic) {
+      existing->kind = KIND_UNION;
+      return existing;
+    }
+    return existing;
+  }
+
+  Type *u = xcalloc(1, sizeof(Type));
+  u->kind = KIND_UNION;
+  u->name = name;
+  List_init(&u->members);
+  List_init(&u->methods);
+  u->alignment = 0;
+  u->size = 0;
+  u->is_frozen = false;
+  u->is_intrinsic = false;
+  List_push(&ctx->structs, u);
+  return u;
+}
+
+Type *type_get_union_anonymous(TypeContext *ctx, List types) {
+  // Deduplicate identical anonymous unions if possible.
+  for (size_t i = 0; i < ctx->instances.len; i++) {
+    Type *t = ctx->instances.items[i];
+    if (t->kind != KIND_UNION)
+      continue;
+    if (t->members.len != types.len)
+      continue;
+    bool match = true;
+    for (size_t j = 0; j < types.len; j++) {
+      Member *m = t->members.items[j];
+      if (!type_equals(m->type, types.items[j])) {
+        match = false;
+        break;
+      }
+    }
+    if (match)
+      return t;
+  }
+
+  Type *u = xcalloc(1, sizeof(Type));
+  u->kind = KIND_UNION;
+  u->name = sv_from_parts("<anonymous union>", 16);
+  List_init(&u->members);
+  List_init(&u->methods);
+
+  size_t max_size = 0;
+  size_t max_align = 1;
+  for (size_t i = 0; i < types.len; i++) {
+    Type *member_type = types.items[i];
+    type_add_member(u, NULL, member_type, 0);
+    if (member_type->size > max_size)
+      max_size = member_type->size;
+    size_t align =
+        member_type->alignment ? member_type->alignment : member_type->size;
+    if (align == 0)
+      align = 1;
+    if (align > max_align)
+      max_align = align;
+  }
+
+  u->alignment = max_align;
+  u->size = align_to(max_size, max_align);
+  List_push(&ctx->instances, u);
+  return u;
 }
 
 Type *type_get_template(TypeContext *ctx, StringView name) {
@@ -276,7 +361,10 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
 void type_add_member(Type *type, const char *name, Type *member_type,
                      size_t offset) {
   Member *m = xcalloc(1, sizeof(Member));
-  m->name = xstrdup(name);
+  if (name)
+    m->name = xstrdup(name);
+  else
+    m->name = NULL;
   m->type = member_type;
   m->offset = offset;
   m->index = (unsigned)type->members.len;
@@ -289,8 +377,42 @@ Member *type_get_member(Type *type, StringView name) {
 
   for (size_t i = 0; i < type->members.len; i++) {
     Member *m = type->members.items[i];
+    if (!m->name)
+      continue;
     if (sv_eq(sv_from_cstr(m->name), name))
       return m;
+  }
+  return NULL;
+}
+
+Member *type_find_union_field(Type *type, StringView name, Type **out_owner) {
+  if (!type || type->kind != KIND_UNION)
+    return NULL;
+
+  // First, try direct named union members.
+  for (size_t i = 0; i < type->members.len; i++) {
+    Member *m = type->members.items[i];
+    if (m->name && sv_eq(sv_from_cstr(m->name), name)) {
+      if (out_owner)
+        *out_owner = type;
+      return m;
+    }
+  }
+
+  // Then search each variant's fields.
+  for (size_t i = 0; i < type->members.len; i++) {
+    Member *variant = type->members.items[i];
+    Type *variant_type = variant->type;
+    if (!variant_type)
+      continue;
+    if (variant_type->kind == KIND_STRUCT || variant_type->kind == KIND_UNION) {
+      Member *inner = type_get_member(variant_type, name);
+      if (inner) {
+        if (out_owner)
+          *out_owner = variant_type;
+        return inner;
+      }
+    }
   }
   return NULL;
 }
@@ -309,6 +431,7 @@ bool type_equals(Type *a, Type *b) {
   case KIND_PRIMITIVE:
     return a->data.primitive == b->data.primitive;
   case KIND_STRUCT:
+  case KIND_UNION:
     if (!sv_eq(a->name, b->name))
       return false;
     if (a->data.instance.from_template != b->data.instance.from_template)
@@ -397,6 +520,26 @@ const char *type_to_name(Type *t) {
     }
     depth--;
     return struct_buf;
+  }
+  case KIND_UNION: {
+    static char union_buf[1024];
+    if (t->name.len > 0 &&
+        !sv_eq(t->name, sv_from_parts("<anonymous union>", 16))) {
+      snprintf(union_buf, sizeof(union_buf), "union %.*s", (int)t->name.len,
+               t->name.data);
+    } else {
+      char members_buf[512] = {0};
+      for (size_t i = 0; i < t->members.len; i++) {
+        if (i > 0)
+          strcat(members_buf, " | ");
+        Member *m = t->members.items[i];
+        if (m->type)
+          strcat(members_buf, type_to_name(m->type));
+      }
+      snprintf(union_buf, sizeof(union_buf), "union(%s)", members_buf);
+    }
+    depth--;
+    return union_buf;
   }
   default:
     depth--;

@@ -63,6 +63,7 @@ enum AstKind {
   NODE_INDEX,
   NODE_STATIC_MEMBER,
   NODE_STRUCT_DECL,
+  NODE_UNION_DECL,
   NODE_IMPL_DECL,
   NODE_IMPORT,
 
@@ -109,6 +110,14 @@ struct AstNode {
       bool is_frozen;
       bool is_export;
     } struct_decl;
+
+    struct {
+      AstNode *name;
+      List members;      // List<AstNode* (NODE_VAR_DECL or NODE_FUNC_DECL)>
+      List placeholders; // List<StringView*>
+      bool is_frozen;
+      bool is_export;
+    } union_decl;
 
     struct {
       AstNode *name;
@@ -287,8 +296,7 @@ AstNode *AstNode_new_program(Location loc);
 AstNode *AstNode_new_import(StringView path, StringView alias, Location loc);
 
 AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, Type *type,
-                              int is_const, bool is_export,
-                              Location loc);
+                              int is_const, bool is_export, Location loc);
 AstNode *AstNode_new_print_stmt(List values, Location loc);
 
 AstNode *AstNode_new_number(double value, StringView raw_text, Location loc);
@@ -343,8 +351,9 @@ AstNode *AstNode_new_ternary(AstNode *condition, AstNode *true_expr,
                              AstNode *false_expr, Location loc);
 
 AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
-                                 bool is_frozen, bool is_export,
-                                 Location loc);
+                                 bool is_frozen, bool is_export, Location loc);
+AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
+                                bool is_frozen, bool is_export, Location loc);
 AstNode *AstNode_new_impl_decl(AstNode *name, List members, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
 

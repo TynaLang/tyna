@@ -72,6 +72,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_DEFER;
   else if (sv_eq_cstr(text, "struct"))
     t.type = TOKEN_STRUCT;
+  else if (sv_eq_cstr(text, "union"))
+    t.type = TOKEN_UNION;
   else if (sv_eq_cstr(text, "loop"))
     t.type = TOKEN_LOOP;
   else if (sv_eq_cstr(text, "while"))
