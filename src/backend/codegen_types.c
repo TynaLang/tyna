@@ -1,5 +1,7 @@
 #include <ctype.h>
+#include <execinfo.h>
 #include <llvm-c/Core.h>
+#include <stdlib.h>
 
 #include "codegen_private.h"
 #include "tyl/ast.h"
@@ -32,6 +34,14 @@ static void cg_get_struct_name(Type *t, char *buf, size_t buf_size) {
 
 LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
   if (!t) {
+    void *bt[16];
+    int bt_size = backtrace(bt, 16);
+    char **bt_syms = backtrace_symbols(bt, bt_size);
+    fprintf(stderr, "[DEBUG cg_get_llvm_type] NULL type call stack:\n");
+    for (int i = 0; i < bt_size; i++) {
+      fprintf(stderr, "  %s\n", bt_syms[i]);
+    }
+    free(bt_syms);
     panic("cg_get_llvm_type received NULL type");
   }
 

@@ -52,6 +52,20 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
   }
 
   case NODE_INDEX: {
+    if (!node->resolved_type) {
+      Type *array_type = node->index.array->resolved_type;
+      if (array_type) {
+        if (array_type->kind == KIND_POINTER) {
+          node->resolved_type = array_type->data.pointer_to;
+        } else if (type_is_array_struct(array_type) &&
+                   array_type->data.instance.generic_args.len > 0) {
+          node->resolved_type = array_type->data.instance.generic_args.items[0];
+        } else if (array_type->kind == KIND_PRIMITIVE &&
+                   array_type->data.primitive == PRIM_STRING) {
+          node->resolved_type = type_get_primitive(cg->type_ctx, PRIM_CHAR);
+        }
+      }
+    }
     LLVMValueRef array_struct_ptr = cg_expression_addr(cg, node->index.array);
     LLVMTypeRef array_struct_ty =
         cg_get_llvm_type(cg, node->index.array->resolved_type);
@@ -207,9 +221,21 @@ static LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node) {
 }
 
 static LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node) {
+  if (!node->resolved_type) {
+    CGSymbol *sym = CGSymbolTable_find(cg->current_scope, node->var.value);
+    if (sym) {
+      node->resolved_type = sym->type;
+    }
+  }
+
   LLVMValueRef ptr = cg_get_address(cg, node);
   if (!ptr) {
-    panic("Undefined variable during codegen");
+    panic("Undefined variable during codegen: " SV_FMT,
+          SV_ARG(node->var.value));
+  }
+  if (!node->resolved_type) {
+    panic("Undefined variable type during codegen: " SV_FMT,
+          SV_ARG(node->var.value));
   }
   LLVMTypeRef type = cg_get_llvm_type(cg, node->resolved_type);
   return LLVMBuildLoad2(cg->builder, type, ptr, "var_load");
@@ -663,13 +689,55 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   if (!ptr)
     panic("Invalid assignment target");
   LLVMValueRef val = cg_expression(cg, node->assign_expr.value);
-  if (!node->assign_expr.target->resolved_type) {
+
+  Type *target_type = node->assign_expr.target->resolved_type;
+  if (!target_type) {
+    AstNode *target = node->assign_expr.target;
+    if (target->tag == NODE_VAR) {
+      CGSymbol *sym = CGSymbolTable_find(cg->current_scope, target->var.value);
+      if (sym)
+        target_type = sym->type;
+    } else if (target->tag == NODE_FIELD) {
+      Type *obj_type = target->field.object->resolved_type;
+      if (!obj_type && target->field.object->tag == NODE_VAR) {
+        CGSymbol *sym = CGSymbolTable_find(cg->current_scope,
+                                           target->field.object->var.value);
+        if (sym)
+          obj_type = sym->type;
+      }
+      if (obj_type && obj_type->kind == KIND_STRUCT) {
+        Member *m = type_get_member(obj_type, target->field.field);
+        if (m)
+          target_type = m->type;
+      } else if (obj_type && obj_type->kind == KIND_UNION) {
+        Type *owner = NULL;
+        Member *m =
+            type_find_union_field(obj_type, target->field.field, &owner);
+        if (m)
+          target_type = m->type;
+      }
+    } else if (target->tag == NODE_INDEX) {
+      Type *array_type = target->index.array->resolved_type;
+      if (array_type) {
+        if (array_type->kind == KIND_POINTER) {
+          target_type = array_type->data.pointer_to;
+        } else if (type_is_array_struct(array_type) &&
+                   array_type->data.instance.generic_args.len > 0) {
+          target_type = array_type->data.instance.generic_args.items[0];
+        }
+      }
+    }
+  }
+
+  if (!target_type) {
+    target_type = node->assign_expr.target->resolved_type;
+  }
+  if (!target_type) {
     panic("Assignment target has no resolved type");
   }
   if (!node->assign_expr.value->resolved_type) {
     panic("Assignment RHS has no resolved type");
   }
-  Type *target_type = node->assign_expr.target->resolved_type;
   LLVMTypeRef target_ty = cg_get_llvm_type(cg, target_type);
   if (target_type->kind == KIND_UNION && target_type->is_tagged_union) {
     int variant_index = cg_tagged_union_variant_index(

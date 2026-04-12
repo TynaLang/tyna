@@ -17,6 +17,22 @@ static void cg_register_system_function(Codegen *cg, StringView name,
   List_push(&cg->system_functions, f);
 }
 
+static LLVMTypeRef cg_get_string_llvm_type(Codegen *cg) {
+  const char *name = "tyl_string";
+  LLVMTypeRef str_ty = LLVMGetTypeByName2(cg->context, name);
+  if (!str_ty) {
+    str_ty = LLVMStructCreateNamed(cg->context, name);
+  }
+  if (LLVMIsOpaqueStruct(str_ty)) {
+    LLVMTypeRef fields[2] = {
+        LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+        LLVMInt64TypeInContext(cg->context),
+    };
+    LLVMStructSetBody(str_ty, fields, 2, false);
+  }
+  return str_ty;
+}
+
 static void cg_initiate_system_functions(Codegen *cg) {
   LLVMTypeRef printf_args[] = {
       LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0)};
@@ -74,8 +90,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
                      to_str_val, to_str_type, true);
   List_push(&cg->system_functions, f_to_str);
 
-  LLVMTypeRef string_ty =
-      cg_get_llvm_type(cg, cg->type_ctx->primitives[PRIM_STRING]);
+  LLVMTypeRef string_ty = cg_get_string_llvm_type(cg);
 
   // char* __tyl_str_data(const String *s)
   LLVMTypeRef str_data_args[] = {LLVMPointerType(string_ty, 0)};

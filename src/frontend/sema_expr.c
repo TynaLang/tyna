@@ -519,6 +519,7 @@ static Type *check_field(Sema *s, AstNode *node) {
   // 1. Is it a field?
   Member *m = type_get_member(obj_type, node->field.field);
   if (m) {
+    node->resolved_type = m->type;
     return m->type;
   }
 
@@ -526,6 +527,7 @@ static Type *check_field(Sema *s, AstNode *node) {
     Type *owner = NULL;
     m = type_find_union_field(obj_type, node->field.field, &owner);
     if (m) {
+      node->resolved_type = m->type;
       return m->type;
     }
   }
@@ -1077,6 +1079,15 @@ static Type *check_array_expr(Sema *s, AstNode *node) {
   if (node->tag == NODE_ARRAY_LITERAL) {
     size_t len = node->array_literal.items.len;
     instance = type_get_instance_fixed(s->types, array_template, args, len);
+  } else if (node->tag == NODE_ARRAY_REPEAT) {
+    long long repeat_count = 0;
+    if (get_constant_int(s, node->array_repeat.count, &repeat_count) &&
+        repeat_count > 0) {
+      instance = type_get_instance_fixed(s->types, array_template, args,
+                                         (uint64_t)repeat_count);
+    } else {
+      instance = type_get_instance(s->types, array_template, args);
+    }
   } else {
     instance = type_get_instance(s->types, array_template, args);
   }
