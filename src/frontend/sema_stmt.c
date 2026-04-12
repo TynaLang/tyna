@@ -22,10 +22,11 @@ void sema_scope_pop(Sema *s) {
 }
 
 static void sema_jump_push(Sema *s, SemaJump *ctx, StringView label,
-                           AstNode *node, bool is_loop) {
+                           AstNode *node, bool is_loop, bool is_breakable) {
   ctx->label = label;
   ctx->node = node;
   ctx->is_loop = is_loop;
+  ctx->is_breakable = is_breakable;
   ctx->parent = s->jump;
   s->jump = ctx;
 }
@@ -34,6 +35,15 @@ static void sema_jump_pop(Sema *s) {
   if (s->jump) {
     s->jump = s->jump->parent;
   }
+}
+
+static SemaJump *sema_find_break_jump(Sema *s) {
+  for (SemaJump *j = s->jump; j != NULL; j = j->parent) {
+    if (j->is_breakable) {
+      return j;
+    }
+  }
+  return NULL;
 }
 
 static SemaJump *sema_find_loop_jump(Sema *s) {
@@ -282,9 +292,79 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     break;
   }
 
+  case NODE_SWITCH_STMT: {
+    Type *expr_type = sema_check_expr(s, node->switch_stmt.expr);
+    if (!expr_type)
+      break;
+
+    SemaJump jump_ctx;
+    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, false, true);
+
+    if (expr_type->kind == KIND_PRIMITIVE &&
+        expr_type->data.primitive == PRIM_STRING) {
+      for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
+        AstNode *case_node = node->switch_stmt.cases.items[i];
+        if (!case_node || case_node->tag != NODE_CASE) {
+          continue;
+        }
+        if (case_node->case_stmt.pattern &&
+            case_node->case_stmt.pattern->tag != NODE_STRING) {
+          sema_error(s, case_node,
+                     "String switch cases must use string literals or '_'");
+          continue;
+        }
+        sema_check_stmt(s, case_node->case_stmt.body);
+      }
+    } else if (expr_type->kind == KIND_UNION && expr_type->is_tagged_union) {
+      for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
+        AstNode *case_node = node->switch_stmt.cases.items[i];
+        if (!case_node || case_node->tag != NODE_CASE) {
+          continue;
+        }
+        if (!case_node->case_stmt.pattern) {
+          sema_check_stmt(s, case_node->case_stmt.body);
+          continue;
+        }
+        if (case_node->case_stmt.pattern->tag != NODE_VAR ||
+            !case_node->case_stmt.pattern_type) {
+          sema_error(s, case_node,
+                     "Union switch cases must use 'case name: Type => ...'");
+          continue;
+        }
+
+        Type *variant_type = case_node->case_stmt.pattern_type;
+        bool found = false;
+        for (size_t j = 0; j < expr_type->members.len; j++) {
+          Member *m = expr_type->members.items[j];
+          if (type_equals(m->type, variant_type)) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          sema_error(s, case_node, "Type '%s' is not a variant of union '%s'",
+                     type_to_name(variant_type), type_to_name(expr_type));
+          continue;
+        }
+
+        sema_scope_push(s);
+        sema_define(s, case_node->case_stmt.pattern->var.value, variant_type,
+                    false, case_node->loc);
+        sema_check_stmt(s, case_node->case_stmt.body);
+        sema_scope_pop(s);
+      }
+    } else {
+      sema_error(s, node,
+                 "Switch expression must be a string or tagged union, got '%s'",
+                 type_to_name(expr_type));
+    }
+
+    sema_jump_pop(s);
+    break;
+  }
   case NODE_LOOP_STMT: {
     SemaJump jump_ctx;
-    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, true);
+    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, true, true);
     sema_check_stmt(s, node->loop.expr);
     sema_jump_pop(s);
     break;
@@ -299,7 +379,7 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     }
 
     SemaJump jump_ctx;
-    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, true);
+    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, true, true);
     sema_check_stmt(s, node->while_stmt.body);
     sema_jump_pop(s);
     break;
@@ -325,7 +405,7 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     }
 
     SemaJump jump_ctx;
-    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, true);
+    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, true, true);
     sema_check_stmt(s, node->for_stmt.body);
     sema_jump_pop(s);
 
@@ -373,7 +453,7 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     }
 
     SemaJump jump_ctx;
-    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, true);
+    sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, true, true);
     sema_check_stmt(s, node->for_in_stmt.body);
     sema_jump_pop(s);
 
@@ -668,9 +748,9 @@ void sema_check_stmt(Sema *s, AstNode *node) {
   }
 
   case NODE_BREAK: {
-    SemaJump *loop = sema_find_loop_jump(s);
-    if (!loop) {
-      sema_error(s, node, "break statement outside of loop");
+    SemaJump *jump = sema_find_break_jump(s);
+    if (!jump) {
+      sema_error(s, node, "break statement outside of loop or switch");
     }
     break;
   }

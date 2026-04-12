@@ -59,6 +59,7 @@ struct SemaJump {
   StringView label;
   AstNode *node;
   bool is_loop;
+  bool is_breakable;
   int defer_count;
   struct SemaJump *parent;
 };

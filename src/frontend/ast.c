@@ -188,6 +188,22 @@ AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
   return node;
 }
 
+AstNode *AstNode_new_switch_stmt(AstNode *expr, List cases, Location loc) {
+  AstNode *node = AstNode_new(NODE_SWITCH_STMT, loc);
+  node->switch_stmt.expr = expr;
+  node->switch_stmt.cases = cases;
+  return node;
+}
+
+AstNode *AstNode_new_case_stmt(AstNode *pattern, Type *pattern_type,
+                               AstNode *body, Location loc) {
+  AstNode *node = AstNode_new(NODE_CASE, loc);
+  node->case_stmt.pattern = pattern;
+  node->case_stmt.pattern_type = pattern_type;
+  node->case_stmt.body = body;
+  return node;
+}
+
 AstNode *AstNode_new_import(StringView path, StringView alias, Location loc) {
   AstNode *node = AstNode_new(NODE_IMPORT, loc);
   node->import.path = path;
@@ -424,6 +440,17 @@ void Ast_free(AstNode *node) {
     Ast_free(node->if_stmt.condition);
     Ast_free(node->if_stmt.then_branch);
     Ast_free(node->if_stmt.else_branch);
+    break;
+  case NODE_SWITCH_STMT:
+    Ast_free(node->switch_stmt.expr);
+    for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
+      Ast_free((AstNode *)node->switch_stmt.cases.items[i]);
+    }
+    List_free(&node->switch_stmt.cases, 0);
+    break;
+  case NODE_CASE:
+    Ast_free(node->case_stmt.pattern);
+    Ast_free(node->case_stmt.body);
     break;
   case NODE_DEFER:
     Ast_free(node->defer.expr);
@@ -712,6 +739,34 @@ void Ast_print(AstNode *node, int indent) {
       print_indent(indent + 1);
       printf("ELSE:\n");
       Ast_print(node->if_stmt.else_branch, indent + 2);
+    }
+    break;
+  case NODE_SWITCH_STMT:
+    printf("SWITCH_STMT\n");
+    print_indent(indent + 1);
+    printf("EXPR:\n");
+    Ast_print(node->switch_stmt.expr, indent + 2);
+    for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
+      print_indent(indent + 1);
+      printf("CASE:\n");
+      Ast_print((AstNode *)node->switch_stmt.cases.items[i], indent + 2);
+    }
+    break;
+  case NODE_CASE:
+    printf("CASE_ENTRY\n");
+    if (node->case_stmt.pattern) {
+      print_indent(indent + 1);
+      printf("PATTERN:\n");
+      Ast_print(node->case_stmt.pattern, indent + 2);
+    }
+    if (node->case_stmt.pattern_type) {
+      print_indent(indent + 1);
+      printf("TYPE: %s\n", type_to_name(node->case_stmt.pattern_type));
+    }
+    if (node->case_stmt.body) {
+      print_indent(indent + 1);
+      printf("BODY:\n");
+      Ast_print(node->case_stmt.body, indent + 2);
     }
     break;
   case NODE_DEFER:

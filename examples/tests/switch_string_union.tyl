@@ -1,0 +1,39 @@
+fn main() {
+    let s = "hello";
+    switch s {
+        case "hello" => {
+            print("string-hello");
+            break;
+        }
+        case "world" => {
+            print("string-world");
+            break;
+        }
+        case _ => print("string-other");
+    }
+
+    let s2 = "other";
+    switch s2 {
+        case "hello" => print("string-hello-2");
+        case "world" => print("string-world-2");
+        case "bye" => print("string-bye-2");
+        case "goodbye" => print("string-goodbye-2");
+        case _ => print("string-other-2");
+
+    }
+
+    let x: i32 | str = "hello";
+    switch x {
+        case s: str => print("union-string:", s);
+        case i: i32 => print("union-int:", i);
+    }
+
+    let y: i32 | str = 123;
+    switch y {
+        case s: str => print("union-string2:", s);
+        case i: i32 => {
+            print("union-int2:", i);
+            break;
+        }
+    }
+}

@@ -60,6 +60,34 @@ String __tyl_str_intern(String s) {
   return s;
 }
 
+uint64_t __tyl_str_hash(String s) {
+  if (!s.ptr || s.len == 0)
+    return 0;
+  StringHeader *hdr = string_header_from_ptr(s.ptr);
+  if (hdr->hash)
+    return hdr->hash;
+
+  uint64_t hash = 1469598103934665603ULL;
+  for (int64_t i = 0; i < s.len; i++) {
+    hash ^= (uint64_t)(unsigned char)s.ptr[i];
+    hash *= 1099511628211ULL;
+  }
+  if (hash == 0)
+    hash = 1;
+  hdr->hash = hash;
+  return hash;
+}
+
+int32_t __tyl_str_equals(String a, String b) {
+  if (a.len != b.len)
+    return 0;
+  if (a.ptr == b.ptr)
+    return 1;
+  if (!a.ptr || !b.ptr)
+    return 0;
+  return memcmp(a.ptr, b.ptr, a.len) == 0;
+}
+
 // Returns 0 for equal, -1 or 1 for unequal
 int32_t __tyl_compare_arrays(const FatPtr *a, const FatPtr *b,
                              size_t elem_size) {

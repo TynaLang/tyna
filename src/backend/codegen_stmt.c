@@ -1,6 +1,7 @@
 #include "codegen_private.h"
 #include "tyl/ast.h"
 #include "tyl/codegen.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,6 +167,44 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
   LLVMBuildCall2(cg->builder, print_fn->type, print_fn->value, nl_args, 1, "");
 }
 
+static LLVMValueRef cg_string_hash(Codegen *cg, LLVMValueRef str_val) {
+  CGFunction *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_hash"));
+  if (!fn)
+    panic("Missing __tyl_str_hash runtime helper");
+  return LLVMBuildCall2(cg->builder, fn->type, fn->value, &str_val, 1,
+                        "str_hash");
+}
+
+static LLVMValueRef cg_string_equals(Codegen *cg, LLVMValueRef a,
+                                     LLVMValueRef b) {
+  CGFunction *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_equals"));
+  if (!fn)
+    panic("Missing __tyl_str_equals runtime helper");
+  LLVMValueRef args[] = {a, b};
+  LLVMValueRef result =
+      LLVMBuildCall2(cg->builder, fn->type, fn->value, args, 2, "str_eq_int");
+  return LLVMBuildICmp(cg->builder, LLVMIntEQ, result,
+                       LLVMConstInt(LLVMInt32TypeInContext(cg->context), 1, 0),
+                       "str_eq");
+}
+
+static LLVMValueRef cg_extract_tagged_union_payload(Codegen *cg,
+                                                    LLVMValueRef union_val,
+                                                    Type *union_t,
+                                                    Type *variant_type) {
+  LLVMTypeRef union_ty = cg_get_llvm_type(cg, union_t);
+  LLVMValueRef tmp = LLVMBuildAlloca(cg->builder, union_ty, "tagged_union_tmp");
+  LLVMBuildStore(cg->builder, union_val, tmp);
+  LLVMValueRef payload_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp, 1,
+                                                 "tagged_union_payload_ptr");
+  LLVMTypeRef target_ty = cg_get_llvm_type(cg, variant_type);
+  LLVMValueRef store_ptr =
+      LLVMBuildBitCast(cg->builder, payload_ptr, LLVMPointerType(target_ty, 0),
+                       "tagged_union_payload_cast");
+  return LLVMBuildLoad2(cg->builder, target_ty, store_ptr,
+                        "tagged_union_value");
+}
+
 void cg_statement(Codegen *cg, AstNode *node) {
   if (!node)
     return;
@@ -217,6 +256,192 @@ void cg_statement(Codegen *cg, AstNode *node) {
       if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
         LLVMBuildBr(cg->builder, merge_bb);
       }
+    }
+
+    LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+    break;
+  }
+  case NODE_SWITCH_STMT: {
+    Type *expr_type = node->switch_stmt.expr->resolved_type;
+    LLVMValueRef expr_val = cg_expression(cg, node->switch_stmt.expr);
+    LLVMValueRef func = cg->current_function;
+    LLVMBasicBlockRef merge_bb =
+        LLVMAppendBasicBlockInContext(cg->context, func, "switch_end");
+
+    if (expr_type && expr_type->kind == KIND_PRIMITIVE &&
+        expr_type->data.primitive == PRIM_STRING) {
+      bool use_hash = node->switch_stmt.cases.len > 3;
+      LLVMValueRef expr_hash = NULL;
+      if (use_hash) {
+        expr_hash = cg_string_hash(cg, expr_val);
+      }
+
+      for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
+        AstNode *case_node = node->switch_stmt.cases.items[i];
+        LLVMBasicBlockRef case_bb =
+            LLVMAppendBasicBlockInContext(cg->context, func, "switch_case");
+        LLVMBasicBlockRef next_bb = (i + 1 < node->switch_stmt.cases.len)
+                                        ? LLVMAppendBasicBlockInContext(
+                                              cg->context, func, "switch_next")
+                                        : merge_bb;
+
+        LLVMValueRef cond = NULL;
+        if (use_hash) {
+          if (case_node->case_stmt.pattern &&
+              case_node->case_stmt.pattern->tag == NODE_STRING) {
+            StringView value = case_node->case_stmt.pattern->string.value;
+            uint64_t hash = 1469598103934665603ULL;
+            for (size_t k = 0; k < value.len; k++) {
+              hash ^= (uint64_t)(unsigned char)value.data[k];
+              hash *= 1099511628211ULL;
+            }
+            if (hash == 0)
+              hash = 1;
+            LLVMValueRef target_hash =
+                LLVMConstInt(LLVMInt64TypeInContext(cg->context), hash, 0);
+            LLVMValueRef hash_eq =
+                LLVMBuildICmp(cg->builder, LLVMIntEQ, expr_hash, target_hash,
+                              "switch_hash_eq");
+            LLVMBasicBlockRef hash_ok_bb = LLVMAppendBasicBlockInContext(
+                cg->context, func, "switch_hash_ok");
+            LLVMBuildCondBr(cg->builder, hash_eq, hash_ok_bb, next_bb);
+
+            LLVMPositionBuilderAtEnd(cg->builder, hash_ok_bb);
+            LLVMValueRef lit_val =
+                cg_expression(cg, case_node->case_stmt.pattern);
+            LLVMValueRef eq = cg_string_equals(cg, expr_val, lit_val);
+            LLVMBuildCondBr(cg->builder, eq, case_bb, next_bb);
+          } else if (!case_node->case_stmt.pattern) {
+            LLVMBuildBr(cg->builder, case_bb);
+          } else {
+            LLVMBuildBr(cg->builder, next_bb);
+          }
+        } else {
+          if (case_node->case_stmt.pattern &&
+              case_node->case_stmt.pattern->tag == NODE_STRING) {
+            LLVMValueRef lit_val =
+                cg_expression(cg, case_node->case_stmt.pattern);
+            LLVMValueRef eq = cg_string_equals(cg, expr_val, lit_val);
+            LLVMBuildCondBr(cg->builder, eq, case_bb, next_bb);
+          } else if (!case_node->case_stmt.pattern) {
+            LLVMBuildBr(cg->builder, case_bb);
+          } else {
+            LLVMBuildBr(cg->builder, next_bb);
+          }
+        }
+
+        LLVMPositionBuilderAtEnd(cg->builder, case_bb);
+        List_push(&cg->break_stack, merge_bb);
+        if (case_node->case_stmt.body) {
+          cg_push_scope(cg);
+          cg_statement(cg, case_node->case_stmt.body);
+          cg_pop_scope(cg);
+        }
+        List_pop(&cg->break_stack);
+        if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+          LLVMBuildBr(cg->builder, merge_bb);
+        }
+        if (next_bb != merge_bb) {
+          LLVMPositionBuilderAtEnd(cg->builder, next_bb);
+        }
+      }
+    } else if (expr_type && expr_type->kind == KIND_UNION &&
+               expr_type->is_tagged_union) {
+      LLVMValueRef tag =
+          LLVMBuildExtractValue(cg->builder, expr_val, 0, "switch_union_tag");
+
+      size_t explicit_case_count = 0;
+      bool has_default = false;
+      for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
+        AstNode *case_node = node->switch_stmt.cases.items[i];
+        if (case_node && case_node->tag == NODE_CASE &&
+            !case_node->case_stmt.pattern) {
+          has_default = true;
+        } else {
+          explicit_case_count++;
+        }
+      }
+
+      LLVMBasicBlockRef default_bb = merge_bb;
+      if (has_default) {
+        default_bb =
+            LLVMAppendBasicBlockInContext(cg->context, func, "switch_default");
+      }
+
+      LLVMValueRef switch_inst = LLVMBuildSwitch(cg->builder, tag, default_bb,
+                                                 (unsigned)explicit_case_count);
+
+      LLVMBasicBlockRef *case_blocks =
+          xmalloc(sizeof(LLVMBasicBlockRef) * explicit_case_count);
+      size_t case_block_index = 0;
+      for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
+        AstNode *case_node = node->switch_stmt.cases.items[i];
+        if (!case_node || case_node->tag != NODE_CASE)
+          continue;
+
+        if (!case_node->case_stmt.pattern)
+          continue;
+
+        int variant_index = -1;
+        for (size_t j = 0; j < expr_type->members.len; j++) {
+          Member *m = expr_type->members.items[j];
+          if (type_equals(m->type, case_node->case_stmt.pattern_type)) {
+            variant_index = (int)j;
+            break;
+          }
+        }
+        LLVMValueRef expected_tag =
+            LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                         (unsigned)(variant_index >= 0 ? variant_index : 0), 0);
+        case_blocks[case_block_index] =
+            LLVMAppendBasicBlockInContext(cg->context, func, "switch_case");
+        LLVMAddCase(switch_inst, expected_tag, case_blocks[case_block_index]);
+        case_block_index++;
+      }
+
+      size_t case_index = 0;
+      for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
+        AstNode *case_node = node->switch_stmt.cases.items[i];
+        if (!case_node || case_node->tag != NODE_CASE)
+          continue;
+
+        LLVMBasicBlockRef case_bb;
+        if (!case_node->case_stmt.pattern) {
+          case_bb = default_bb;
+        } else {
+          case_bb = case_blocks[case_index];
+          case_index++;
+        }
+
+        LLVMPositionBuilderAtEnd(cg->builder, case_bb);
+        List_push(&cg->break_stack, merge_bb);
+        cg_push_scope(cg);
+        if (case_node->case_stmt.pattern &&
+            case_node->case_stmt.pattern->tag == NODE_VAR) {
+          LLVMValueRef payload = cg_extract_tagged_union_payload(
+              cg, expr_val, expr_type, case_node->case_stmt.pattern_type);
+          LLVMValueRef local_ptr =
+              cg_alloca_in_entry(cg, case_node->case_stmt.pattern_type,
+                                 case_node->case_stmt.pattern->var.value);
+          LLVMBuildStore(cg->builder, payload, local_ptr);
+          CGSymbolTable_add(cg->current_scope,
+                            case_node->case_stmt.pattern->var.value,
+                            case_node->case_stmt.pattern_type, local_ptr);
+        }
+        if (case_node->case_stmt.body) {
+          cg_statement(cg, case_node->case_stmt.body);
+        }
+        cg_pop_scope(cg);
+        List_pop(&cg->break_stack);
+        if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+          LLVMBuildBr(cg->builder, merge_bb);
+        }
+      }
+
+      free(case_blocks);
+      LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+    } else {
+      // Unsupported types should already be diagnosed by semantic analysis
     }
 
     LLVMPositionBuilderAtEnd(cg->builder, merge_bb);

@@ -122,6 +122,27 @@ static void cg_initiate_system_functions(Codegen *cg) {
                      str_release_val, str_release_type, true);
   List_push(&cg->system_functions, f_str_release);
 
+  // i64 __tyl_str_hash(String s)
+  LLVMTypeRef str_hash_args[] = {string_ty};
+  LLVMTypeRef str_hash_type = LLVMFunctionType(i64_ty, str_hash_args, 1, false);
+  LLVMValueRef str_hash_val =
+      LLVMAddFunction(cg->module, "__tyl_str_hash", str_hash_type);
+  CGFunction *f_str_hash = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_hash, sv_from_cstr("__tyl_str_hash"), str_hash_val,
+                     str_hash_type, true);
+  List_push(&cg->system_functions, f_str_hash);
+
+  // i32 __tyl_str_equals(String a, String b)
+  LLVMTypeRef str_eq_args[] = {string_ty, string_ty};
+  LLVMTypeRef str_eq_type = LLVMFunctionType(
+      LLVMInt32TypeInContext(cg->context), str_eq_args, 2, false);
+  LLVMValueRef str_eq_val =
+      LLVMAddFunction(cg->module, "__tyl_str_equals", str_eq_type);
+  CGFunction *f_str_eq = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_eq, sv_from_cstr("__tyl_str_equals"), str_eq_val,
+                     str_eq_type, true);
+  List_push(&cg->system_functions, f_str_eq);
+
   // void __tyl_array_init_fixed(void *arr, i64 elem_size, i64 len)
   LLVMTypeRef init_fixed_args[] = {ptr_ty, i64_ty, i64_ty};
   LLVMTypeRef init_fixed_type = LLVMFunctionType(

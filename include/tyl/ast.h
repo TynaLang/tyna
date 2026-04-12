@@ -71,6 +71,8 @@ enum AstKind {
   NODE_ARRAY_REPEAT,
 
   NODE_IF_STMT,
+  NODE_SWITCH_STMT,
+  NODE_CASE,
   NODE_LOOP_STMT,
   NODE_WHILE_STMT,
   NODE_FOR_STMT,
@@ -286,6 +288,17 @@ struct AstNode {
     } if_stmt;
 
     struct {
+      AstNode *expr;
+      List cases; // List<AstNode*> for NODE_CASE
+    } switch_stmt;
+
+    struct {
+      AstNode *pattern; // NODE_STRING or NODE_VAR
+      Type *pattern_type; // variant type for union cases
+      AstNode *body;
+    } case_stmt;
+
+    struct {
       StringView path;
       StringView alias;
     } import;
@@ -337,6 +350,9 @@ AstNode *AstNode_new_array_repeat(AstNode *value, AstNode *count, Location loc);
 
 AstNode *AstNode_new_if_stmt(AstNode *condition, AstNode *then_branch,
                              AstNode *else_branch, Location loc);
+AstNode *AstNode_new_switch_stmt(AstNode *expr, List cases, Location loc);
+AstNode *AstNode_new_case_stmt(AstNode *pattern, Type *pattern_type,
+                               AstNode *body, Location loc);
 AstNode *AstNode_new_defer(AstNode *expr, Location loc);
 AstNode *AstNode_new_loop(AstNode *expr, Location loc);
 AstNode *AstNode_new_while(AstNode *condition, AstNode *body, Location loc);

@@ -1,25 +1,99 @@
 #include "parser_internal.h"
 
-AstNode *Parser_parse_block(Parser *p) {
+static AstNode *Parser_parse_case_stmt(Parser *p) {
   Location loc = p->current_token.loc;
-  Parser_token_advance(p); // consume '{'
+  Parser_token_advance(p); // consume 'case'
 
-  AstNode *block = AstNode_new_block(loc);
+  AstNode *pattern = NULL;
+  Type *pattern_type = NULL;
 
-  while (p->current_token.type != TOKEN_RBRACE &&
-         p->current_token.type != TOKEN_EOF) {
-    AstNode *stmt = Parser_parse_statement(p);
-    if (!stmt) {
-      Parser_sync(p);
-      continue;
+  if (p->current_token.type == TOKEN_STRING) {
+    pattern = AstNode_new_string(p->current_token.text, p->current_token.loc);
+    Parser_token_advance(p);
+  } else if (p->current_token.type == TOKEN_IDENT) {
+    Token ident = p->current_token;
+    Parser_token_advance(p);
+
+    if (sv_eq_cstr(ident.text, "_")) {
+      pattern = NULL;
+    } else {
+      if (!Parser_expect(p, TOKEN_COLON,
+                         "Expected ':' after case variable name"))
+        return NULL;
+      pattern_type = Parser_parse_type_full(p);
+      if (!pattern_type)
+        return NULL;
+      pattern = AstNode_new_var(ident.text, ident.loc);
     }
-    List_push(&block->block.statements, stmt);
+  } else {
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Expected string literal, '_' default, or typed case "
+                        "variable after 'case'");
+    return NULL;
   }
 
-  if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after block"))
+  if (!Parser_expect(p, TOKEN_FAT_ARROW, "Expected '=>' after case pattern"))
     return NULL;
 
-  return block;
+  AstNode *body = NULL;
+  if (p->current_token.type == TOKEN_LBRACE) {
+    body = Parser_parse_block(p);
+  } else {
+    List stmts;
+    List_init(&stmts);
+    while (p->current_token.type != TOKEN_CASE &&
+           p->current_token.type != TOKEN_RBRACE &&
+           p->current_token.type != TOKEN_EOF) {
+      AstNode *stmt = Parser_parse_statement(p);
+      if (!stmt)
+        break;
+      List_push(&stmts, stmt);
+    }
+    if (stmts.len == 1) {
+      body = stmts.items[0];
+    } else {
+      body = AstNode_new_block(loc);
+      body->block.statements = stmts;
+    }
+  }
+
+  return AstNode_new_case_stmt(pattern, pattern_type, body, loc);
+}
+
+AstNode *Parser_parse_switch_stmt(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'switch'
+
+  AstNode *expr = Parser_parse_expression(p, 0);
+  if (!expr)
+    return NULL;
+
+  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after switch expression"))
+    return NULL;
+
+  List cases;
+  List_init(&cases);
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    if (p->current_token.type != TOKEN_CASE) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected 'case' inside switch body");
+      Parser_token_advance(p);
+      continue;
+    }
+
+    AstNode *case_node = Parser_parse_case_stmt(p);
+    if (case_node) {
+      List_push(&cases, case_node);
+    } else {
+      Parser_sync(p);
+    }
+  }
+
+  if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after switch body"))
+    return NULL;
+
+  return AstNode_new_switch_stmt(expr, cases, loc);
 }
 
 AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
@@ -51,7 +125,7 @@ AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
     if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
       return NULL;
 
-    return AstNode_new_var_decl(name, value, declared_type, is_const, false,
+    return AstNode_new_var_decl(name, value, declared_type, is_const, is_export,
                                 ident.loc);
   } else {
     if (declared_type->kind == KIND_PRIMITIVE &&
@@ -65,9 +139,31 @@ AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
                        "Expected ';' or '=' after identifier/type"))
       return NULL;
 
-    return AstNode_new_var_decl(name, NULL, declared_type, is_const, false,
+    return AstNode_new_var_decl(name, NULL, declared_type, is_const, is_export,
                                 ident.loc);
   }
+}
+
+AstNode *Parser_parse_block(Parser *p) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume '{'
+
+  AstNode *block = AstNode_new_block(loc);
+
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    AstNode *stmt = Parser_parse_statement(p);
+    if (!stmt) {
+      Parser_sync(p);
+      continue;
+    }
+    List_push(&block->block.statements, stmt);
+  }
+
+  if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after block"))
+    return NULL;
+
+  return block;
 }
 
 static AstNode *Parser_parse_import(Parser *p) {
@@ -580,6 +676,8 @@ AstNode *Parser_parse_statement(Parser *p) {
     return Parser_parse_print(p);
   case TOKEN_IF:
     return Parser_parse_if_stmt(p);
+  case TOKEN_SWITCH:
+    return Parser_parse_switch_stmt(p);
   case TOKEN_WHILE:
     return Parser_parse_while_stmt(p);
   case TOKEN_FOR:
