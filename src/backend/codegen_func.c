@@ -64,6 +64,11 @@ void cg_define_function(Codegen *cg, AstNode *node) {
 }
 
 void cg_emit_function_body(Codegen *cg, AstNode *node) {
+  if (node->func_decl.is_external) {
+    // External functions are declared but implemented in runtime/linker.
+    return;
+  }
+
   CGFunction *f = cg_find_function(cg, node->func_decl.name->var.value);
   if (!f) {
     ErrorHandler_report(cg->eh, node->loc, "Function not found: " SV_FMT,

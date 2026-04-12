@@ -99,6 +99,9 @@ TypeContext *type_context_create() {
     ctx->primitives[i]->data.primitive = (PrimitiveKind)i;
     ctx->primitives[i]->size = type_get_primitive_size(i);
     ctx->primitives[i]->alignment = ctx->primitives[i]->size;
+    if (i == PRIM_STRING) {
+      ctx->primitives[i]->alignment = 8;
+    }
     List_init(&ctx->primitives[i]->members);
     List_init(&ctx->primitives[i]->methods);
     ctx->primitives[i]->is_frozen = false;
@@ -312,6 +315,9 @@ bool type_equals(Type *a, Type *b) {
       return false;
     if (a->fixed_array_len != b->fixed_array_len)
       return false;
+    return true;
+  default:
+    return false;
   }
 }
 

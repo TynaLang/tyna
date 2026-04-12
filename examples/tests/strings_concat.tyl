@@ -1,0 +1,9 @@
+fn main() {
+    let a = "hello";
+    let b = " ";
+    let c = "world";
+    let joined = a.concat(b).concat(c);
+    print(joined);
+    let empty = "".concat("");
+    print(empty);
+}

@@ -61,7 +61,57 @@ Type *Parser_parse_type_full(Parser *p) {
     } else if (p->current_token.type == TOKEN_IDENT) {
       StringView name = p->current_token.text;
       Parser_token_advance(p);
-      res = type_get_struct(p->type_ctx, name);
+
+      if (p->current_token.type == TOKEN_LT) {
+        Parser_token_advance(p);
+        List args;
+        List_init(&args);
+
+        while (true) {
+          Type *arg_type = Parser_parse_type_full(p);
+          if (!arg_type) {
+            List_free(&args, 0);
+            return NULL;
+          }
+          List_push(&args, arg_type);
+
+          if (p->current_token.type == TOKEN_COMMA) {
+            Parser_token_advance(p);
+            continue;
+          }
+          break;
+        }
+
+        if (!Parser_expect(p, TOKEN_GT, "Expected '>' after generic type")) {
+          List_free(&args, 0);
+          return NULL;
+        }
+
+        if (sv_eq_cstr(name, "ptr")) {
+          if (args.len != 1) {
+            ErrorHandler_report(p->eh, p->current_token.loc,
+                                "ptr<> must have exactly one type argument");
+            List_free(&args, 0);
+            return NULL;
+          }
+          Type *target = args.items[0];
+          res = type_get_pointer(p->type_ctx, target);
+          List_free(&args, 0);
+        } else {
+          Type *template_type = type_get_template(p->type_ctx, name);
+          if (!template_type) {
+            res = type_get_struct(p->type_ctx, name);
+          } else {
+            res = type_get_instance(p->type_ctx, template_type, args);
+          }
+        }
+      } else {
+        if (sv_eq_cstr(name, "String")) {
+          res = type_get_primitive(p->type_ctx, PRIM_STRING);
+        } else {
+          res = type_get_struct(p->type_ctx, name);
+        }
+      }
     }
   }
 

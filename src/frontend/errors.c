@@ -42,14 +42,16 @@ static char *path_trim_relative(const char *path, const char *entry_path) {
 }
 
 void ErrorHandler_init(ErrorHandler *eh, const char *src, const char *path,
-                       const char *entry_path) {
+                       const char *entry_path, const char *path_prefix) {
   List_init(&eh->errors);
   eh->src = src;
   eh->path = path_trim_relative(path, entry_path);
+  eh->path_prefix = path_prefix ? xstrdup(path_prefix) : NULL;
   eh->has_errors = 0;
 }
 
 void ErrorHandler_free(ErrorHandler *eh) {
+  free(eh->path_prefix);
   for (size_t i = 0; i < eh->errors.len; i++) {
     free(eh->errors.items[i]);
   }
@@ -136,14 +138,29 @@ void ErrorHandler_report_level(ErrorHandler *eh, Location loc, ErrorLevel level,
     color_prefix = "\x1b[34;1m"; // Blue for Info
   }
 
+  const char *display_path = eh->path ? eh->path : "<unknown>";
+  char *prefixed_path = NULL;
+  if (eh->path_prefix && eh->path) {
+    size_t prefix_len = strlen(eh->path_prefix);
+    if (!(strncmp(display_path, eh->path_prefix, prefix_len) == 0 &&
+          (display_path[prefix_len] == '/' ||
+           display_path[prefix_len] == '\0'))) {
+      size_t buf_len = prefix_len + 1 + strlen(display_path) + 1;
+      prefixed_path = xmalloc(buf_len);
+      snprintf(prefixed_path, buf_len, "%s/%s", eh->path_prefix, display_path);
+      display_path = prefixed_path;
+    }
+  }
+
   char final_msg[2048];
   snprintf(final_msg, sizeof(final_msg),
            "%s%s\x1b[0m at %s:%zu:%zu: %s\n"
            "  |\n"
            "%zu | %s\n"
            "  | %s\n",
-           color_prefix, level_str, eh->path ? eh->path : "<unknown>", loc.line,
-           loc.col, msg_buf, loc.line, source_line, caret_str);
+           color_prefix, level_str, display_path, loc.line, loc.col, msg_buf,
+           loc.line, source_line, caret_str);
+  free(prefixed_path);
 
   free(source_line);
   free(caret_str);

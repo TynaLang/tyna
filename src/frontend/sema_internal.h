@@ -17,6 +17,7 @@ void sema_register_method_signature(Sema *s, AstNode *node,
 Type *sema_coerce(Sema *s, AstNode *expr, Type *target);
 Type *sema_check_expr(Sema *s, AstNode *node);
 bool type_is_array_struct(Type *type);
+Type *sema_find_type_by_name(Sema *s, StringView name);
 
 // Sema Stmt
 void sema_scope_push(Sema *s);

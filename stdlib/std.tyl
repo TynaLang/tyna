@@ -16,4 +16,17 @@ frozen struct Array<T> {
     // }
 }
 
+external fn __tyl_str_concat(a: str, b: str): str;
+external fn __tyl_str_intern(s: str): str;
+
+impl String {
+    fn concat(self: String, other: String): String {
+        return __tyl_str_concat(self, other);
+    }
+
+    fn intern(self: String): String {
+        return __tyl_str_intern(self);
+    }
+}
+
 const VERSION = "0.1.0";

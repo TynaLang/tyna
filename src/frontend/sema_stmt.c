@@ -127,16 +127,16 @@ void sema_check_stmt(Sema *s, AstNode *node) {
 
     for (size_t i = 0; i < module->exports.len; i++) {
       Symbol *export = module->exports.items[i];
-      StringView export_name = export->original_name.len ? export->original_name
-                                                        : export->name;
+      StringView export_name =
+          export->original_name.len ? export->original_name : export->name;
       if (sema_resolve_local(s, export_name)) {
         sema_error(s, node, "Duplicate imported symbol '" SV_FMT "'",
                    SV_ARG(export_name));
         continue;
       }
 
-      Symbol *export_sym = sema_define(s, export_name, export->type, export->is_const,
-                                       node->loc);
+      Symbol *export_sym = sema_define(s, export_name, export->type,
+                                       export->is_const, node->loc);
       if (!export_sym)
         continue;
 
@@ -492,13 +492,19 @@ void sema_check_stmt(Sema *s, AstNode *node) {
   case NODE_IMPL_DECL: {
     StringView name = node->impl_decl.name->var.value;
     Symbol *existing = sema_resolve(s, name);
-    if (!existing || (existing->type->kind != KIND_STRUCT &&
-                      existing->type->kind != KIND_TEMPLATE)) {
+    Type *t = NULL;
+    if (existing) {
+      t = existing->type;
+    } else {
+      t = sema_find_type_by_name(s, name);
+    }
+    if (!t ||
+        (t->kind != KIND_STRUCT && t->kind != KIND_TEMPLATE &&
+         !(t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING))) {
       sema_error(s, node, "Undefined type '%" SV_FMT "' or it is not a struct",
                  SV_ARG(name));
       break;
     }
-    Type *t = existing->type;
 
     for (size_t i = 0; i < node->impl_decl.members.len; i++) {
       AstNode *mem = node->impl_decl.members.items[i];

@@ -124,9 +124,11 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
         case PRIM_F64:
           fmt_str = "%f";
           break;
-        case PRIM_STRING:
+        case PRIM_STRING: {
           fmt_str = "%s";
+          val = LLVMBuildExtractValue(cg->builder, val, 0, "str_ptr");
           break;
+        }
         default:
           fmt_str = "%p";
           break;

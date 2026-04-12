@@ -432,7 +432,7 @@ static Type *check_binary_logical(Sema *s, AstNode *node) {
   }
 }
 
-static Type *sema_find_type_by_name(Sema *s, StringView name);
+Type *sema_find_type_by_name(Sema *s, StringView name);
 
 static Type *check_call(Sema *s, AstNode *node) {
   // If it's a method call: instance.method(args)
@@ -446,7 +446,9 @@ static Type *check_call(Sema *s, AstNode *node) {
       obj_type = obj_type->data.pointer_to;
     }
 
-    if (obj_type->kind == KIND_STRUCT || obj_type->kind == KIND_TEMPLATE) {
+    if (obj_type->kind == KIND_STRUCT || obj_type->kind == KIND_TEMPLATE ||
+        (obj_type->kind == KIND_PRIMITIVE &&
+         obj_type->data.primitive == PRIM_STRING)) {
       for (size_t i = 0; i < obj_type->methods.len; i++) {
         Symbol *method = obj_type->methods.items[i];
         StringView lookup_name =
@@ -725,7 +727,7 @@ static Type *check_cast(Sema *s, AstNode *node) {
   return node->cast_expr.target_type;
 }
 
-static Type *sema_find_type_by_name(Sema *s, StringView name) {
+Type *sema_find_type_by_name(Sema *s, StringView name) {
   for (size_t i = 0; i < s->types->structs.len; i++) {
     Type *t = s->types->structs.items[i];
     if (sv_eq(t->name, name))
@@ -736,6 +738,18 @@ static Type *sema_find_type_by_name(Sema *s, StringView name) {
     if (sv_eq(t->name, name))
       return t;
   }
+
+  for (int i = 0; i <= PRIM_UNKNOWN; i++) {
+    Type *t = s->types->primitives[i];
+    if (!t)
+      continue;
+    const char *prim_name = type_to_name(t);
+    if (sv_eq_cstr(name, prim_name) ||
+        (i == PRIM_STRING && sv_eq_cstr(name, "String"))) {
+      return t;
+    }
+  }
+
   return NULL;
 }
 
@@ -785,7 +799,9 @@ static Type *check_static_member(Sema *s, AstNode *node) {
     type = sema_find_type_by_name(s, node->static_member.parent);
   }
 
-  if (!type || (type->kind != KIND_STRUCT && type->kind != KIND_TEMPLATE)) {
+  if (!type || (type->kind != KIND_STRUCT && type->kind != KIND_TEMPLATE &&
+                !(type->kind == KIND_PRIMITIVE &&
+                  type->data.primitive == PRIM_STRING))) {
     sema_error(s, node, "Undefined type '" SV_FMT "'",
                SV_ARG(node->static_member.parent));
     return type_get_primitive(s->types, PRIM_UNKNOWN);

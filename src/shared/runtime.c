@@ -9,6 +9,57 @@ typedef struct {
   int64_t *dims;
 } FatPtr;
 
+typedef struct {
+  uint64_t ref_count;
+  uint64_t hash;
+  char data[];
+} StringHeader;
+
+typedef struct {
+  char *ptr;
+  int64_t len;
+} String;
+
+static String string_make(const char *data, int64_t len) {
+  StringHeader *hdr = malloc(sizeof(StringHeader) + len + 1);
+  if (!hdr) {
+    return (String){NULL, 0};
+  }
+  hdr->ref_count = 1;
+  hdr->hash = 0;
+  memcpy(hdr->data, data, len);
+  hdr->data[len] = '\0';
+  return (String){hdr->data, len};
+}
+
+static StringHeader *string_header_from_ptr(char *ptr) {
+  return (StringHeader *)(ptr - offsetof(StringHeader, data));
+}
+
+String __tyl_str_concat(String a, String b) {
+  int64_t len = a.len + b.len;
+  StringHeader *hdr = malloc(sizeof(StringHeader) + len + 1);
+  if (!hdr) {
+    return (String){NULL, 0};
+  }
+  hdr->ref_count = 1;
+  hdr->hash = 0;
+  if (a.ptr && a.len > 0) {
+    memcpy(hdr->data, a.ptr, a.len);
+  }
+  if (b.ptr && b.len > 0) {
+    memcpy(hdr->data + a.len, b.ptr, b.len);
+  }
+  hdr->data[len] = '\0';
+  return (String){hdr->data, len};
+}
+
+String __tyl_str_intern(String s) {
+  // Basic stub: return the same string without interning.
+  // Full intern pool will be added later.
+  return s;
+}
+
 // Returns 0 for equal, -1 or 1 for unequal
 int32_t __tyl_compare_arrays(const FatPtr *a, const FatPtr *b,
                              size_t elem_size) {

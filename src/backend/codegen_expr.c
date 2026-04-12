@@ -188,7 +188,7 @@ static LLVMTypeRef cg_const_target_type(Codegen *cg, AstNode *node) {
   case NODE_CHAR:
     return LLVMInt8TypeInContext(cg->context);
   case NODE_STRING:
-    return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+    return cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
   default:
     panic("cg_const_expr received unknown constant node without resolved type");
   }
@@ -212,7 +212,16 @@ static LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node) {
     return LLVMConstInt(target_ty, node->char_lit.value, false);
   case NODE_STRING: {
     size_t pool_idx = cg_string_pool_insert(cg, node->string.value);
-    return cg->string_globals.items[pool_idx];
+    LLVMValueRef const_str_global = cg->string_globals.items[pool_idx];
+    LLVMValueRef zero =
+        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false);
+    LLVMValueRef indices[] = {zero, zero};
+    LLVMValueRef ptr = LLVMConstInBoundsGEP2(LLVMInt8TypeInContext(cg->context),
+                                             const_str_global, indices, 2);
+    LLVMValueRef len = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                                    node->string.value.len, false);
+    LLVMValueRef fields[] = {ptr, len};
+    return LLVMConstNamedStruct(target_ty, fields, 2);
   }
   default:
     return NULL;

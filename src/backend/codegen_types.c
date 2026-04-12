@@ -33,8 +33,19 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
       return LLVMInt1TypeInContext(cg->context);
     case PRIM_VOID:
       return LLVMVoidTypeInContext(cg->context);
-    case PRIM_STRING:
-      return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+    case PRIM_STRING: {
+      const char *name = "tyl_string";
+      LLVMTypeRef str_ty = LLVMGetTypeByName2(cg->context, name);
+      if (!str_ty) {
+        str_ty = LLVMStructCreateNamed(cg->context, name);
+        LLVMTypeRef fields[2] = {
+            LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+            LLVMInt64TypeInContext(cg->context),
+        };
+        LLVMStructSetBody(str_ty, fields, 2, false);
+      }
+      return str_ty;
+    }
     default:
       panic("Unknown primitive kind: %d", t->data.primitive);
     }

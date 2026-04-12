@@ -134,21 +134,48 @@ int main(int argc, char **argv) {
   const char *std_path = "stdlib/std.tyl";
   const char *std_src = read_file(std_path);
   AstNode *std_ast = NULL;
+  ErrorHandler std_eh;
+  bool std_eh_init = false;
   if (std_src) {
-    ErrorHandler std_eh;
-    ErrorHandler_init(&std_eh, std_src, std_path, entry_dir);
+    ErrorHandler_init(&std_eh, std_src, std_path, std_path, "stdlib");
+    std_eh_init = true;
     Lexer std_lexer = make_lexer(std_src, &std_eh);
     std_ast = Parser_process(&std_lexer, &std_eh, type_ctx);
+    if (std_eh.has_errors) {
+      ErrorHandler_show_all(&std_eh);
+      ErrorHandler_free(&std_eh);
+      free(entry_dir);
+      type_context_free(type_ctx);
+      return 1;
+    }
   }
 
   ErrorHandler eh;
-  ErrorHandler_init(&eh, src, file_path, entry_dir);
+  ErrorHandler_init(&eh, src, file_path, entry_dir, NULL);
   Lexer user_lexer = make_lexer(src, &eh);
   AstNode *user_ast = Parser_process(&user_lexer, &eh, type_ctx);
 
   Sema sema;
   sema_init(&sema, &eh, type_ctx);
   sema.entry_dir = entry_dir;
+
+  if (std_ast) {
+    if (std_eh_init)
+      sema.eh = &std_eh;
+    sema_analyze(&sema, std_ast);
+    sema.eh = &eh;
+
+    if (std_eh_init) {
+      if (std_eh.has_errors) {
+        ErrorHandler_show_all(&std_eh);
+        ErrorHandler_free(&std_eh);
+        sema_finish(&sema);
+        type_context_free(type_ctx);
+        return 1;
+      }
+      ErrorHandler_free(&std_eh);
+    }
+  }
 
   Module main_module = {0};
   main_module.name = xstrdup("main");
@@ -164,13 +191,6 @@ int main(int argc, char **argv) {
   List_init(&main_module.exports);
   main_module.is_analyzed = true;
   sema.current_module = &main_module;
-
-  if (std_ast) {
-    sema_analyze(&sema, std_ast);
-
-    // printf("====  STDLIB AST  ====\n");
-    // Ast_print(std_ast, 0);
-  }
 
   Symbol *array_sym = sema_resolve(&sema, sv_from_parts("Array", 5));
   if (!array_sym) {
