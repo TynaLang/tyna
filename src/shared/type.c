@@ -245,6 +245,7 @@ Type *type_get_union_anonymous(TypeContext *ctx, List types) {
 
   u->alignment = max_align;
   u->size = align_to(max_size, max_align);
+  u->is_tagged_union = true;
   List_push(&ctx->instances, u);
   return u;
 }
@@ -586,6 +587,14 @@ int type_can_implicitly_cast(Type *to, Type *from) {
   if (to->kind == KIND_POINTER && to->data.pointer_to->kind == KIND_PRIMITIVE &&
       to->data.pointer_to->data.primitive == PRIM_VOID)
     return 1;
+
+  if (to->kind == KIND_UNION && to->is_tagged_union) {
+    for (size_t i = 0; i < to->members.len; i++) {
+      Member *m = to->members.items[i];
+      if (type_equals(m->type, from))
+        return 1;
+    }
+  }
 
   return 0;
 }

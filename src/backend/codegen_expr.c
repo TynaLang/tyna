@@ -237,6 +237,115 @@ static LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node) {
   return LLVMBuildLoad2(cg->builder, type, ptr, "var_load");
 }
 
+static int cg_tagged_union_variant_index(Type *union_type, Type *variant) {
+  if (!union_type || union_type->kind != KIND_UNION ||
+      !union_type->is_tagged_union)
+    return -1;
+  for (size_t i = 0; i < union_type->members.len; i++) {
+    Member *m = union_type->members.items[i];
+    if (type_equals(m->type, variant))
+      return (int)i;
+  }
+  return -1;
+}
+
+static int cg_tagged_union_variant_index_llvm(Codegen *cg, Type *union_type,
+                                              LLVMTypeRef llvm_ty) {
+  if (!union_type || union_type->kind != KIND_UNION ||
+      !union_type->is_tagged_union)
+    return -1;
+  for (size_t i = 0; i < union_type->members.len; i++) {
+    Member *m = union_type->members.items[i];
+    if (cg_get_llvm_type(cg, m->type) == llvm_ty)
+      return (int)i;
+  }
+  return -1;
+}
+
+LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef val, Type *from_t,
+                                  Type *union_t) {
+  int variant_index = cg_tagged_union_variant_index(union_t, from_t);
+  if (variant_index < 0)
+    return val;
+
+  LLVMTypeRef union_ty = cg_get_llvm_type(cg, union_t);
+  LLVMValueRef tmp = LLVMBuildAlloca(cg->builder, union_ty, "tagged_union_tmp");
+  LLVMValueRef tag_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp, 0,
+                                             "tagged_union_tag_ptr");
+  LLVMBuildStore(
+      cg->builder,
+      LLVMConstInt(LLVMInt64TypeInContext(cg->context), variant_index, 0),
+      tag_ptr);
+
+  LLVMValueRef payload_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp, 1,
+                                                 "tagged_union_payload_ptr");
+  LLVMTypeRef from_ty = cg_get_llvm_type(cg, from_t);
+  LLVMValueRef store_ptr =
+      LLVMBuildBitCast(cg->builder, payload_ptr, LLVMPointerType(from_ty, 0),
+                       "tagged_union_payload_cast");
+  LLVMBuildStore(cg->builder, val, store_ptr);
+  return LLVMBuildLoad2(cg->builder, union_ty, tmp, "tagged_union_val");
+}
+
+static LLVMValueRef cg_extract_tagged_union(Codegen *cg, LLVMValueRef union_val,
+                                            Type *union_t, Type *target_t,
+                                            LLVMTypeRef target_ty) {
+  int variant_index =
+      cg_tagged_union_variant_index_llvm(cg, union_t, target_ty);
+  if (variant_index < 0)
+    return union_val;
+
+  LLVMTypeRef union_ty = cg_get_llvm_type(cg, union_t);
+  LLVMValueRef tag =
+      LLVMBuildExtractValue(cg->builder, union_val, 0, "tagged_union_tag");
+  LLVMValueRef expected_tag =
+      LLVMConstInt(LLVMInt64TypeInContext(cg->context), variant_index, 0);
+  LLVMValueRef cond = LLVMBuildICmp(cg->builder, LLVMIntEQ, tag, expected_tag,
+                                    "tagged_union_check");
+
+  LLVMBasicBlockRef ok_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "tagged_union_ok");
+  LLVMBasicBlockRef fail_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "tagged_union_fail");
+  LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "tagged_union_merge");
+
+  LLVMBuildCondBr(cg->builder, cond, ok_bb, fail_bb);
+
+  LLVMPositionBuilderAtEnd(cg->builder, ok_bb);
+  LLVMValueRef tmp = LLVMBuildAlloca(cg->builder, union_ty, "tagged_union_tmp");
+  LLVMBuildStore(cg->builder, union_val, tmp);
+  LLVMValueRef payload_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp, 1,
+                                                 "tagged_union_payload_ptr");
+  LLVMValueRef data_ptr =
+      LLVMBuildBitCast(cg->builder, payload_ptr, LLVMPointerType(target_ty, 0),
+                       "tagged_union_data_ptr");
+  LLVMValueRef result =
+      LLVMBuildLoad2(cg->builder, target_ty, data_ptr, "tagged_union_value");
+  LLVMBuildBr(cg->builder, merge_bb);
+  LLVMBasicBlockRef ok_bb_end = LLVMGetInsertBlock(cg->builder);
+
+  LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
+  CGFunction *panic_fn = cg_find_function(cg, sv_from_parts("panic", 5));
+  const char *target_name = target_t ? type_to_name(target_t) : "<unknown>";
+  const char *union_name = type_to_name(union_t);
+  char panic_msg[256];
+  snprintf(panic_msg, sizeof(panic_msg),
+           "Unwrapping tagged union %s as %s failed: the runtime tag does "
+           "not match the requested variant",
+           union_name, target_name);
+  LLVMValueRef msg_ptr =
+      LLVMBuildGlobalStringPtr(cg->builder, panic_msg, "tagged_union_err_msg");
+  LLVMBuildCall2(cg->builder, panic_fn->type, panic_fn->value,
+                 (LLVMValueRef[]){msg_ptr}, 1, "");
+  LLVMBuildUnreachable(cg->builder);
+
+  LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+  LLVMValueRef phi = LLVMBuildPhi(cg->builder, target_ty, "tagged_union_phi");
+  LLVMAddIncoming(phi, &result, &ok_bb_end, 1);
+  return phi;
+}
+
 static LLVMValueRef cg_arith_expr(Codegen *cg, LLVMValueRef lhs,
                                   LLVMValueRef rhs, ArithmOp op) {
   LLVMTypeRef type = LLVMTypeOf(lhs);
@@ -543,10 +652,22 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   if (!node->assign_expr.value->resolved_type) {
     panic("Assignment RHS has no resolved type");
   }
-  LLVMTypeRef target_ty =
-      cg_get_llvm_type(cg, node->assign_expr.target->resolved_type);
-  val =
-      cg_cast_value(cg, val, node->assign_expr.value->resolved_type, target_ty);
+  Type *target_type = node->assign_expr.target->resolved_type;
+  LLVMTypeRef target_ty = cg_get_llvm_type(cg, target_type);
+  if (target_type->kind == KIND_UNION && target_type->is_tagged_union) {
+    int variant_index = cg_tagged_union_variant_index(
+        target_type, node->assign_expr.value->resolved_type);
+    if (variant_index >= 0) {
+      val = cg_make_tagged_union(
+          cg, val, node->assign_expr.value->resolved_type, target_type);
+    } else {
+      val = cg_cast_value(cg, val, node->assign_expr.value->resolved_type,
+                          target_ty);
+    }
+  } else {
+    val = cg_cast_value(cg, val, node->assign_expr.value->resolved_type,
+                        target_ty);
+  }
 
   if (node->assign_expr.target->tag == NODE_INDEX) {
     Type *array_type = node->assign_expr.target->index.array->resolved_type;
@@ -598,8 +719,27 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
 
 static LLVMValueRef cg_cast_expr(Codegen *cg, AstNode *node) {
   LLVMValueRef val = cg_expression(cg, node->cast_expr.expr);
-  LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->cast_expr.target_type);
-  return cg_cast_value(cg, val, node->cast_expr.expr->resolved_type, target_ty);
+  Type *expr_type = node->cast_expr.expr->resolved_type;
+  Type *target_type = node->cast_expr.target_type;
+  LLVMTypeRef target_ty = cg_get_llvm_type(cg, target_type);
+
+  if (expr_type && expr_type->kind == KIND_UNION &&
+      expr_type->is_tagged_union) {
+    int variant_index =
+        cg_tagged_union_variant_index_llvm(cg, expr_type, target_ty);
+    if (variant_index >= 0)
+      return cg_extract_tagged_union(cg, val, expr_type, target_type,
+                                     target_ty);
+  }
+
+  if (target_type && target_type->kind == KIND_UNION &&
+      target_type->is_tagged_union) {
+    int variant_index = cg_tagged_union_variant_index(target_type, expr_type);
+    if (variant_index >= 0)
+      return cg_make_tagged_union(cg, val, expr_type, target_type);
+  }
+
+  return cg_cast_value(cg, val, expr_type, target_ty);
 }
 
 static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {

@@ -72,6 +72,8 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t);
 void cg_lower_all_structs(Codegen *cg);
 LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_ty,
                            LLVMTypeRef to_ty);
+LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef value,
+                                  Type *from_ty, Type *union_ty);
 void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, Type *l_ty,
                           LLVMValueRef *rhs, Type *r_ty);
 

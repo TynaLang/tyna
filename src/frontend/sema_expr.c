@@ -834,6 +834,8 @@ static Type *check_static_member(Sema *s, AstNode *node) {
 
 Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
   Type *expr_type = sema_check_expr(s, expr);
+  bool target_is_tagged_union =
+      target && target->kind == KIND_UNION && target->is_tagged_union;
 
   // Literal Bounds Check
   if (expr->tag == NODE_NUMBER || expr->tag == NODE_CHAR) {
@@ -841,14 +843,18 @@ Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
 
     if (type_can_implicitly_cast(target, expr_type) ||
         (expr->tag == NODE_NUMBER && literal_fits_in_type(expr, target))) {
-      expr->resolved_type = target;
+      if (!target_is_tagged_union) {
+        expr->resolved_type = target;
+      }
       return target;
     }
   }
 
   // Exact match or implicit cast
   if (type_can_implicitly_cast(target, expr_type)) {
-    expr->resolved_type = target;
+    if (!target_is_tagged_union) {
+      expr->resolved_type = target;
+    }
     return target;
   }
 

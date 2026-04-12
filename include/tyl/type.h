@@ -67,8 +67,9 @@ struct Type {
 
   List members;      // List<Member*> - Resolved for concrete types
   List methods;      // List<Symbol*> - New infrastructure for methods
-  bool is_frozen;    // If true, fields cannot be added/modified.
-  bool is_intrinsic; // Identifies types the compiler "needs" (like Array)
+  bool is_frozen;      // If true, fields cannot be added/modified.
+  bool is_intrinsic;   // Identifies types the compiler "needs" (like Array)
+  bool is_tagged_union; // True for shorthand tagged unions like i32 | f32
 };
 
 struct TypeContext {

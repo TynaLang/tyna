@@ -18,8 +18,10 @@
 void Runner_verify(Codegen *cg) {
   char *error = NULL;
 
-  if (LLVMVerifyModule(cg->module, LLVMAbortProcessAction, &error)) {
+  if (LLVMVerifyModule(cg->module, LLVMReturnStatusAction, &error)) {
     fprintf(stderr, "LLVM verification failed:\n%s\n", error);
+    fprintf(stderr, "=== LLVM module dump ===\n");
+    LLVMDumpModule(cg->module);
     LLVMDisposeMessage(error);
     exit(1);
   }

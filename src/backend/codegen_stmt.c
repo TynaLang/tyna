@@ -32,9 +32,16 @@ void cg_var_decl(Codegen *cg, AstNode *node) {
 
   if (node->var_decl.value) {
     LLVMValueRef init_val = cg_expression(cg, node->var_decl.value);
-    LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->var_decl.declared_type);
-    init_val = cg_cast_value(cg, init_val, node->var_decl.value->resolved_type,
-                             target_ty);
+    Type *target_type = node->var_decl.declared_type;
+    LLVMTypeRef target_ty = cg_get_llvm_type(cg, target_type);
+    if (target_type->kind == KIND_UNION && target_type->is_tagged_union) {
+      init_val = cg_make_tagged_union(
+          cg, init_val, node->var_decl.value->resolved_type, target_type);
+    }
+    if (LLVMTypeOf(init_val) != target_ty) {
+      init_val = cg_cast_value(cg, init_val,
+                               node->var_decl.value->resolved_type, target_ty);
+    }
 
     if (is_global_decl) {
       if (LLVMIsConstant(init_val)) {

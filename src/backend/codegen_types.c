@@ -73,10 +73,20 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
       panic("Expected LLVM struct type for union '%s'", buf);
     }
     if (LLVMIsOpaqueStruct(union_ty)) {
-      unsigned count = 1;
-      LLVMTypeRef bytes = LLVMArrayType(LLVMInt8TypeInContext(cg->context),
-                                        (unsigned)(t->size > 0 ? t->size : 1));
-      LLVMStructSetBody(union_ty, &bytes, count, false);
+      if (t->is_tagged_union) {
+        LLVMTypeRef tag_ty = LLVMInt64TypeInContext(cg->context);
+        LLVMTypeRef payload =
+            LLVMArrayType(LLVMInt8TypeInContext(cg->context),
+                          (unsigned)(t->size > 0 ? t->size : 1));
+        LLVMTypeRef fields[2] = {tag_ty, payload};
+        LLVMStructSetBody(union_ty, fields, 2, false);
+      } else {
+        unsigned count = 1;
+        LLVMTypeRef bytes =
+            LLVMArrayType(LLVMInt8TypeInContext(cg->context),
+                          (unsigned)(t->size > 0 ? t->size : 1));
+        LLVMStructSetBody(union_ty, &bytes, count, false);
+      }
     }
     return union_ty;
   }

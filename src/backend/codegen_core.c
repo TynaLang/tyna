@@ -74,6 +74,54 @@ static void cg_initiate_system_functions(Codegen *cg) {
                      to_str_val, to_str_type, true);
   List_push(&cg->system_functions, f_to_str);
 
+  LLVMTypeRef string_ty =
+      cg_get_llvm_type(cg, cg->type_ctx->primitives[PRIM_STRING]);
+
+  // char* __tyl_str_data(const String *s)
+  LLVMTypeRef str_data_args[] = {LLVMPointerType(string_ty, 0)};
+  LLVMTypeRef str_data_type =
+      LLVMFunctionType(LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+                       str_data_args, 1, false);
+  LLVMValueRef str_data_val =
+      LLVMAddFunction(cg->module, "__tyl_str_data", str_data_type);
+  CGFunction *f_str_data = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_data, sv_from_parts("__tyl_str_data", 14),
+                     str_data_val, str_data_type, true);
+  List_push(&cg->system_functions, f_str_data);
+
+  // int64 __tyl_str_len(const String *s)
+  LLVMTypeRef str_len_args[] = {LLVMPointerType(string_ty, 0)};
+  LLVMTypeRef str_len_type = LLVMFunctionType(i64_ty, str_len_args, 1, false);
+  LLVMValueRef str_len_val =
+      LLVMAddFunction(cg->module, "__tyl_str_len", str_len_type);
+  CGFunction *f_str_len = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_len, sv_from_parts("__tyl_str_len", 13), str_len_val,
+                     str_len_type, true);
+  List_push(&cg->system_functions, f_str_len);
+
+  // void __tyl_str_retain(String *out, const String *s)
+  LLVMTypeRef str_retain_args[] = {LLVMPointerType(string_ty, 0),
+                                   LLVMPointerType(string_ty, 0)};
+  LLVMTypeRef str_retain_type = LLVMFunctionType(
+      LLVMVoidTypeInContext(cg->context), str_retain_args, 2, false);
+  LLVMValueRef str_retain_val =
+      LLVMAddFunction(cg->module, "__tyl_str_retain", str_retain_type);
+  CGFunction *f_str_retain = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_retain, sv_from_parts("__tyl_str_retain", 16),
+                     str_retain_val, str_retain_type, true);
+  List_push(&cg->system_functions, f_str_retain);
+
+  // void __tyl_str_release(const String *s)
+  LLVMTypeRef str_release_args[] = {LLVMPointerType(string_ty, 0)};
+  LLVMTypeRef str_release_type = LLVMFunctionType(
+      LLVMVoidTypeInContext(cg->context), str_release_args, 1, false);
+  LLVMValueRef str_release_val =
+      LLVMAddFunction(cg->module, "__tyl_str_release", str_release_type);
+  CGFunction *f_str_release = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_release, sv_from_parts("__tyl_str_release", 17),
+                     str_release_val, str_release_type, true);
+  List_push(&cg->system_functions, f_str_release);
+
   // void __tyl_array_init_fixed(void *arr, i64 elem_size, i64 len)
   LLVMTypeRef init_fixed_args[] = {ptr_ty, i64_ty, i64_ty};
   LLVMTypeRef init_fixed_type = LLVMFunctionType(
@@ -251,7 +299,6 @@ void Codegen_global(Codegen *cg, AstNode *ast_root) {
 
   CGFunction *prev_func_ref = cg->current_function_ref;
   LLVMValueRef prev_func = cg->current_function;
-  LLVMBasicBlockRef prev_bb = LLVMGetInsertBlock(cg->builder);
 
   cg->current_function = entry_fn->value;
   cg->current_function_ref = entry_fn;
@@ -263,15 +310,8 @@ void Codegen_global(Codegen *cg, AstNode *ast_root) {
 
   cg->current_function = prev_func;
   cg->current_function_ref = prev_func_ref;
-  if (prev_bb) {
-    LLVMPositionBuilderAtEnd(cg->builder, prev_bb);
-  }
 
   cg_emit_functions(cg, ast_root);
-
-  if (prev_bb) {
-    LLVMPositionBuilderAtEnd(cg->builder, prev_bb);
-  }
 }
 
 void Codegen_program(Codegen *cg, AstNode *ast_root) {
@@ -286,9 +326,6 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
 
   cg->current_function = entry_func;
   cg->current_function_ref = entry_fn;
-
-  LLVMBasicBlockRef entry_bb = LLVMGetFirstBasicBlock(entry_func);
-  LLVMPositionBuilderAtEnd(cg->builder, entry_bb);
 
   cg_push_scope(cg);
 
