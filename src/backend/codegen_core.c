@@ -326,7 +326,7 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
   cg->current_function = entry_func;
   cg->current_function_ref = entry_fn;
 
-  LLVMBasicBlockRef entry_bb = LLVMGetFirstBasicBlock(entry_func);
+  LLVMBasicBlockRef entry_bb = LLVMGetLastBasicBlock(entry_func);
   if (!entry_bb) {
     entry_bb = LLVMAppendBasicBlockInContext(cg->context, entry_func, "entry");
   }
