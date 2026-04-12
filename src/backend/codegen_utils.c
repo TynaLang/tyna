@@ -128,11 +128,27 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
   }
 
   case NODE_INDEX: {
-    LLVMValueRef array_struct_ptr = cg_get_address(cg, node->index.array);
+    LLVMValueRef array_ptr_addr = cg_get_address(cg, node->index.array);
     Type *array_type = node->index.array->resolved_type;
+    if (!array_type) {
+      panic("Internal error: indexed expression has no resolved type");
+    }
 
-    LLVMTypeRef array_struct_ty =
-        cg_get_llvm_type(cg, node->index.array->resolved_type);
+    if (array_type->kind == KIND_POINTER) {
+      LLVMTypeRef array_ty = cg_get_llvm_type(cg, array_type);
+      LLVMValueRef array_ptr =
+          LLVMBuildLoad2(cg->builder, array_ty, array_ptr_addr, "pointer_load");
+      LLVMValueRef index_val = cg_expression(cg, node->index.index);
+      LLVMValueRef index_i64 =
+          cg_cast_value(cg, index_val, node->index.index->resolved_type,
+                        LLVMInt64TypeInContext(cg->context));
+      LLVMTypeRef elem_ty = cg_get_llvm_type(cg, array_type->data.pointer_to);
+      return LLVMBuildGEP2(cg->builder, elem_ty, array_ptr,
+                           (LLVMValueRef[]){index_i64}, 1, "ptr_index");
+    }
+
+    LLVMValueRef array_struct_ptr = array_ptr_addr;
+    LLVMTypeRef array_struct_ty = cg_get_llvm_type(cg, array_type);
 
     // 1. Load rank
     LLVMValueRef rank_ptr = LLVMBuildStructGEP2(
@@ -152,6 +168,12 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
       dims_ptr = LLVMBuildLoad2(
           cg->builder, LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0),
           dims_ptr_ptr, "dims_ptr");
+      if (!dims_ptr) {
+        panic("Internal error: array dims pointer is NULL");
+      }
+      dim0_val =
+          LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
+                         dims_ptr, "dim0_val");
     }
 
     // 3. Current index
@@ -202,7 +224,11 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
 
     LLVMBuildCondBr(cg->builder, in_bounds, ok_bb, fail_bb);
     LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
-    CGFunction *panic_fn = cg_find_function(cg, sv_from_parts("panic", 5));
+    CGFunction *panic_fn =
+        cg_find_system_function(cg, sv_from_parts("panic", 5));
+    if (!panic_fn) {
+      panic("Internal error: system panic helper missing");
+    }
     LLVMValueRef msg_ptr = LLVMBuildGlobalStringPtr(
         cg->builder, "Panic: Array Index Out of Bounds", "bounds_err_msg");
     LLVMBuildCall2(cg->builder, panic_fn->type, panic_fn->value,
@@ -227,36 +253,10 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
         cg->builder, cg_get_llvm_type(cg, node->resolved_type), actual_data_ptr,
         (LLVMValueRef[]){index_i64}, 1, "element_ptr");
 
-    // If the element is itself an array struct, we need to "monomorphize" it to
-    // the slice.
+    // If the element is itself an array struct, we can return its address
+    // directly. The load path will adjust rank/dims if needed.
     if (type_is_array_struct(node->resolved_type)) {
-      // Element is an array struct. We need to load it and fix rank/dims.
-      LLVMValueRef sub_array =
-          LLVMBuildLoad2(cg->builder, cg_get_llvm_type(cg, node->resolved_type),
-                         element_addr, "sub_array_load");
-
-      // new_rank = rank - 1
-      LLVMValueRef new_rank = LLVMBuildSub(
-          cg->builder, rank_val,
-          LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "new_rank");
-      sub_array =
-          LLVMBuildInsertValue(cg->builder, sub_array, new_rank, 3, "set_rank");
-
-      // new_dims = dims + 1
-      LLVMValueRef new_dims = LLVMBuildGEP2(
-          cg->builder, LLVMInt64TypeInContext(cg->context), dims_ptr,
-          (LLVMValueRef[]){
-              LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0)},
-          1, "new_dims_ptr");
-      sub_array =
-          LLVMBuildInsertValue(cg->builder, sub_array, new_dims, 4, "set_dims");
-
-      // Since we need to return an ADDRESS of this struct (if it's an l-value),
-      // we must spill it.
-      LLVMValueRef temp_alloca = cg_alloca_in_entry(
-          cg, node->resolved_type, sv_from_cstr("sub_array_slice"));
-      LLVMBuildStore(cg->builder, sub_array, temp_alloca);
-      return temp_alloca;
+      return element_addr;
     }
 
     return element_addr;

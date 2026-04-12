@@ -72,39 +72,49 @@ static bool type_needs_inference(Type *t) {
   return false;
 }
 
-static bool type_is_concrete(Type *t) {
+static bool type_is_condition(Type *t) {
+  if (!t)
+    return false;
+
+  if (type_is_bool(t))
+    return true;
+
+  if (t->kind == KIND_POINTER)
+    return true;
+
+  return false;
+}
+
+static bool type_can_be_polymorphic(Type *t) {
   if (!t)
     return false;
 
   switch (t->kind) {
-  case KIND_PRIMITIVE:
-    return t->data.primitive != PRIM_UNKNOWN;
-
+  case KIND_TEMPLATE:
+    return true;
   case KIND_POINTER:
-    return type_is_concrete(t->data.pointer_to);
-
+    return type_can_be_polymorphic(t->data.pointer_to);
   case KIND_STRUCT:
   case KIND_UNION:
     if (t->data.instance.from_template == NULL)
-      return t->members.len > 0;
+      return false;
     for (size_t i = 0; i < t->data.instance.generic_args.len; i++) {
-      Type *arg = t->data.instance.generic_args.items[i];
-      if (!type_is_concrete(arg))
-        return false;
+      if (type_can_be_polymorphic(t->data.instance.generic_args.items[i]))
+        return true;
     }
     for (size_t i = 0; i < t->members.len; i++) {
       Member *m = t->members.items[i];
-      if (!type_is_concrete(m->type))
-        return false;
+      if (type_can_be_polymorphic(m->type))
+        return true;
     }
-    return true;
-
-  case KIND_TEMPLATE:
     return false;
-
   default:
     return false;
   }
+}
+
+static bool sema_allows_polymorphic_types(Sema *s) {
+  return s && s->generic_context_type != NULL;
 }
 
 void sema_check_stmt(Sema *s, AstNode *node) {
@@ -182,7 +192,9 @@ void sema_check_stmt(Sema *s, AstNode *node) {
         decl_type = actual_type;
       }
     } else {
-      if (!type_is_concrete(decl_type)) {
+      if (!type_is_concrete(decl_type) &&
+          !(sema_allows_polymorphic_types(s) &&
+            type_can_be_polymorphic(decl_type))) {
         sema_error(
             s, node,
             "Type annotation required for uninitialized variable (got '%s')",
@@ -220,8 +232,11 @@ void sema_check_stmt(Sema *s, AstNode *node) {
 
     for (size_t i = 0; i < node->func_decl.params.len; i++) {
       AstNode *param = node->func_decl.params.items[i];
+      bool concrete_ok = type_is_concrete(param->param.type);
+      bool polymorphic_ok = sema_allows_polymorphic_types(s) &&
+                            type_can_be_polymorphic(param->param.type);
 
-      if (!type_is_concrete(param->param.type)) {
+      if (!concrete_ok && !polymorphic_ok) {
         sema_error(s, param,
                    "Function parameter type must be concrete (got '%s')",
                    type_to_name(param->param.type));
@@ -279,9 +294,10 @@ void sema_check_stmt(Sema *s, AstNode *node) {
   case NODE_IF_STMT: {
     Type *cond = sema_check_expr(s, node->if_stmt.condition);
 
-    if (!type_is_bool(cond)) {
+    if (!type_is_condition(cond)) {
       sema_error(s, node->if_stmt.condition,
-                 "if condition must be bool, got '%s'", type_to_name(cond));
+                 "if condition must be bool or pointer, got '%s'",
+                 type_to_name(cond));
     }
 
     sema_check_stmt(s, node->if_stmt.then_branch);
@@ -373,9 +389,10 @@ void sema_check_stmt(Sema *s, AstNode *node) {
   case NODE_WHILE_STMT: {
     Type *cond = sema_check_expr(s, node->while_stmt.condition);
 
-    if (!type_is_bool(cond)) {
+    if (!type_is_condition(cond)) {
       sema_error(s, node->while_stmt.condition,
-                 "while condition must be bool, got '%s'", type_to_name(cond));
+                 "while condition must be bool or pointer, got '%s'",
+                 type_to_name(cond));
     }
 
     SemaJump jump_ctx;
@@ -668,24 +685,19 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     break;
   }
   case NODE_IMPL_DECL: {
-    StringView name = node->impl_decl.name->var.value;
-    Symbol *existing = sema_resolve(s, name);
-    Type *t = NULL;
-    if (existing) {
-      t = existing->type;
-    } else {
-      t = sema_find_type_by_name(s, name);
-    }
+    Type *t = node->impl_decl.type;
+    StringView name = sv_from_cstr(type_to_name(t));
     if (!t ||
         (t->kind != KIND_STRUCT && t->kind != KIND_UNION &&
          t->kind != KIND_TEMPLATE &&
          !(t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING))) {
       sema_error(s, node,
-                 "Undefined type '%" SV_FMT "' or it is not a struct/union",
+                 "Undefined type '" SV_FMT "' or it is not a struct/union",
                  SV_ARG(name));
       break;
     }
 
+    s->generic_context_type = t;
     for (size_t i = 0; i < node->impl_decl.members.len; i++) {
       AstNode *mem = node->impl_decl.members.items[i];
       if (mem->tag != NODE_FUNC_DECL) {
@@ -722,11 +734,21 @@ void sema_check_stmt(Sema *s, AstNode *node) {
       method_sym->value = mem;
       List_push(&t->methods, method_sym);
 
+      if (t->data.instance.from_template) {
+        Type *template_type = t->data.instance.from_template;
+        Symbol *template_method_sym = xmalloc(sizeof(Symbol));
+        *template_method_sym = *method_sym;
+        List_push(&template_type->methods, template_method_sym);
+      }
+
       // Analyze the method body now that the signature is registered.
       if (mem->func_decl.body) {
-        sema_check_stmt(s, mem);
+        AstNode *method_copy = Ast_clone(mem);
+        sema_check_stmt(s, method_copy);
+        Ast_free(method_copy);
       }
     }
+    s->generic_context_type = NULL;
     break;
   }
 

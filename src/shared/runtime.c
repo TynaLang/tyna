@@ -158,6 +158,18 @@ void __tyl_array_init_fixed(void *arr, int64_t elem_size, int64_t fixed_len) {
     (*dims_ptr)[0] = fixed_len;
 }
 
+int64_t *__tyl_array_clone_dims(int64_t rank, const int64_t *dims) {
+  if (rank <= 0 || !dims)
+    return NULL;
+
+  int64_t *copy = malloc(sizeof(int64_t) * (size_t)rank);
+  if (!copy)
+    return NULL;
+
+  memcpy(copy, dims, sizeof(int64_t) * (size_t)rank);
+  return copy;
+}
+
 void __tyl_array_to_str(FatPtr *out, const FatPtr *arr) {
   int64_t arr_len = (arr->rank > 0 && arr->dims) ? arr->dims[0] : 0;
   if (arr_len <= 0) {

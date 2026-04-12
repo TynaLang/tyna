@@ -69,6 +69,7 @@ struct Sema {
   SemaJump *jump;
   Type *ret_type;
   AstNode *fn_node;
+  Type *generic_context_type;
 
   List modules; // List<Module*>
   Module *current_module;

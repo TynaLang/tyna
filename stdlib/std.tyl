@@ -4,20 +4,12 @@ frozen struct Array<T> {
     cap:  i64;
     rank: i64;
     dims: ptr<i64>;
-
-    // Static method (namespaced to Array)
-    // static fn from_lit(l: ptr<T>, length: i64) : Array<T> {
-    //     // implementation...
-    // }
-
-    // Instance method (using the 'self' convention)
-    // fn join(separator: str) : str {
-    //     // This is called via arr.join(" ")
-    // }
 }
 
 external fn __tyl_str_concat(a: str, b: str): str;
 external fn __tyl_str_intern(s: str): str;
+external fn __tyl_array_clone_dims(rank: i64, dims: ptr<i64>): ptr<i64>;
+external fn panic(message: str): void;
 
 impl String {
     fn concat(self: String, other: String): String {
@@ -26,6 +18,29 @@ impl String {
 
     fn intern(self: String): String {
         return __tyl_str_intern(self);
+    }
+}
+
+impl Array<T> {
+    fn slice(self: Array<T>, start: i64, end: i64): Array<T> {
+        if (start < 0 || end < start || end > self.len) {
+            panic("Array slice out of bounds");
+        }
+
+        let result: Array<T>;
+        result.data = self.data + start;
+        result.len = end - start;
+        result.cap = result.len;
+        result.rank = self.rank;
+        result.dims = __tyl_array_clone_dims(self.rank, self.dims);
+        if (result.dims) {
+            result.dims[0] = result.len;
+        }
+        return result;
+    }
+
+    fn as_slice(self: Array<T>, start: i64, end: i64): Array<T> {
+        return self.slice(start, end);
     }
 }
 

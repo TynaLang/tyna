@@ -1,0 +1,11 @@
+fn main() {
+    let arr: Array<i32> = [10, 20, 30, 40, 50];
+    let sub: Array<i32> = arr.slice(1, 4);
+    print(sub.len, " ", sub[0], " ", sub[1], " ", sub[2]);
+
+    let row1: [i32; 2] = [1, 2];
+    let row2: [i32; 2] = [3, 4];
+    let matrix: Array<Array<i32>> = [row1, row2];
+    let first_row: Array<i32> = matrix[0];
+    print(first_row.len, " ", first_row[0], " ", first_row[1]);
+}

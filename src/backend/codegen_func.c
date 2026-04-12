@@ -60,7 +60,20 @@ void cg_define_function(Codegen *cg, AstNode *node) {
     llvm_name = strdup("__tyl_main");
   }
 
-  LLVMValueRef func = LLVMAddFunction(cg->module, llvm_name, func_type);
+  LLVMValueRef func = LLVMGetNamedFunction(cg->module, llvm_name);
+  if (func) {
+    LLVMTypeRef existing_type = LLVMGetElementType(LLVMTypeOf(func));
+    if (existing_type != func_type) {
+      ErrorHandler_report(
+          cg->eh, node->loc,
+          "Function '%s' already declared with a different signature",
+          llvm_name);
+      free(llvm_name);
+      return;
+    }
+  } else {
+    func = LLVMAddFunction(cg->module, llvm_name, func_type);
+  }
 
   CGFunction *f = malloc(sizeof(CGFunction));
   cg_init_CGFunction(f, name, func, func_type, false);
@@ -144,3 +157,12 @@ CGFunction *cg_find_function(Codegen *cg, StringView name) {
   }
   return NULL;
 };
+
+CGFunction *cg_find_system_function(Codegen *cg, StringView name) {
+  for (size_t i = 0; i < cg->system_functions.len; i++) {
+    CGFunction *f = cg->system_functions.items[i];
+    if (sv_eq(f->name, name))
+      return f;
+  }
+  return NULL;
+}

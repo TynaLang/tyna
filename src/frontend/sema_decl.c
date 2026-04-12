@@ -2,7 +2,7 @@
 #include "tyl/semantic.h"
 #include "tyl/utils.h"
 
-static StringView sema_mangle_method_name(StringView owner, StringView method) {
+StringView sema_mangle_method_name(StringView owner, StringView method) {
   if (owner.len == 0)
     return method;
 

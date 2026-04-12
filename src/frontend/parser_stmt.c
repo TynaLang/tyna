@@ -462,6 +462,14 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
     Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
   }
 
+  if (placeholders.len > 0) {
+    Parser_placeholder_scope_push(p);
+    for (size_t i = 0; i < placeholders.len; i++) {
+      StringView placeholder_name = *(StringView *)placeholders.items[i];
+      Parser_add_placeholder(p, placeholder_name);
+    }
+  }
+
   if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after struct name"))
     return NULL;
 
@@ -514,6 +522,10 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
 
   Parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct members");
 
+  if (placeholders.len > 0) {
+    Parser_placeholder_scope_pop(p);
+  }
+
   return AstNode_new_struct_decl(name_node, members, placeholders, is_frozen,
                                  false, loc);
 }
@@ -546,6 +558,14 @@ AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
         Parser_token_advance(p);
     }
     Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+  }
+
+  if (placeholders.len > 0) {
+    Parser_placeholder_scope_push(p);
+    for (size_t i = 0; i < placeholders.len; i++) {
+      StringView placeholder_name = *(StringView *)placeholders.items[i];
+      Parser_add_placeholder(p, placeholder_name);
+    }
   }
 
   if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after union name"))
@@ -600,6 +620,10 @@ AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
 
   Parser_expect(p, TOKEN_RBRACE, "Expected '}' after union members");
 
+  if (placeholders.len > 0) {
+    Parser_placeholder_scope_pop(p);
+  }
+
   return AstNode_new_union_decl(name_node, members, placeholders, is_frozen,
                                 false, loc);
 }
@@ -608,13 +632,87 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume 'impl'
 
-  Token type_token = p->current_token;
-  if (!Parser_expect(p, TOKEN_IDENT, "Expected type name after 'impl'"))
+  if (p->current_token.type != TOKEN_IDENT) {
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Expected type name after 'impl'");
+    Parser_sync(p);
     return NULL;
-  AstNode *name_node = AstNode_new_var(type_token.text, type_token.loc);
+  }
 
-  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after impl type name"))
+  StringView owner_name = p->current_token.text;
+  Parser_token_advance(p);
+
+  List placeholders;
+  List_init(&placeholders);
+  if (p->current_token.type == TOKEN_LT) {
+    Parser_token_advance(p);
+    while (p->current_token.type != TOKEN_GT &&
+           p->current_token.type != TOKEN_EOF) {
+      if (p->current_token.type != TOKEN_IDENT) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected placeholder name");
+        break;
+      }
+      StringView *pl = xmalloc(sizeof(StringView));
+      *pl = p->current_token.text;
+      List_push(&placeholders, pl);
+      Parser_token_advance(p);
+      if (p->current_token.type == TOKEN_COMMA)
+        Parser_token_advance(p);
+    }
+    Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+  }
+
+  if (placeholders.len > 0) {
+    Parser_placeholder_scope_push(p);
+    for (size_t i = 0; i < placeholders.len; i++) {
+      StringView placeholder_name = *(StringView *)placeholders.items[i];
+      Parser_add_placeholder(p, placeholder_name);
+    }
+  }
+
+  Type *impl_type = NULL;
+  if (placeholders.len > 0) {
+    Type *template_type = type_get_template(p->type_ctx, owner_name);
+    if (!template_type) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Undefined generic type '%.*s' for impl",
+                          (int)owner_name.len, owner_name.data);
+      Parser_sync(p);
+      if (placeholders.len > 0)
+        Parser_placeholder_scope_pop(p);
+      return NULL;
+    }
+
+    List args;
+    List_init(&args);
+    for (size_t i = 0; i < placeholders.len; i++) {
+      StringView placeholder_name = *(StringView *)placeholders.items[i];
+      Type *placeholder = Parser_find_placeholder(p, placeholder_name);
+      List_push(&args, placeholder);
+    }
+    impl_type = type_get_instance(p->type_ctx, template_type, args);
+    List_free(&args, 0);
+  } else {
+    impl_type = type_get_named(p->type_ctx, owner_name);
+    if (!impl_type)
+      impl_type = type_get_struct(p->type_ctx, owner_name);
+    if (!impl_type)
+      impl_type = type_get_union(p->type_ctx, owner_name);
+    if (!impl_type) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Undefined type '%.*s' for impl",
+                          (int)owner_name.len, owner_name.data);
+      Parser_sync(p);
+      return NULL;
+    }
+  }
+
+  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after impl type name")) {
+    if (placeholders.len > 0)
+      Parser_placeholder_scope_pop(p);
     return NULL;
+  }
 
   List members;
   List_init(&members);
@@ -640,7 +738,12 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
   }
 
   Parser_expect(p, TOKEN_RBRACE, "Expected '}' after impl members");
-  return AstNode_new_impl_decl(name_node, members, loc);
+
+  if (placeholders.len > 0) {
+    Parser_placeholder_scope_pop(p);
+  }
+
+  return AstNode_new_impl_decl(impl_type, members, loc);
 }
 
 AstNode *Parser_parse_statement(Parser *p) {

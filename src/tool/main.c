@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  Codegen *cg = Codegen_new("tyl_module", type_ctx);
+  Codegen *cg = Codegen_new("tyl_module", type_ctx, &eh);
 
   if (std_ast) {
     Codegen_global(cg, std_ast);

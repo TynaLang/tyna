@@ -65,18 +65,20 @@ struct Type {
     } instance;
   } data;
 
-  List members;      // List<Member*> - Resolved for concrete types
-  List methods;      // List<Symbol*> - New infrastructure for methods
-  bool is_frozen;      // If true, fields cannot be added/modified.
-  bool is_intrinsic;   // Identifies types the compiler "needs" (like Array)
+  List members;         // List<Member*> - Resolved for concrete types
+  List methods;         // List<Symbol*> - New infrastructure for methods
+  List impls;           // List<AstNode*> for generic impl declarations
+  bool is_frozen;       // If true, fields cannot be added/modified.
+  bool is_intrinsic;    // Identifies types the compiler "needs" (like Array)
   bool is_tagged_union; // True for shorthand tagged unions like i32 | f32
 };
 
 struct TypeContext {
   Type *primitives[PRIM_UNKNOWN + 1];
-  List structs;   // Generic structs
-  List templates; // List<Type*>
-  List instances; // List<Type*>
+  List structs;                // Generic structs
+  List templates;              // List<Type*>
+  List instances;              // List<Type*>
+  List instantiated_functions; // List<AstNode*>
 };
 
 // Lifecycle
@@ -94,6 +96,8 @@ Type *type_get_template(TypeContext *ctx, StringView name);
 Type *type_get_instance(TypeContext *ctx, Type *template_type, List args);
 Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
                               uint64_t fixed_array_len);
+Type *type_resolve_placeholders(TypeContext *ctx, Type *blueprint,
+                                Type *template_type, List args);
 
 // Member Management
 Member *type_get_member(Type *type, StringView name);
@@ -112,6 +116,7 @@ size_t align_to(size_t value, size_t align);
 bool type_is_numeric(Type *t);
 bool type_is_bool(Type *t);
 bool type_is_unknown(Type *t);
+bool type_is_concrete(Type *t);
 
 // Semantic Rules
 int type_can_implicitly_cast(Type *to, Type *from);

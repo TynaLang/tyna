@@ -12,6 +12,7 @@ Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
 void sema_register_func_signature(Sema *s, AstNode *node);
 void sema_register_method_signature(Sema *s, AstNode *node,
                                     StringView owner_name);
+StringView sema_mangle_method_name(StringView owner, StringView method);
 
 // Sema Expr
 Type *sema_coerce(Sema *s, AstNode *expr, Type *target);

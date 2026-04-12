@@ -280,9 +280,9 @@ AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
   return node;
 }
 
-AstNode *AstNode_new_impl_decl(AstNode *name, List members, Location loc) {
+AstNode *AstNode_new_impl_decl(Type *type, List members, Location loc) {
   AstNode *node = AstNode_new(NODE_IMPL_DECL, loc);
-  node->impl_decl.name = name;
+  node->impl_decl.type = type;
   node->impl_decl.members = members;
   return node;
 }
@@ -502,7 +502,6 @@ void Ast_free(AstNode *node) {
     List_free(&node->union_decl.members, 0);
     break;
   case NODE_IMPL_DECL:
-    Ast_free(node->impl_decl.name);
     for (size_t i = 0; i < node->impl_decl.members.len; i++) {
       Ast_free((AstNode *)node->impl_decl.members.items[i]);
     }
@@ -516,6 +515,255 @@ void Ast_free(AstNode *node) {
   }
 
   free(node);
+}
+
+AstNode *Ast_clone(AstNode *node) {
+  if (!node)
+    return NULL;
+
+  AstNode *copy = xcalloc(1, sizeof(AstNode));
+  copy->tag = node->tag;
+  copy->loc = node->loc;
+  copy->resolved_type = node->resolved_type;
+
+  switch (node->tag) {
+  case NODE_AST_ROOT:
+    List_init(&copy->ast_root.children);
+    for (size_t i = 0; i < node->ast_root.children.len; i++)
+      List_push(&copy->ast_root.children,
+                Ast_clone(node->ast_root.children.items[i]));
+    break;
+
+  case NODE_VAR_DECL:
+    copy->var_decl.name = Ast_clone(node->var_decl.name);
+    copy->var_decl.value = Ast_clone(node->var_decl.value);
+    copy->var_decl.declared_type = node->var_decl.declared_type;
+    copy->var_decl.is_const = node->var_decl.is_const;
+    copy->var_decl.is_export = node->var_decl.is_export;
+    break;
+
+  case NODE_PRINT_STMT:
+    List_init(&copy->print_stmt.values);
+    for (size_t i = 0; i < node->print_stmt.values.len; i++)
+      List_push(&copy->print_stmt.values,
+                Ast_clone(node->print_stmt.values.items[i]));
+    break;
+
+  case NODE_NUMBER:
+    copy->number = node->number;
+    break;
+
+  case NODE_CHAR:
+    copy->char_lit = node->char_lit;
+    break;
+
+  case NODE_BOOL:
+    copy->boolean = node->boolean;
+    break;
+
+  case NODE_STRING:
+    copy->string = node->string;
+    break;
+
+  case NODE_VAR:
+    copy->var = node->var;
+    break;
+
+  case NODE_BINARY_ARITH:
+  case NODE_BINARY_COMPARE:
+  case NODE_BINARY_EQUALITY:
+  case NODE_BINARY_LOGICAL:
+    copy->binary_arith.left = Ast_clone(node->binary_arith.left);
+    copy->binary_arith.right = Ast_clone(node->binary_arith.right);
+    copy->binary_arith.op = node->binary_arith.op;
+    if (node->tag == NODE_BINARY_COMPARE)
+      copy->binary_compare.op = node->binary_compare.op;
+    if (node->tag == NODE_BINARY_EQUALITY)
+      copy->binary_equality.op = node->binary_equality.op;
+    if (node->tag == NODE_BINARY_LOGICAL)
+      copy->binary_logical.op = node->binary_logical.op;
+    break;
+
+  case NODE_UNARY:
+    copy->unary.op = node->unary.op;
+    copy->unary.expr = Ast_clone(node->unary.expr);
+    break;
+
+  case NODE_CAST_EXPR:
+    copy->cast_expr.expr = Ast_clone(node->cast_expr.expr);
+    copy->cast_expr.target_type = node->cast_expr.target_type;
+    break;
+
+  case NODE_ASSIGN_EXPR:
+    copy->assign_expr.target = Ast_clone(node->assign_expr.target);
+    copy->assign_expr.value = Ast_clone(node->assign_expr.value);
+    break;
+
+  case NODE_EXPR_STMT:
+    copy->expr_stmt.expr = Ast_clone(node->expr_stmt.expr);
+    break;
+
+  case NODE_TERNARY:
+    copy->ternary.condition = Ast_clone(node->ternary.condition);
+    copy->ternary.true_expr = Ast_clone(node->ternary.true_expr);
+    copy->ternary.false_expr = Ast_clone(node->ternary.false_expr);
+    break;
+
+  case NODE_CALL:
+    copy->call.func = Ast_clone(node->call.func);
+    List_init(&copy->call.args);
+    for (size_t i = 0; i < node->call.args.len; i++)
+      List_push(&copy->call.args, Ast_clone(node->call.args.items[i]));
+    break;
+
+  case NODE_RETURN_STMT:
+    copy->return_stmt.expr = Ast_clone(node->return_stmt.expr);
+    break;
+
+  case NODE_PARAM:
+    copy->param.name = Ast_clone(node->param.name);
+    copy->param.type = node->param.type;
+    break;
+
+  case NODE_BLOCK:
+    List_init(&copy->block.statements);
+    for (size_t i = 0; i < node->block.statements.len; i++)
+      List_push(&copy->block.statements,
+                Ast_clone(node->block.statements.items[i]));
+    break;
+
+  case NODE_FIELD:
+    copy->field.object = Ast_clone(node->field.object);
+    copy->field.field = node->field.field;
+    break;
+
+  case NODE_STATIC_MEMBER:
+    copy->static_member.parent = node->static_member.parent;
+    copy->static_member.member = node->static_member.member;
+    break;
+
+  case NODE_INDEX:
+    copy->index.array = Ast_clone(node->index.array);
+    copy->index.index = Ast_clone(node->index.index);
+    break;
+
+  case NODE_FUNC_DECL:
+    copy->func_decl.name = Ast_clone(node->func_decl.name);
+    List_init(&copy->func_decl.params);
+    for (size_t i = 0; i < node->func_decl.params.len; i++)
+      List_push(&copy->func_decl.params,
+                Ast_clone(node->func_decl.params.items[i]));
+    copy->func_decl.body = Ast_clone(node->func_decl.body);
+    copy->func_decl.return_type = node->func_decl.return_type;
+    copy->func_decl.is_static = node->func_decl.is_static;
+    copy->func_decl.is_export = node->func_decl.is_export;
+    copy->func_decl.is_external = node->func_decl.is_external;
+    break;
+
+  case NODE_STRUCT_DECL:
+    copy->struct_decl.name = Ast_clone(node->struct_decl.name);
+    List_init(&copy->struct_decl.members);
+    for (size_t i = 0; i < node->struct_decl.members.len; i++)
+      List_push(&copy->struct_decl.members,
+                Ast_clone(node->struct_decl.members.items[i]));
+    List_init(&copy->struct_decl.placeholders);
+    for (size_t i = 0; i < node->struct_decl.placeholders.len; i++)
+      List_push(&copy->struct_decl.placeholders,
+                node->struct_decl.placeholders.items[i]);
+    copy->struct_decl.is_frozen = node->struct_decl.is_frozen;
+    copy->struct_decl.is_export = node->struct_decl.is_export;
+    break;
+
+  case NODE_UNION_DECL:
+    copy->union_decl.name = Ast_clone(node->union_decl.name);
+    List_init(&copy->union_decl.members);
+    for (size_t i = 0; i < node->union_decl.members.len; i++)
+      List_push(&copy->union_decl.members,
+                Ast_clone(node->union_decl.members.items[i]));
+    List_init(&copy->union_decl.placeholders);
+    for (size_t i = 0; i < node->union_decl.placeholders.len; i++)
+      List_push(&copy->union_decl.placeholders,
+                node->union_decl.placeholders.items[i]);
+    copy->union_decl.is_frozen = node->union_decl.is_frozen;
+    copy->union_decl.is_export = node->union_decl.is_export;
+    break;
+
+  case NODE_IMPL_DECL:
+    copy->impl_decl.type = node->impl_decl.type;
+    List_init(&copy->impl_decl.members);
+    for (size_t i = 0; i < node->impl_decl.members.len; i++)
+      List_push(&copy->impl_decl.members,
+                Ast_clone(node->impl_decl.members.items[i]));
+    break;
+
+  case NODE_ARRAY_LITERAL:
+    List_init(&copy->array_literal.items);
+    for (size_t i = 0; i < node->array_literal.items.len; i++)
+      List_push(&copy->array_literal.items,
+                Ast_clone(node->array_literal.items.items[i]));
+    break;
+
+  case NODE_ARRAY_REPEAT:
+    copy->array_repeat.value = Ast_clone(node->array_repeat.value);
+    copy->array_repeat.count = Ast_clone(node->array_repeat.count);
+    break;
+
+  case NODE_IF_STMT:
+    copy->if_stmt.condition = Ast_clone(node->if_stmt.condition);
+    copy->if_stmt.then_branch = Ast_clone(node->if_stmt.then_branch);
+    copy->if_stmt.else_branch = Ast_clone(node->if_stmt.else_branch);
+    break;
+
+  case NODE_SWITCH_STMT:
+    copy->switch_stmt.expr = Ast_clone(node->switch_stmt.expr);
+    List_init(&copy->switch_stmt.cases);
+    for (size_t i = 0; i < node->switch_stmt.cases.len; i++)
+      List_push(&copy->switch_stmt.cases,
+                Ast_clone(node->switch_stmt.cases.items[i]));
+    break;
+
+  case NODE_CASE:
+    copy->case_stmt.pattern = Ast_clone(node->case_stmt.pattern);
+    copy->case_stmt.body = Ast_clone(node->case_stmt.body);
+    break;
+
+  case NODE_DEFER:
+    copy->defer.expr = Ast_clone(node->defer.expr);
+    break;
+
+  case NODE_LOOP_STMT:
+    copy->loop.expr = Ast_clone(node->loop.expr);
+    break;
+
+  case NODE_WHILE_STMT:
+    copy->while_stmt.condition = Ast_clone(node->while_stmt.condition);
+    copy->while_stmt.body = Ast_clone(node->while_stmt.body);
+    break;
+
+  case NODE_FOR_STMT:
+    copy->for_stmt.init = Ast_clone(node->for_stmt.init);
+    copy->for_stmt.condition = Ast_clone(node->for_stmt.condition);
+    copy->for_stmt.increment = Ast_clone(node->for_stmt.increment);
+    copy->for_stmt.body = Ast_clone(node->for_stmt.body);
+    break;
+
+  case NODE_FOR_IN_STMT:
+    copy->for_in_stmt.var = Ast_clone(node->for_in_stmt.var);
+    copy->for_in_stmt.iterable = Ast_clone(node->for_in_stmt.iterable);
+    copy->for_in_stmt.body = Ast_clone(node->for_in_stmt.body);
+    break;
+
+  case NODE_INTRINSIC_COMPARE:
+    copy->intrinsic_compare.left = Ast_clone(node->intrinsic_compare.left);
+    copy->intrinsic_compare.right = Ast_clone(node->intrinsic_compare.right);
+    copy->intrinsic_compare.op = node->intrinsic_compare.op;
+    break;
+
+  default:
+    panic("Unsupported AST clone kind: %d", node->tag);
+  }
+
+  return copy;
 }
 
 PrimitiveKind Token_token_to_type(TokenType t) {
@@ -897,8 +1145,7 @@ void Ast_print(AstNode *node, int indent) {
   case NODE_IMPL_DECL:
     printf("IMPL_DECL\n");
     print_indent(indent + 1);
-    printf("TYPE:\n");
-    Ast_print(node->impl_decl.name, indent + 2);
+    printf("TYPE: %s\n", type_to_name(node->impl_decl.type));
     print_indent(indent + 1);
     printf("MEMBERS:\n");
     for (size_t i = 0; i < node->impl_decl.members.len; i++) {

@@ -140,6 +140,355 @@ static Type *check_var(Sema *s, AstNode *node) {
   return sym->type;
 }
 
+static Type *ast_substitute_type(Type *type, TypeContext *ctx,
+                                 Type *template_type, List args) {
+  if (!type || !ctx || !template_type)
+    return type;
+  return type_resolve_placeholders(ctx, type, template_type, args);
+}
+
+static List ast_clone_node_list(List *nodes, TypeContext *ctx,
+                                Type *template_type, List args);
+
+static AstNode *ast_clone_node(AstNode *node, TypeContext *ctx,
+                               Type *template_type, List args) {
+  if (!node)
+    return NULL;
+
+  AstNode *copy = xcalloc(1, sizeof(AstNode));
+  copy->tag = node->tag;
+  copy->loc = node->loc;
+  copy->resolved_type =
+      ast_substitute_type(node->resolved_type, ctx, template_type, args);
+
+  switch (node->tag) {
+  case NODE_AST_ROOT:
+    copy->ast_root.children =
+        ast_clone_node_list(&node->ast_root.children, ctx, template_type, args);
+    break;
+
+  case NODE_VAR_DECL:
+    copy->var_decl.name =
+        ast_clone_node(node->var_decl.name, ctx, template_type, args);
+    copy->var_decl.value =
+        ast_clone_node(node->var_decl.value, ctx, template_type, args);
+    copy->var_decl.declared_type = ast_substitute_type(
+        node->var_decl.declared_type, ctx, template_type, args);
+    copy->var_decl.is_const = node->var_decl.is_const;
+    copy->var_decl.is_export = node->var_decl.is_export;
+    break;
+
+  case NODE_PRINT_STMT:
+    copy->print_stmt.values =
+        ast_clone_node_list(&node->print_stmt.values, ctx, template_type, args);
+    break;
+
+  case NODE_NUMBER:
+    copy->number.value = node->number.value;
+    copy->number.raw_text = node->number.raw_text;
+    break;
+
+  case NODE_CHAR:
+    copy->char_lit.value = node->char_lit.value;
+    break;
+
+  case NODE_BOOL:
+    copy->boolean.value = node->boolean.value;
+    break;
+
+  case NODE_STRING:
+    copy->string.value = node->string.value;
+    break;
+
+  case NODE_VAR:
+    copy->var.value = node->var.value;
+    break;
+
+  case NODE_BINARY_ARITH:
+  case NODE_BINARY_COMPARE:
+  case NODE_BINARY_EQUALITY:
+  case NODE_BINARY_LOGICAL:
+    copy->binary_arith.left =
+        ast_clone_node(node->binary_arith.left, ctx, template_type, args);
+    copy->binary_arith.right =
+        ast_clone_node(node->binary_arith.right, ctx, template_type, args);
+    copy->binary_arith.op = node->binary_arith.op;
+    if (node->tag == NODE_BINARY_COMPARE)
+      copy->binary_compare.op = node->binary_compare.op;
+    if (node->tag == NODE_BINARY_EQUALITY)
+      copy->binary_equality.op = node->binary_equality.op;
+    if (node->tag == NODE_BINARY_LOGICAL)
+      copy->binary_logical.op = node->binary_logical.op;
+    break;
+
+  case NODE_UNARY:
+    copy->unary.op = node->unary.op;
+    copy->unary.expr =
+        ast_clone_node(node->unary.expr, ctx, template_type, args);
+    break;
+
+  case NODE_CAST_EXPR:
+    copy->cast_expr.expr =
+        ast_clone_node(node->cast_expr.expr, ctx, template_type, args);
+    copy->cast_expr.target_type = ast_substitute_type(
+        node->cast_expr.target_type, ctx, template_type, args);
+    break;
+
+  case NODE_ASSIGN_EXPR:
+    copy->assign_expr.target =
+        ast_clone_node(node->assign_expr.target, ctx, template_type, args);
+    copy->assign_expr.value =
+        ast_clone_node(node->assign_expr.value, ctx, template_type, args);
+    break;
+
+  case NODE_EXPR_STMT:
+    copy->expr_stmt.expr =
+        ast_clone_node(node->expr_stmt.expr, ctx, template_type, args);
+    break;
+
+  case NODE_TERNARY:
+    copy->ternary.condition =
+        ast_clone_node(node->ternary.condition, ctx, template_type, args);
+    copy->ternary.true_expr =
+        ast_clone_node(node->ternary.true_expr, ctx, template_type, args);
+    copy->ternary.false_expr =
+        ast_clone_node(node->ternary.false_expr, ctx, template_type, args);
+    break;
+
+  case NODE_CALL:
+    copy->call.func = ast_clone_node(node->call.func, ctx, template_type, args);
+    copy->call.args =
+        ast_clone_node_list(&node->call.args, ctx, template_type, args);
+    break;
+
+  case NODE_RETURN_STMT:
+    copy->return_stmt.expr =
+        ast_clone_node(node->return_stmt.expr, ctx, template_type, args);
+    break;
+
+  case NODE_PARAM:
+    copy->param.name =
+        ast_clone_node(node->param.name, ctx, template_type, args);
+    copy->param.type =
+        ast_substitute_type(node->param.type, ctx, template_type, args);
+    break;
+
+  case NODE_BLOCK:
+    copy->block.statements =
+        ast_clone_node_list(&node->block.statements, ctx, template_type, args);
+    break;
+
+  case NODE_FIELD:
+    copy->field.object =
+        ast_clone_node(node->field.object, ctx, template_type, args);
+    copy->field.field = node->field.field;
+    break;
+
+  case NODE_STATIC_MEMBER:
+    copy->static_member.parent = node->static_member.parent;
+    copy->static_member.member = node->static_member.member;
+    break;
+
+  case NODE_INDEX:
+    copy->index.array =
+        ast_clone_node(node->index.array, ctx, template_type, args);
+    copy->index.index =
+        ast_clone_node(node->index.index, ctx, template_type, args);
+    break;
+
+  case NODE_FUNC_DECL:
+    copy->func_decl.name =
+        ast_clone_node(node->func_decl.name, ctx, template_type, args);
+    copy->func_decl.params =
+        ast_clone_node_list(&node->func_decl.params, ctx, template_type, args);
+    copy->func_decl.body =
+        ast_clone_node(node->func_decl.body, ctx, template_type, args);
+    copy->func_decl.return_type = ast_substitute_type(
+        node->func_decl.return_type, ctx, template_type, args);
+    copy->func_decl.is_static = node->func_decl.is_static;
+    copy->func_decl.is_export = node->func_decl.is_export;
+    copy->func_decl.is_external = node->func_decl.is_external;
+    break;
+
+  case NODE_STRUCT_DECL:
+    copy->struct_decl.name =
+        ast_clone_node(node->struct_decl.name, ctx, template_type, args);
+    copy->struct_decl.members = ast_clone_node_list(&node->struct_decl.members,
+                                                    ctx, template_type, args);
+    List_init(&copy->struct_decl.placeholders);
+    for (size_t i = 0; i < node->struct_decl.placeholders.len; i++) {
+      List_push(&copy->struct_decl.placeholders,
+                node->struct_decl.placeholders.items[i]);
+    }
+    copy->struct_decl.is_frozen = node->struct_decl.is_frozen;
+    copy->struct_decl.is_export = node->struct_decl.is_export;
+    break;
+
+  case NODE_UNION_DECL:
+    copy->union_decl.name =
+        ast_clone_node(node->union_decl.name, ctx, template_type, args);
+    copy->union_decl.members = ast_clone_node_list(&node->union_decl.members,
+                                                   ctx, template_type, args);
+    List_init(&copy->union_decl.placeholders);
+    for (size_t i = 0; i < node->union_decl.placeholders.len; i++) {
+      List_push(&copy->union_decl.placeholders,
+                node->union_decl.placeholders.items[i]);
+    }
+    copy->union_decl.is_frozen = node->union_decl.is_frozen;
+    copy->union_decl.is_export = node->union_decl.is_export;
+    break;
+
+  case NODE_IMPL_DECL:
+    copy->impl_decl.type =
+        ast_substitute_type(node->impl_decl.type, ctx, template_type, args);
+    copy->impl_decl.members =
+        ast_clone_node_list(&node->impl_decl.members, ctx, template_type, args);
+    break;
+
+  case NODE_ARRAY_LITERAL:
+    copy->array_literal.items = ast_clone_node_list(&node->array_literal.items,
+                                                    ctx, template_type, args);
+    break;
+
+  case NODE_IF_STMT:
+    copy->if_stmt.condition =
+        ast_clone_node(node->if_stmt.condition, ctx, template_type, args);
+    copy->if_stmt.then_branch =
+        ast_clone_node(node->if_stmt.then_branch, ctx, template_type, args);
+    copy->if_stmt.else_branch =
+        ast_clone_node(node->if_stmt.else_branch, ctx, template_type, args);
+    break;
+
+  case NODE_SWITCH_STMT:
+    copy->switch_stmt.expr =
+        ast_clone_node(node->switch_stmt.expr, ctx, template_type, args);
+    copy->switch_stmt.cases =
+        ast_clone_node_list(&node->switch_stmt.cases, ctx, template_type, args);
+    break;
+
+  case NODE_CASE:
+    copy->case_stmt.pattern =
+        ast_clone_node(node->case_stmt.pattern, ctx, template_type, args);
+    copy->case_stmt.body =
+        ast_clone_node(node->case_stmt.body, ctx, template_type, args);
+    break;
+
+  case NODE_DEFER:
+    copy->defer.expr =
+        ast_clone_node(node->defer.expr, ctx, template_type, args);
+    break;
+
+  case NODE_LOOP_STMT:
+    copy->loop.expr = ast_clone_node(node->loop.expr, ctx, template_type, args);
+    break;
+
+  case NODE_WHILE_STMT:
+    copy->while_stmt.condition =
+        ast_clone_node(node->while_stmt.condition, ctx, template_type, args);
+    copy->while_stmt.body =
+        ast_clone_node(node->while_stmt.body, ctx, template_type, args);
+    break;
+
+  case NODE_FOR_STMT:
+    copy->for_stmt.init =
+        ast_clone_node(node->for_stmt.init, ctx, template_type, args);
+    copy->for_stmt.condition =
+        ast_clone_node(node->for_stmt.condition, ctx, template_type, args);
+    copy->for_stmt.increment =
+        ast_clone_node(node->for_stmt.increment, ctx, template_type, args);
+    copy->for_stmt.body =
+        ast_clone_node(node->for_stmt.body, ctx, template_type, args);
+    break;
+
+  case NODE_FOR_IN_STMT:
+    copy->for_in_stmt.var =
+        ast_clone_node(node->for_in_stmt.var, ctx, template_type, args);
+    copy->for_in_stmt.iterable =
+        ast_clone_node(node->for_in_stmt.iterable, ctx, template_type, args);
+    copy->for_in_stmt.body =
+        ast_clone_node(node->for_in_stmt.body, ctx, template_type, args);
+    break;
+
+  case NODE_ARRAY_REPEAT:
+    copy->array_repeat.value =
+        ast_clone_node(node->array_repeat.value, ctx, template_type, args);
+    copy->array_repeat.count =
+        ast_clone_node(node->array_repeat.count, ctx, template_type, args);
+    break;
+
+  case NODE_INTRINSIC_COMPARE:
+    copy->intrinsic_compare.left =
+        ast_clone_node(node->intrinsic_compare.left, ctx, template_type, args);
+    copy->intrinsic_compare.right =
+        ast_clone_node(node->intrinsic_compare.right, ctx, template_type, args);
+    copy->intrinsic_compare.op = node->intrinsic_compare.op;
+    break;
+
+  default:
+    panic("Unsupported AST node clone kind: %d", node->tag);
+  }
+
+  return copy;
+}
+
+static List ast_clone_node_list(List *nodes, TypeContext *ctx,
+                                Type *template_type, List args) {
+  List out;
+  List_init(&out);
+  for (size_t i = 0; i < nodes->len; i++) {
+    AstNode *child = nodes->items[i];
+    AstNode *clone = ast_clone_node(child, ctx, template_type, args);
+    List_push(&out, clone);
+  }
+  return out;
+}
+
+static Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type,
+                                              Symbol *method,
+                                              AstNode *field_node) {
+  if (!obj_type || !obj_type->data.instance.from_template)
+    return method;
+
+  Type *template_type = obj_type->data.instance.from_template;
+  StringView original_name =
+      method->original_name.len ? method->original_name : method->name;
+  StringView concrete_name = sema_mangle_method_name(
+      sv_from_cstr(type_to_name(obj_type)), original_name);
+
+  Symbol *existing = sema_resolve(s, concrete_name);
+  if (existing)
+    return existing;
+
+  Type *concrete_return_type =
+      type_resolve_placeholders(s->types, method->type, template_type,
+                                obj_type->data.instance.generic_args);
+  Symbol *alias = sema_define(s, concrete_name, concrete_return_type, true,
+                              field_node->loc);
+  if (!alias)
+    return NULL;
+
+  alias->original_name = original_name;
+  alias->kind = method->kind;
+  alias->is_export = false;
+  alias->func_status = FUNC_IMPLEMENTATION;
+
+  if (method->value && method->value->tag == NODE_FUNC_DECL) {
+    AstNode *concrete_fn =
+        ast_clone_node(method->value, s->types, template_type,
+                       obj_type->data.instance.generic_args);
+    if (concrete_fn->func_decl.name)
+      concrete_fn->func_decl.name->var.value = concrete_name;
+
+    sema_check_stmt(s, concrete_fn);
+    alias->value = concrete_fn;
+    List_push(&s->types->instantiated_functions, concrete_fn);
+  } else {
+    alias->value = method->value;
+  }
+
+  return alias;
+}
+
 bool type_is_array_struct(Type *type) {
   if (type->kind != KIND_STRUCT)
     return false;
@@ -188,11 +537,23 @@ static Type *check_field(Sema *s, AstNode *node) {
         method->original_name.len ? method->original_name : method->name;
     if (sv_eq(lookup_name, node->field.field)) {
       if (method->kind == SYM_METHOD) {
-        // instance.method(...) -> method(instance, ...)
-        // This transformation usually happens during call checking,
-        // but we'll mark the node so check_call knows what to do.
-        node->resolved_type = method->type; // This is the function type
+        node->resolved_type = method->type;
         return method->type;
+      }
+    }
+  }
+
+  if (obj_type->data.instance.from_template) {
+    Type *template_type = obj_type->data.instance.from_template;
+    for (size_t i = 0; i < template_type->methods.len; i++) {
+      Symbol *method = template_type->methods.items[i];
+      StringView lookup_name =
+          method->original_name.len ? method->original_name : method->name;
+      if (sv_eq(lookup_name, node->field.field)) {
+        if (method->kind == SYM_METHOD) {
+          node->resolved_type = method->type;
+          return method->type;
+        }
       }
     }
   }
@@ -267,6 +628,14 @@ static Type *check_index(Sema *s, AstNode *node) {
 
   Type *array_type = sema_check_expr(s, array_node);
   Type *index_type = sema_check_expr(s, index_node);
+
+  if (array_type->kind == KIND_POINTER) {
+    if (!type_is_numeric(index_type)) {
+      sema_error(s, index_node, "Array index must be numeric, got %s",
+                 type_to_name(index_type));
+    }
+    return array_type->data.pointer_to;
+  }
 
   if (!type_is_array_struct(array_type)) {
     sema_error(s, array_node, "Indexing only allowed on arrays, got %s",
@@ -464,14 +833,21 @@ static Type *check_call(Sema *s, AstNode *node) {
             method->original_name.len ? method->original_name : method->name;
         if (sv_eq(lookup_name, field_node->field.field) &&
             method->kind == SYM_METHOD) {
+          Symbol *concrete_method =
+              sema_instantiate_method_symbol(s, obj_type, method, field_node);
+          if (!concrete_method)
+            continue;
+
           // Transformation: method(instance, args...)
           List new_args;
           List_init(&new_args);
 
           AstNode *self_arg = field_node->field.object;
-          if (method->value && method->value->tag == NODE_FUNC_DECL &&
-              method->value->func_decl.params.len > 0) {
-            AstNode *first_param = method->value->func_decl.params.items[0];
+          if (concrete_method->value &&
+              concrete_method->value->tag == NODE_FUNC_DECL &&
+              concrete_method->value->func_decl.params.len > 0) {
+            AstNode *first_param =
+                concrete_method->value->func_decl.params.items[0];
             Type *param_type = first_param->param.type;
             if (param_type->kind == KIND_POINTER &&
                 orig_obj_type->kind != KIND_POINTER &&
@@ -488,23 +864,56 @@ static Type *check_call(Sema *s, AstNode *node) {
             List_push(&new_args, node->call.args.items[j]);
           }
 
-          // Ensure the mangled method symbol is visible in the current scope.
-          if (!sema_resolve(s, method->name)) {
-            Symbol *alias = sema_define(s, method->name, method->type, true,
-                                        field_node->loc);
-            if (alias) {
-              alias->original_name = method->original_name;
-              alias->value = method->value;
-              alias->kind = method->kind;
-              alias->is_export = false;
-            }
-          }
-
-          // Modify the call node to use the mangled method symbol.
-          node->call.func = AstNode_new_var(method->name, field_node->loc);
+          node->call.func =
+              AstNode_new_var(concrete_method->name, field_node->loc);
           node->call.args = new_args;
 
           return check_call(s, node); // Recursively check the transformed call
+        }
+      }
+
+      if (obj_type->data.instance.from_template) {
+        Type *template_type = obj_type->data.instance.from_template;
+        for (size_t i = 0; i < template_type->methods.len; i++) {
+          Symbol *method = template_type->methods.items[i];
+          StringView lookup_name =
+              method->original_name.len ? method->original_name : method->name;
+          if (sv_eq(lookup_name, field_node->field.field) &&
+              method->kind == SYM_METHOD) {
+            Symbol *concrete_method =
+                sema_instantiate_method_symbol(s, obj_type, method, field_node);
+            if (!concrete_method)
+              continue;
+
+            List new_args;
+            List_init(&new_args);
+
+            AstNode *self_arg = field_node->field.object;
+            if (concrete_method->value &&
+                concrete_method->value->tag == NODE_FUNC_DECL &&
+                concrete_method->value->func_decl.params.len > 0) {
+              AstNode *first_param =
+                  concrete_method->value->func_decl.params.items[0];
+              Type *param_type = first_param->param.type;
+              if (param_type->kind == KIND_POINTER &&
+                  orig_obj_type->kind != KIND_POINTER &&
+                  type_equals(param_type->data.pointer_to, orig_obj_type)) {
+                self_arg = AstNode_new_unary(
+                    OP_ADDR_OF, field_node->field.object, field_node->loc);
+              }
+            }
+
+            List_push(&new_args, self_arg);
+            for (size_t j = 0; j < node->call.args.len; j++) {
+              List_push(&new_args, node->call.args.items[j]);
+            }
+
+            node->call.func =
+                AstNode_new_var(concrete_method->name, field_node->loc);
+            node->call.args = new_args;
+
+            return check_call(s, node);
+          }
         }
       }
     }
@@ -659,12 +1068,18 @@ static Type *check_array_expr(Sema *s, AstNode *node) {
     return type_get_primitive(s->types, PRIM_UNKNOWN);
   }
 
-  // Monomorphize: Create Array<element_type>
+  // Monomorphize: Create Array<element_type> with fixed length for literals
   List args;
   List_init(&args);
   List_push(&args, element_type);
 
-  Type *instance = type_get_instance(s->types, array_template, args);
+  Type *instance = NULL;
+  if (node->tag == NODE_ARRAY_LITERAL) {
+    size_t len = node->array_literal.items.len;
+    instance = type_get_instance_fixed(s->types, array_template, args, len);
+  } else {
+    instance = type_get_instance(s->types, array_template, args);
+  }
   List_free(&args, 0); // Cleanup temporary list
 
   // Assign the resolved type on the literal/repeat node itself so codegen
@@ -744,7 +1159,7 @@ Type *sema_find_type_by_name(Sema *s, StringView name) {
   }
   for (size_t i = 0; i < s->types->instances.len; i++) {
     Type *t = s->types->instances.items[i];
-    if (sv_eq(t->name, name))
+    if (sv_eq(t->name, name) || sv_eq_cstr(name, type_to_name(t)))
       return t;
   }
 

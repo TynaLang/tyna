@@ -122,7 +122,7 @@ struct AstNode {
     } union_decl;
 
     struct {
-      AstNode *name;
+      Type *type;
       List members; // List<AstNode* (NODE_FUNC_DECL)>
     } impl_decl;
 
@@ -293,7 +293,7 @@ struct AstNode {
     } switch_stmt;
 
     struct {
-      AstNode *pattern; // NODE_STRING or NODE_VAR
+      AstNode *pattern;   // NODE_STRING or NODE_VAR
       Type *pattern_type; // variant type for union cases
       AstNode *body;
     } case_stmt;
@@ -370,8 +370,9 @@ AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
                                  bool is_frozen, bool is_export, Location loc);
 AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
                                 bool is_frozen, bool is_export, Location loc);
-AstNode *AstNode_new_impl_decl(AstNode *name, List members, Location loc);
+AstNode *AstNode_new_impl_decl(Type *type, List members, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
+AstNode *Ast_clone(AstNode *node);
 
 PrimitiveKind Token_token_to_type(TokenType t);
 

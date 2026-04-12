@@ -1,9 +1,34 @@
+#include <ctype.h>
 #include <llvm-c/Core.h>
 
 #include "codegen_private.h"
 #include "tyl/ast.h"
 #include "tyl/semantic.h"
 #include "tyl/utils.h"
+
+static void cg_sanitize_type_name(const char *src, char *dst, size_t dst_size) {
+  size_t di = 0;
+  for (size_t si = 0; src[si] != '\0' && di + 1 < dst_size; si++) {
+    char c = src[si];
+    if (isalnum((unsigned char)c) || c == '_' || c == '$') {
+      dst[di++] = c;
+    } else if (di > 0 && dst[di - 1] != '_') {
+      dst[di++] = '_';
+    }
+  }
+  while (di > 0 && dst[di - 1] == '_')
+    di--;
+  dst[di] = '\0';
+}
+
+static void cg_get_struct_name(Type *t, char *buf, size_t buf_size) {
+  if (t->data.instance.from_template) {
+    const char *raw_name = type_to_name(t);
+    cg_sanitize_type_name(raw_name, buf, buf_size);
+  } else {
+    snprintf(buf, buf_size, SV_FMT, SV_ARG(t->name));
+  }
+}
 
 LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
   if (!t) {
@@ -55,7 +80,18 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     if (!t->data.pointer_to) {
       panic("cg_get_llvm_type received pointer type with NULL target");
     }
-    return LLVMPointerType(cg_get_llvm_type(cg, t->data.pointer_to), 0);
+    LLVMTypeRef pointee = cg_get_llvm_type(cg, t->data.pointer_to);
+    if (!pointee) {
+      // Generic placeholder pointer; lower as i8* to avoid LLVM crashes.
+      pointee = LLVMInt8TypeInContext(cg->context);
+    }
+    return LLVMPointerType(pointee, 0);
+  }
+
+  if (t->kind == KIND_TEMPLATE) {
+    // Generic placeholders do not have a concrete LLVM type yet.
+    // Lower them to a byte-sized placeholder type for codegen safety.
+    return LLVMInt8TypeInContext(cg->context);
   }
 
   if (t->kind == KIND_UNION) {
@@ -92,14 +128,11 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
   }
 
   if (t->kind == KIND_STRUCT) {
-    // For structs, we use named types to support recursion and cache them
-    char buf[256];
-    if (t->data.instance.from_template) {
-      snprintf(buf, sizeof(buf), "%.*s_instance_%p", (int)t->name.len,
-               t->name.data, (void *)t);
-    } else {
-      snprintf(buf, sizeof(buf), SV_FMT, SV_ARG(t->name));
-    }
+    // For structs, we use named types to support recursion and cache them.
+    // Use a stable semantic name for generic instances so equivalent types
+    // share the same LLVM type across the compiler.
+    char buf[512];
+    cg_get_struct_name(t, buf, sizeof(buf));
     LLVMTypeRef struct_ty = LLVMGetTypeByName2(cg->context, buf);
     if (!struct_ty) {
       struct_ty = LLVMStructCreateNamed(cg->context, buf);
@@ -146,9 +179,10 @@ void cg_lower_all_structs(Codegen *cg) {
   // Also include template instances
   for (size_t i = 0; i < cg->type_ctx->instances.len; i++) {
     Type *t = cg->type_ctx->instances.items[i];
-    char buf[256];
-    snprintf(buf, sizeof(buf), "%.*s_instance_%p", (int)t->name.len,
-             t->name.data, (void *)t);
+    if (!type_is_concrete(t))
+      continue;
+    char buf[512];
+    cg_get_struct_name(t, buf, sizeof(buf));
     if (!LLVMGetTypeByName2(cg->context, buf)) {
       LLVMStructCreateNamed(cg->context, buf);
     }
@@ -159,7 +193,10 @@ void cg_lower_all_structs(Codegen *cg) {
     cg_get_llvm_type(cg, cg->type_ctx->structs.items[i]);
   }
   for (size_t i = 0; i < cg->type_ctx->instances.len; i++) {
-    cg_get_llvm_type(cg, cg->type_ctx->instances.items[i]);
+    Type *t = cg->type_ctx->instances.items[i];
+    if (!type_is_concrete(t))
+      continue;
+    cg_get_llvm_type(cg, t);
   }
 }
 
@@ -230,7 +267,32 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
   }
 
   if (to_kind == LLVMPointerTypeKind) {
+    if (from_kind == LLVMIntegerTypeKind) {
+      return LLVMBuildIntToPtr(cg->builder, value, to_ty, "inttoptrtmp");
+    }
+
+    if (from_kind == LLVMStructTypeKind && from_t &&
+        from_t->kind == KIND_PRIMITIVE &&
+        from_t->data.primitive == PRIM_STRING) {
+      // Convert a language string value to a raw char pointer for C helpers.
+      return LLVMBuildExtractValue(cg->builder, value, 0, "string_data_ptr");
+    }
+
     return LLVMBuildBitCast(cg->builder, value, to_ty, "bitcasttmp");
+  }
+
+  if (from_kind == LLVMPointerTypeKind && to_kind == LLVMIntegerTypeKind) {
+    return LLVMBuildPtrToInt(cg->builder, value, to_ty, "ptrtointtmp");
+  }
+
+  if (from_kind == LLVMPointerTypeKind && to_kind == LLVMIntegerTypeKind &&
+      LLVMGetIntTypeWidth(to_ty) == 1) {
+    return LLVMBuildICmp(cg->builder, LLVMIntNE, value, LLVMConstNull(from_ty),
+                         "ptrnonnull");
+  }
+
+  if (from_kind == LLVMStructTypeKind && to_kind == LLVMStructTypeKind) {
+    return LLVMBuildBitCast(cg->builder, value, to_ty, "structbitcasttmp");
   }
 
   return value;

@@ -154,6 +154,17 @@ static void cg_initiate_system_functions(Codegen *cg) {
                      init_fixed_val, init_fixed_type, true);
   List_push(&cg->system_functions, f_init_fixed);
 
+  // ptr<i64> __tyl_array_clone_dims(i64 rank, ptr<i64> dims)
+  LLVMTypeRef clone_dims_args[] = {i64_ty, dims_ptr_ty};
+  LLVMTypeRef clone_dims_type =
+      LLVMFunctionType(LLVMPointerType(i64_ty, 0), clone_dims_args, 2, false);
+  LLVMValueRef clone_dims_val =
+      LLVMAddFunction(cg->module, "__tyl_array_clone_dims", clone_dims_type);
+  CGFunction *f_clone_dims = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_clone_dims, sv_from_cstr("__tyl_array_clone_dims"),
+                     clone_dims_val, clone_dims_type, true);
+  List_push(&cg->system_functions, f_clone_dims);
+
   // void panic(const char *msg, ...)
   LLVMTypeRef panic_args[] = {ptr_ty};
   LLVMTypeRef panic_type =
@@ -220,12 +231,21 @@ static void cg_declare_functions(Codegen *cg, AstNode *root) {
         }
       }
     } else if (node->tag == NODE_IMPL_DECL) {
-      for (size_t j = 0; j < node->impl_decl.members.len; j++) {
-        AstNode *member = node->impl_decl.members.items[j];
-        if (member->tag == NODE_FUNC_DECL) {
-          cg_define_function(cg, member);
+      if (type_is_concrete(node->impl_decl.type)) {
+        for (size_t j = 0; j < node->impl_decl.members.len; j++) {
+          AstNode *member = node->impl_decl.members.items[j];
+          if (member->tag == NODE_FUNC_DECL) {
+            cg_define_function(cg, member);
+          }
         }
       }
+    }
+  }
+
+  for (size_t i = 0; i < cg->type_ctx->instantiated_functions.len; i++) {
+    AstNode *node = cg->type_ctx->instantiated_functions.items[i];
+    if (node->tag == NODE_FUNC_DECL) {
+      cg_define_function(cg, node);
     }
   }
 }
@@ -243,12 +263,21 @@ static void cg_emit_functions(Codegen *cg, AstNode *root) {
         }
       }
     } else if (node->tag == NODE_IMPL_DECL) {
-      for (size_t j = 0; j < node->impl_decl.members.len; j++) {
-        AstNode *member = node->impl_decl.members.items[j];
-        if (member->tag == NODE_FUNC_DECL) {
-          cg_emit_function_body(cg, member);
+      if (type_is_concrete(node->impl_decl.type)) {
+        for (size_t j = 0; j < node->impl_decl.members.len; j++) {
+          AstNode *member = node->impl_decl.members.items[j];
+          if (member->tag == NODE_FUNC_DECL) {
+            cg_emit_function_body(cg, member);
+          }
         }
       }
+    }
+  }
+
+  for (size_t i = 0; i < cg->type_ctx->instantiated_functions.len; i++) {
+    AstNode *node = cg->type_ctx->instantiated_functions.items[i];
+    if (node->tag == NODE_FUNC_DECL) {
+      cg_emit_function_body(cg, node);
     }
   }
 }
@@ -265,12 +294,14 @@ static void cg_emit_global_statements(Codegen *cg, AstNode *root) {
   }
 }
 
-Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx) {
+Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx,
+                     ErrorHandler *eh) {
   Codegen *cg = xmalloc(sizeof(Codegen));
   cg->context = LLVMContextCreate();
   cg->module = LLVMModuleCreateWithNameInContext(module_name, cg->context);
   cg->builder = LLVMCreateBuilderInContext(cg->context);
   cg->type_ctx = type_ctx;
+  cg->eh = eh;
   List_init(&cg->defers);
   cg->current_scope = xmalloc(sizeof(CGSymbolTable));
   CGSymbolTable_init(cg->current_scope, NULL);

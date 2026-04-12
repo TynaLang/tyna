@@ -212,12 +212,60 @@ int is_lvalue(AstNode *node) {
          (node->tag == NODE_UNARY && node->unary.op == OP_DEREF);
 }
 
+Type *Parser_find_placeholder(Parser *p, StringView name) {
+  for (size_t i = 0; i < p->type_placeholders.len; i++) {
+    Type *t = p->type_placeholders.items[i];
+    if (sv_eq(t->name, name))
+      return t;
+  }
+  return NULL;
+}
+
+void Parser_placeholder_scope_push(Parser *p) {
+  size_t *marker = xmalloc(sizeof(size_t));
+  *marker = p->type_placeholders.len;
+  List_push(&p->placeholder_scope_stack, marker);
+}
+
+void Parser_placeholder_scope_pop(Parser *p) {
+  if (p->placeholder_scope_stack.len == 0)
+    return;
+  size_t *marker =
+      p->placeholder_scope_stack.items[p->placeholder_scope_stack.len - 1];
+  size_t target = *marker;
+  free(marker);
+  List_pop(&p->placeholder_scope_stack);
+  while (p->type_placeholders.len > target)
+    List_pop(&p->type_placeholders);
+}
+
+Type *Parser_add_placeholder(Parser *p, StringView name) {
+  Type *existing = Parser_find_placeholder(p, name);
+  if (existing)
+    return existing;
+
+  Type *placeholder = xcalloc(1, sizeof(Type));
+  placeholder->kind = KIND_TEMPLATE;
+  placeholder->name = name;
+  List_init(&placeholder->members);
+  List_init(&placeholder->methods);
+  List_init(&placeholder->impls);
+  placeholder->is_frozen = false;
+  placeholder->is_intrinsic = false;
+
+  List_push(&p->type_placeholders, placeholder);
+  return placeholder;
+}
+
 AstNode *Parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
   Parser p;
   p.lexer = lexer;
   p.eh = eh;
   p.type_ctx = type_ctx;
   p.current_token = Token_advance(lexer);
+  List_init(&p.type_placeholders);
+  List_init(&p.placeholder_scope_stack);
+  p.placeholder_mode = false;
 
   AstNode *ast_root = AstNode_new_program(p.current_token.loc);
 
@@ -227,6 +275,9 @@ AstNode *Parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
       continue;
     List_push(&ast_root->ast_root.children, stmt);
   }
+
+  List_free(&p.type_placeholders, 0);
+  List_free(&p.placeholder_scope_stack, 1);
 
   return ast_root;
 }

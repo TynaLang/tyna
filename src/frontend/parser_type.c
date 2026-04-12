@@ -60,7 +60,12 @@ Type *Parser_parse_type_full(Parser *p) {
       res = type_get_primitive(p->type_ctx, kind);
     } else if (p->current_token.type == TOKEN_IDENT) {
       StringView name = p->current_token.text;
+      Type *placeholder = Parser_find_placeholder(p, name);
       Parser_token_advance(p);
+
+      if (placeholder) {
+        return placeholder;
+      }
 
       if (p->current_token.type == TOKEN_LT) {
         Parser_token_advance(p);

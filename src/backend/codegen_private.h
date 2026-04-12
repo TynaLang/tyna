@@ -75,8 +75,7 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_ty,
 LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef value,
                                   Type *from_ty, Type *union_ty);
 void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, Type *l_ty,
-                          LLVMValueRef *rhs, Type *r_ty);
-
+                          LLVMValueRef *rhs, Type *r_ty);CGFunction *cg_find_system_function(Codegen *cg, StringView name);
 // ===== expressions / statements =====
 
 LLVMValueRef cg_expression(Codegen *cg, AstNode *node);
@@ -89,6 +88,7 @@ void cg_init_CGFunction(CGFunction *f, StringView name, LLVMValueRef value,
 void cg_define_function(Codegen *cg, AstNode *node);
 void cg_emit_function_body(Codegen *cg, AstNode *node);
 CGFunction *cg_find_function(Codegen *cg, StringView name);
+CGFunction *cg_find_system_function(Codegen *cg, StringView name);
 
 size_t cg_string_pool_insert(Codegen *cg, StringView str);
 

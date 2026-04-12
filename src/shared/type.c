@@ -1,4 +1,5 @@
 #include "tyl/type.h"
+#include "tyl/ast.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,8 @@ static void type_free_internal(Type *t) {
     free(m);
   }
   List_free(&t->members, 0);
+  List_free(&t->methods, 0);
+  List_free(&t->impls, 0);
   // Note: name is usually a StringView pointing to source or interned memory
   free(t);
 }
@@ -54,6 +57,7 @@ static void register_array_template(TypeContext *ctx) {
   List_init(&array_tmpl->data.template.placeholders);
   List_init(&array_tmpl->data.template.fields);
   List_init(&array_tmpl->members);
+  List_init(&array_tmpl->impls);
 
   // 1. Add Placeholders (The <T>)
   StringView *t_sv = xmalloc(sizeof(StringView));
@@ -104,12 +108,14 @@ TypeContext *type_context_create() {
     }
     List_init(&ctx->primitives[i]->members);
     List_init(&ctx->primitives[i]->methods);
+    List_init(&ctx->primitives[i]->impls);
     ctx->primitives[i]->is_frozen = false;
     ctx->primitives[i]->is_intrinsic = false;
   }
   List_init(&ctx->structs);
   List_init(&ctx->templates);
   List_init(&ctx->instances);
+  List_init(&ctx->instantiated_functions);
 
   register_array_template(ctx);
 
@@ -123,8 +129,11 @@ void type_context_free(TypeContext *ctx) {
     type_free_internal(ctx->templates.items[i]);
   for (size_t i = 0; i < ctx->instances.len; i++)
     type_free_internal(ctx->instances.items[i]);
+  for (size_t i = 0; i < ctx->instantiated_functions.len; i++)
+    Ast_free(ctx->instantiated_functions.items[i]);
   List_free(&ctx->templates, 0);
   List_free(&ctx->instances, 0);
+  List_free(&ctx->instantiated_functions, 0);
   free(ctx);
 }
 
@@ -145,6 +154,9 @@ Type *type_get_pointer(TypeContext *ctx, Type *to) {
   new_ptr->data.pointer_to = to;
   new_ptr->size = 8; // Assuming 64-bit
   new_ptr->alignment = 8;
+  List_init(&new_ptr->members);
+  List_init(&new_ptr->methods);
+  List_init(&new_ptr->impls);
   List_push(&ctx->instances, new_ptr);
   return new_ptr;
 }
@@ -168,6 +180,7 @@ Type *type_get_struct(TypeContext *ctx, StringView name) {
   s->name = name;
   List_init(&s->members);
   List_init(&s->methods);
+  List_init(&s->impls);
   s->alignment = 0;
   s->size = 0;
   s->is_frozen = false;
@@ -283,8 +296,40 @@ static Type *resolve_placeholder(TypeContext *ctx, Type *blueprint,
     }
   }
 
-  // 3. Fallback: It's already a concrete type (e.g., i64)
+  // 3. Recursive Case: If it's a generic instance type (e.g. Array<T> or
+  // Array<Array<T>>)
+  if (blueprint->kind == KIND_STRUCT &&
+      blueprint->data.instance.from_template) {
+    bool changed = false;
+    List resolved_args;
+    List_init(&resolved_args);
+    for (size_t i = 0; i < blueprint->data.instance.generic_args.len; i++) {
+      Type *resolved = resolve_placeholder(
+          ctx, blueprint->data.instance.generic_args.items[i], placeholders,
+          args);
+      List_push(&resolved_args, resolved);
+      if (resolved != blueprint->data.instance.generic_args.items[i])
+        changed = true;
+    }
+    if (changed) {
+      Type *result = type_get_instance(
+          ctx, blueprint->data.instance.from_template, resolved_args);
+      List_free(&resolved_args, 0);
+      return result;
+    }
+    List_free(&resolved_args, 0);
+  }
+
+  // 4. Fallback: It's already a concrete type (e.g., i64)
   return blueprint;
+}
+
+Type *type_resolve_placeholders(TypeContext *ctx, Type *blueprint,
+                                Type *template_type, List args) {
+  if (!template_type || !template_type->data.template.placeholders.len)
+    return blueprint;
+  return resolve_placeholder(ctx, blueprint,
+                             template_type->data.template.placeholders, args);
 }
 
 // Monomorphization engine
@@ -325,6 +370,8 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
     List_push(&inst->data.instance.generic_args, args.items[i]);
   }
   List_init(&inst->members);
+  List_init(&inst->methods);
+  List_init(&inst->impls);
 
   // Clone members and swap placeholders
   for (size_t i = 0; i < template_type->members.len; i++) {
@@ -440,6 +487,18 @@ bool type_equals(Type *a, Type *b) {
     if (a->fixed_array_len != b->fixed_array_len)
       return false;
     return true;
+  case KIND_TEMPLATE:
+    if (!sv_eq(a->name, b->name))
+      return false;
+    if (a->data.template.placeholders.len != b->data.template.placeholders.len)
+      return false;
+    for (size_t i = 0; i < a->data.template.placeholders.len; i++) {
+      StringView a_name = *(StringView *)a->data.template.placeholders.items[i];
+      StringView b_name = *(StringView *)b->data.template.placeholders.items[i];
+      if (!sv_eq(a_name, b_name))
+        return false;
+    }
+    return true;
   default:
     return false;
   }
@@ -542,6 +601,12 @@ const char *type_to_name(Type *t) {
     depth--;
     return union_buf;
   }
+  case KIND_TEMPLATE: {
+    static char template_buf[256];
+    snprintf(template_buf, sizeof(template_buf), SV_FMT, SV_ARG(t->name));
+    depth--;
+    return template_buf;
+  }
   default:
     depth--;
     return "complex";
@@ -568,9 +633,73 @@ bool type_is_unknown(Type *t) {
   return t && t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_UNKNOWN;
 }
 
+bool type_is_concrete(Type *t) {
+  if (!t)
+    return false;
+
+  switch (t->kind) {
+  case KIND_PRIMITIVE:
+    return t->data.primitive != PRIM_UNKNOWN;
+  case KIND_POINTER:
+    return type_is_concrete(t->data.pointer_to);
+  case KIND_STRUCT:
+  case KIND_UNION:
+    if (t->data.instance.from_template == NULL)
+      return t->members.len > 0;
+    for (size_t i = 0; i < t->data.instance.generic_args.len; i++) {
+      Type *arg = t->data.instance.generic_args.items[i];
+      if (!type_is_concrete(arg))
+        return false;
+    }
+    for (size_t i = 0; i < t->members.len; i++) {
+      Member *m = t->members.items[i];
+      if (!type_is_concrete(m->type))
+        return false;
+    }
+    return true;
+  case KIND_TEMPLATE:
+    return false;
+  default:
+    return false;
+  }
+}
+
 int type_can_implicitly_cast(Type *to, Type *from) {
   if (type_equals(to, from))
     return 1;
+
+  if (!to || !from)
+    return 0;
+
+  if (to->kind == KIND_TEMPLATE || from->kind == KIND_TEMPLATE)
+    return 1;
+
+  if (to->kind == KIND_STRUCT && from->kind == KIND_STRUCT &&
+      to->data.instance.from_template && from->data.instance.from_template &&
+      to->data.instance.from_template == from->data.instance.from_template) {
+    if (to->fixed_array_len == 0 && from->fixed_array_len != 0) {
+      return 1;
+    }
+    if (to->fixed_array_len != 0 && from->fixed_array_len == 0) {
+      return 0;
+    }
+    if (to->fixed_array_len == from->fixed_array_len) {
+      if (to->data.instance.generic_args.len ==
+          from->data.instance.generic_args.len) {
+        bool all_args_match = true;
+        for (size_t i = 0; i < to->data.instance.generic_args.len; i++) {
+          if (!type_can_implicitly_cast(
+                  to->data.instance.generic_args.items[i],
+                  from->data.instance.generic_args.items[i])) {
+            all_args_match = false;
+            break;
+          }
+        }
+        if (all_args_match)
+          return 1;
+      }
+    }
+  }
 
   // Array (Struct with 'data' field) to Pointer Decay
   if (to->kind == KIND_POINTER && from->kind == KIND_STRUCT) {

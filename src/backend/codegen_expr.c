@@ -97,7 +97,11 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
     // Fail block
     LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
     // Call panic("Panic: Array Index Out of Bounds")
-    CGFunction *panic_fn = cg_find_function(cg, sv_from_parts("panic", 5));
+    CGFunction *panic_fn =
+        cg_find_system_function(cg, sv_from_parts("panic", 5));
+    if (!panic_fn) {
+      panic("Internal error: system panic helper missing");
+    }
     LLVMValueRef msg_ptr = LLVMBuildGlobalStringPtr(
         cg->builder, "Panic: Array Index Out of Bounds", "bounds_err_msg");
     LLVMBuildCall2(cg->builder, panic_fn->type, panic_fn->value,
@@ -118,36 +122,10 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
         cg->builder, cg_get_llvm_type(cg, node->resolved_type), actual_data_ptr,
         (LLVMValueRef[]){index_i64}, 1, "element_ptr");
 
-    // If the element is itself an array struct, we need to "monomorphize" it to
-    // the slice.
+    // If the element is itself an array struct, return its address directly.
+    // The load path will adjust rank/dims as needed for the resulting view.
     if (type_is_array_struct(node->resolved_type)) {
-      // Element is an array struct. We need to load it and fix rank/dims.
-      LLVMValueRef sub_array =
-          LLVMBuildLoad2(cg->builder, cg_get_llvm_type(cg, node->resolved_type),
-                         element_addr, "sub_array_load");
-
-      // new_rank = rank - 1
-      LLVMValueRef new_rank = LLVMBuildSub(
-          cg->builder, rank_val,
-          LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "new_rank");
-      sub_array =
-          LLVMBuildInsertValue(cg->builder, sub_array, new_rank, 3, "set_rank");
-
-      // new_dims = dims + 1
-      LLVMValueRef new_dims = LLVMBuildGEP2(
-          cg->builder, LLVMInt64TypeInContext(cg->context), dims_ptr,
-          (LLVMValueRef[]){
-              LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0)},
-          1, "new_dims_ptr");
-      sub_array =
-          LLVMBuildInsertValue(cg->builder, sub_array, new_dims, 4, "set_dims");
-
-      // Since we need to return an ADDRESS of this struct (if it's an l-value),
-      // we must spill it.
-      LLVMValueRef temp_alloca = cg_alloca_in_entry(
-          cg, node->resolved_type, sv_from_cstr("sub_array_slice"));
-      LLVMBuildStore(cg->builder, sub_array, temp_alloca);
-      return temp_alloca;
+      return element_addr;
     }
 
     return element_addr;
@@ -326,7 +304,10 @@ static LLVMValueRef cg_extract_tagged_union(Codegen *cg, LLVMValueRef union_val,
   LLVMBasicBlockRef ok_bb_end = LLVMGetInsertBlock(cg->builder);
 
   LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
-  CGFunction *panic_fn = cg_find_function(cg, sv_from_parts("panic", 5));
+  CGFunction *panic_fn = cg_find_system_function(cg, sv_from_parts("panic", 5));
+  if (!panic_fn) {
+    panic("Internal error: system panic helper missing");
+  }
   const char *target_name = target_t ? type_to_name(target_t) : "<unknown>";
   const char *union_name = type_to_name(union_t);
   char panic_msg[256];
@@ -521,6 +502,42 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
 
   if (node->tag == NODE_BINARY_ARITH) {
     LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->resolved_type);
+
+    LLVMTypeKind lhs_kind = LLVMGetTypeKind(LLVMTypeOf(lhs));
+    LLVMTypeKind rhs_kind = LLVMGetTypeKind(LLVMTypeOf(rhs));
+
+    if ((lhs_kind == LLVMPointerTypeKind && rhs_kind == LLVMIntegerTypeKind) ||
+        (rhs_kind == LLVMPointerTypeKind && lhs_kind == LLVMIntegerTypeKind)) {
+      LLVMValueRef ptr_val = lhs_kind == LLVMPointerTypeKind ? lhs : rhs;
+      LLVMValueRef int_val = lhs_kind == LLVMIntegerTypeKind ? lhs : rhs;
+
+      Type *ptr_sem_type = lhs_kind == LLVMPointerTypeKind
+                               ? left_node->resolved_type
+                               : right_node->resolved_type;
+      Type *elem_sem_type = NULL;
+      if (ptr_sem_type && ptr_sem_type->kind == KIND_POINTER) {
+        elem_sem_type = ptr_sem_type->data.pointer_to;
+      }
+      LLVMTypeRef elem_ty = elem_sem_type
+                                ? cg_get_llvm_type(cg, elem_sem_type)
+                                : LLVMGetElementType(LLVMTypeOf(ptr_val));
+
+      LLVMValueRef index = cg_cast_value(cg, int_val,
+                                         lhs_kind == LLVMIntegerTypeKind
+                                             ? left_node->resolved_type
+                                             : right_node->resolved_type,
+                                         LLVMInt64TypeInContext(cg->context));
+      if (node->binary_arith.op == OP_ADD) {
+        return LLVMBuildGEP2(cg->builder, elem_ty, ptr_val,
+                             (LLVMValueRef[]){index}, 1, "ptraddtmp");
+      }
+      if (node->binary_arith.op == OP_SUB && lhs_kind == LLVMPointerTypeKind) {
+        LLVMValueRef neg_index = LLVMBuildNeg(cg->builder, index, "negidx");
+        return LLVMBuildGEP2(cg->builder, elem_ty, ptr_val,
+                             (LLVMValueRef[]){neg_index}, 1, "ptrsubtmp");
+      }
+    }
+
     lhs = cg_cast_value(cg, lhs, left_node->resolved_type, target_ty);
     rhs = cg_cast_value(cg, rhs, right_node->resolved_type, target_ty);
     return cg_arith_expr(cg, lhs, rhs, node->binary_arith.op);
@@ -780,6 +797,13 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
     free(args);
   if (param_types)
     free(param_types);
+
+  if (node->resolved_type) {
+    LLVMTypeRef expected_ty = cg_get_llvm_type(cg, node->resolved_type);
+    if (expected_ty != ret_ty) {
+      result = cg_cast_value(cg, result, NULL, expected_ty);
+    }
+  }
   return result;
 }
 

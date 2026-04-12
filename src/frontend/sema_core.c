@@ -115,6 +115,7 @@ void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx) {
 
   s->ret_type = NULL;
   s->fn_node = NULL;
+  s->generic_context_type = NULL;
   s->jump = NULL;
   s->scope = NULL;
   List_init(&s->modules);
@@ -169,11 +170,11 @@ void sema_analyze(Sema *s, AstNode *root) {
         }
       }
     } else if (node->tag == NODE_IMPL_DECL) {
+      StringView owner_name = sv_from_cstr(type_to_name(node->impl_decl.type));
       for (size_t j = 0; j < node->impl_decl.members.len; j++) {
         AstNode *member = node->impl_decl.members.items[j];
         if (member->tag == NODE_FUNC_DECL) {
-          sema_register_method_signature(s, member,
-                                         node->impl_decl.name->var.value);
+          sema_register_method_signature(s, member, owner_name);
         }
       }
     }
