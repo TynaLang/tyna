@@ -289,7 +289,6 @@ void Codegen_global(Codegen *cg, AstNode *ast_root) {
   CGFunction *entry_fn = cg_find_function(cg, sv_from_cstr("__system__main__"));
 
   if (!entry_fn) {
-    Codegen_dump(cg);
     panic("[Codegen_global] Internal error: entry function not found");
   }
 
@@ -326,6 +325,12 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
 
   cg->current_function = entry_func;
   cg->current_function_ref = entry_fn;
+
+  LLVMBasicBlockRef entry_bb = LLVMGetFirstBasicBlock(entry_func);
+  if (!entry_bb) {
+    entry_bb = LLVMAppendBasicBlockInContext(cg->context, entry_func, "entry");
+  }
+  LLVMPositionBuilderAtEnd(cg->builder, entry_bb);
 
   cg_push_scope(cg);
 
