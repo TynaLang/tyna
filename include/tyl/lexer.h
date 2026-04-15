@@ -30,6 +30,7 @@ typedef enum TokenType {
   TOKEN_IMPORT,
   TOKEN_EXPORT,
   TOKEN_EXTERNAL,
+  TOKEN_NEW,
   TOKEN_DEFER,
   TOKEN_STRUCT,
   TOKEN_UNION,
@@ -70,6 +71,7 @@ typedef enum TokenType {
   TOKEN_STRING,
   TOKEN_TRUE,
   TOKEN_FALSE,
+  TOKEN_NULL,
 
   // Symbols
   TOKEN_COLON,

@@ -5,6 +5,7 @@
 #include "codegen_private.h"
 #include "tyl/ast.h"
 #include "tyl/codegen.h"
+#include "tyl/sema.h"
 #include "tyl/utils.h"
 #include "llvm-c/Types.h"
 
@@ -181,6 +182,8 @@ static LLVMTypeRef cg_const_target_type(Codegen *cg, AstNode *node) {
     return LLVMInt8TypeInContext(cg->context);
   case NODE_STRING:
     return cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+  case NODE_NULL:
+    return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
   default:
     panic("cg_const_expr received unknown constant node without resolved type");
   }
@@ -233,9 +236,104 @@ static LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node) {
     LLVMValueRef fields[] = {ptr, len};
     return LLVMConstNamedStruct(target_ty, fields, 2);
   }
+  case NODE_NULL:
+    return LLVMConstNull(target_ty);
   default:
     return NULL;
   }
+}
+
+static Symbol *cg_find_method(Type *type, StringView name) {
+  if (!type)
+    return NULL;
+  for (size_t i = 0; i < type->methods.len; i++) {
+    Symbol *method = type->methods.items[i];
+    if (!method)
+      continue;
+    StringView lookup_name =
+        method->original_name.len ? method->original_name : method->name;
+    if (sv_eq(lookup_name, name))
+      return method;
+  }
+  return NULL;
+}
+
+static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
+  Type *target_type = node->new_expr.target_type;
+  if (!target_type)
+    panic("new expression missing target type");
+
+  LLVMTypeRef ptr_ty =
+      cg_get_llvm_type(cg, type_get_pointer(cg->type_ctx, target_type));
+  CGFunction *malloc_fn = cg_find_function(cg, sv_from_cstr("malloc"));
+  if (!malloc_fn)
+    panic("malloc not found for new expression");
+
+  LLVMValueRef size_arg = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                                       target_type->size, false);
+  LLVMValueRef malloc_args[] = {size_arg};
+  LLVMValueRef raw_ptr =
+      LLVMBuildCall2(cg->builder, malloc_fn->type, malloc_fn->value,
+                     malloc_args, 1, "malloc_res");
+  LLVMValueRef obj_ptr = cg_cast_value(cg, raw_ptr, NULL, ptr_ty);
+
+  if (node->new_expr.args.len > 0) {
+    Symbol *constructor = cg_find_method(target_type, sv_from_cstr("init"));
+    if (!constructor || !constructor->name.data)
+      panic("Missing constructor 'init' for type %s",
+            type_to_name(target_type));
+    CGFunction *fn = cg_find_function(cg, constructor->name);
+    if (!fn)
+      panic("Constructor function not found for %s", type_to_name(target_type));
+
+    unsigned param_count = LLVMCountParams(fn->value);
+    unsigned arg_count = (unsigned)node->new_expr.args.len + 1;
+    LLVMTypeRef *param_types =
+        param_count > 0 ? malloc(sizeof(LLVMTypeRef) * param_count) : NULL;
+    if (param_count > 0)
+      LLVMGetParamTypes(fn->type, param_types);
+
+    LLVMValueRef *args = xmalloc(sizeof(LLVMValueRef) * arg_count);
+    args[0] = obj_ptr;
+    for (unsigned i = 0; i < node->new_expr.args.len; i++) {
+      AstNode *arg_node = node->new_expr.args.items[i];
+      LLVMValueRef arg_val = cg_expression(cg, arg_node);
+      LLVMTypeRef param_ty = param_types[i + 1];
+      args[i + 1] =
+          cg_cast_value(cg, arg_val, arg_node->resolved_type, param_ty);
+    }
+
+    LLVMBuildCall2(cg->builder, fn->type, fn->value, args, arg_count, "");
+    if (param_types)
+      free(param_types);
+    free(args);
+    return obj_ptr;
+  }
+
+  if (node->new_expr.field_inits.len > 0) {
+    LLVMTypeRef struct_ty = cg_get_llvm_type(cg, target_type);
+    for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
+      AstNode *assign = node->new_expr.field_inits.items[i];
+      if (assign->tag != NODE_ASSIGN_EXPR ||
+          assign->assign_expr.target->tag != NODE_VAR) {
+        panic("Invalid struct field initializer in codegen");
+      }
+      StringView field_name = assign->assign_expr.target->var.value;
+      Member *member = type_get_member(target_type, field_name);
+      if (!member)
+        panic("Field '%.*s' not found on type %s", (int)field_name.len,
+              field_name.data, type_to_name(target_type));
+      LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+          cg->builder, struct_ty, obj_ptr, member->index, "field_ptr");
+      LLVMValueRef value = cg_expression(cg, assign->assign_expr.value);
+      LLVMTypeRef field_ty = cg_get_llvm_type(cg, member->type);
+      LLVMValueRef casted = cg_cast_value(
+          cg, value, assign->assign_expr.value->resolved_type, field_ty);
+      LLVMBuildStore(cg->builder, casted, field_ptr);
+    }
+  }
+
+  return obj_ptr;
 }
 
 static LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node) {
@@ -1370,6 +1468,7 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
   case NODE_CHAR:
   case NODE_BOOL:
   case NODE_STRING:
+  case NODE_NULL:
     return cg_const_expr(cg, node);
   case NODE_VAR:
     return cg_var_expr(cg, node);
@@ -1399,6 +1498,8 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
     return cg_cast_expr(cg, node);
   case NODE_CALL:
     return cg_call_expr(cg, node);
+  case NODE_NEW_EXPR:
+    return cg_new_expr(cg, node);
   case NODE_ARRAY_LITERAL:
     return cg_array_literal(cg, node);
   case NODE_ARRAY_REPEAT:

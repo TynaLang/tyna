@@ -52,6 +52,13 @@ static void cg_initiate_system_functions(Codegen *cg) {
   cg_init_CGFunction(f_pow, sv_from_parts("pow", 3), pow_val, pow_type, true);
   List_push(&cg->system_functions, f_pow);
 
+  LLVMTypeRef free_args[] = {LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0)};
+  LLVMTypeRef free_type = LLVMFunctionType(LLVMVoidTypeInContext(cg->context), free_args, 1, false);
+  LLVMValueRef free_val = LLVMAddFunction(cg->module, "free", free_type);
+  CGFunction *f_free = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_free, sv_from_parts("free", 4), free_val, free_type, true);
+  List_push(&cg->system_functions, f_free);
+
   // __tyl_compare_arrays(const FatPtr *a, const FatPtr *b, size_t elem_size)
   LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
   LLVMTypeRef ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
@@ -327,6 +334,7 @@ Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx,
   List_init(&cg->format_strings);
   List_init(&cg->string_pool);
   List_init(&cg->string_globals);
+  List_init(&cg->struct_types_in_progress);
   List_init(&cg->break_stack);
   List_init(&cg->continue_stack);
 

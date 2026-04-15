@@ -26,10 +26,9 @@ static Type *check_builtin_call(Sema *s, AstNode *node) {
                  node->call.args.len);
     } else {
       Type *arg_ty = sema_check_expr(s, node->call.args.items[0]);
-      if (!type_is_array_struct(arg_ty)) {
+      if (!arg_ty || arg_ty->kind != KIND_POINTER) {
         sema_error(s, node->call.args.items[0],
-                   "free() expects an array, got %s",
-                   type_to_name(arg_ty));
+                   "free() expects a pointer, got %s", type_to_name(arg_ty));
       }
     }
     return type_get_primitive(s->types, PRIM_VOID);
@@ -247,11 +246,34 @@ Type *check_call(Sema *s, AstNode *node) {
 
     if (symbol->value && symbol->value->tag == NODE_FUNC_DECL) {
       AstNode *fn_decl = symbol->value;
-      if (node->call.args.len != fn_decl->func_decl.params.len) {
+      size_t param_count = fn_decl->func_decl.params.len;
+      if (node->call.args.len > param_count) {
         sema_error(s, node, "Function '" SV_FMT "' expects %zu args, got %zu",
-                   SV_ARG(name), fn_decl->func_decl.params.len,
-                   node->call.args.len);
+                   SV_ARG(name), param_count, node->call.args.len);
       }
+
+      size_t provided_args = node->call.args.len;
+      if (provided_args < param_count) {
+        bool defaults_ok = true;
+        for (size_t i = provided_args; i < param_count; i++) {
+          AstNode *param_node = fn_decl->func_decl.params.items[i];
+          if (!param_node->param.default_value) {
+            defaults_ok = false;
+            break;
+          }
+        }
+        if (!defaults_ok) {
+          sema_error(s, node, "Function '" SV_FMT "' expects %zu args, got %zu",
+                     SV_ARG(name), param_count, provided_args);
+        } else {
+          for (size_t i = provided_args; i < param_count; i++) {
+            AstNode *param_node = fn_decl->func_decl.params.items[i];
+            AstNode *default_arg = Ast_clone(param_node->param.default_value);
+            List_push(&node->call.args, default_arg);
+          }
+        }
+      }
+
       for (size_t i = 0;
            i < node->call.args.len && i < fn_decl->func_decl.params.len; i++) {
         AstNode *arg_node = node->call.args.items[i];

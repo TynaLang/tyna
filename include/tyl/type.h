@@ -96,6 +96,8 @@ Type *type_get_template(TypeContext *ctx, StringView name);
 Type *type_get_instance(TypeContext *ctx, Type *template_type, List args);
 Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
                               uint64_t fixed_array_len);
+Type *type_get_array(TypeContext *ctx, Type *element_type,
+                     uint64_t fixed_array_len);
 Type *type_resolve_placeholders(TypeContext *ctx, Type *blueprint,
                                 Type *template_type, List args);
 

@@ -1,0 +1,25 @@
+struct Node {
+    val: int;
+    next: *Node;
+}
+
+impl Node {
+    fn init(self: *Node, v: i32, next: *Node = null) {
+        self.val = v;
+        self.next = next;
+    }
+}
+
+fn main() {
+    let p: *Node = new Node { 
+        val: 42,
+        next: null
+    };
+
+    print(p.val);
+    print(p.next == null);
+
+    let q: *Node = new Node(43, p);
+    print(q.val);
+    print(q.next == p);
+}

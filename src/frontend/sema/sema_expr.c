@@ -86,6 +86,7 @@ Type *sema_check_expr(Sema *s, AstNode *node) {
   case NODE_CHAR:
   case NODE_STRING:
   case NODE_BOOL:
+  case NODE_NULL:
     type = check_literal(s, node);
     break;
 
@@ -117,6 +118,9 @@ Type *sema_check_expr(Sema *s, AstNode *node) {
 
   case NODE_CALL:
     type = check_call(s, node);
+    break;
+  case NODE_NEW_EXPR:
+    type = check_new_expr(s, node);
     break;
   case NODE_ARRAY_LITERAL:
     type = check_array_expr(s, node);

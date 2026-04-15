@@ -337,6 +337,20 @@ Type *type_get_instance(TypeContext *ctx, Type *template_type, List args) {
   return type_get_instance_fixed(ctx, template_type, args, 0);
 }
 
+Type *type_get_array(TypeContext *ctx, Type *element_type,
+                     uint64_t fixed_array_len) {
+  Type *array_template = type_get_template(ctx, sv_from_parts("Array", 5));
+  if (!array_template)
+    return NULL;
+  List args;
+  List_init(&args);
+  List_push(&args, element_type);
+  Type *result = type_get_instance_fixed(ctx, array_template, args,
+                                         fixed_array_len);
+  List_free(&args, 0);
+  return result;
+}
+
 Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
                               uint64_t fixed_array_len) {
   // Check if instance already exists
@@ -713,9 +727,19 @@ int type_can_implicitly_cast(Type *to, Type *from) {
     return to->size >= from->size;
   }
   // Pointer to void* is usually allowed
-  if (to->kind == KIND_POINTER && to->data.pointer_to->kind == KIND_PRIMITIVE &&
+  if (to->kind == KIND_POINTER &&
+      to->data.pointer_to->kind == KIND_PRIMITIVE &&
       to->data.pointer_to->data.primitive == PRIM_VOID)
     return 1;
+
+  if (to->kind == KIND_POINTER && from->kind == KIND_POINTER) {
+    if (type_is_unknown(to->data.pointer_to) ||
+        type_is_unknown(from->data.pointer_to))
+      return 1;
+    if (from->data.pointer_to->kind == KIND_PRIMITIVE &&
+        from->data.pointer_to->data.primitive == PRIM_VOID)
+      return 1;
+  }
 
   if (to->kind == KIND_UNION && to->is_tagged_union) {
     for (size_t i = 0; i < to->members.len; i++) {

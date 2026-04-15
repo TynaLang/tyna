@@ -12,7 +12,7 @@ void Parser_sync_param(Parser *p);
 void skip_to_next_param(Parser *p);
 int is_type_token(TokenType t);
 int is_binary_operator(TokenType t);
-int is_postfix(Token t);
+int Parser_is_postfix(Parser *p);
 ArithmOp token_to_arithm_op(TokenType type);
 CompareOp token_to_compare_op(TokenType type);
 EqualityOp token_to_equality_op(TokenType type);
@@ -41,7 +41,7 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export);
 AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export);
 AstNode *Parser_parse_impl_decl(Parser *p);
 
-AstNode *Parser_parse_call(Parser *p, AstNode *expr);
+AstNode *Parser_parse_call(Parser *p, AstNode *expr, List generic_args);
 AstNode *Parser_parse_index(Parser *p, AstNode *expr);
 AstNode *Parser_parse_field(Parser *p, AstNode *expr);
 AstNode *Parser_parse_postfix_inc(Parser *p, AstNode *expr);

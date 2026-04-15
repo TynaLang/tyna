@@ -1,5 +1,38 @@
 #include "sema_internal.h"
 
+static bool type_has_nonpointer_recursive(Type *root, Type *t, List *seen) {
+  if (!t)
+    return false;
+
+  if (t->kind == KIND_POINTER)
+    return false;
+
+  if (t == root)
+    return true;
+
+  if (t->kind == KIND_PRIMITIVE || t->kind == KIND_TEMPLATE)
+    return false;
+
+  for (size_t i = 0; i < seen->len; i++) {
+    if (seen->items[i] == t)
+      return false;
+  }
+
+  List_push(seen, t);
+  bool result = false;
+  if (t->kind == KIND_STRUCT || t->kind == KIND_UNION) {
+    for (size_t i = 0; i < t->members.len; i++) {
+      Member *m = t->members.items[i];
+      if (type_has_nonpointer_recursive(root, m->type, seen)) {
+        result = true;
+        break;
+      }
+    }
+  }
+  List_pop(seen);
+  return result;
+}
+
 void sema_check_struct_decl(Sema *s, AstNode *node) {
   StringView name = node->struct_decl.name->var.value;
   Symbol *existing = sema_resolve(s, name);
@@ -87,6 +120,18 @@ void sema_check_struct_decl(Sema *s, AstNode *node) {
       free(c_mem_name);
       continue;
     }
+
+    List visited;
+    List_init(&visited);
+    if (type_has_nonpointer_recursive(t, mem_type, &visited)) {
+      sema_error(s, mem,
+                 "Recursive value field type '%s' in struct '%s' is not allowed",
+                 type_to_name(mem_type), type_to_name(t));
+      List_free(&visited, 0);
+      free(c_mem_name);
+      continue;
+    }
+    List_free(&visited, 0);
 
     offset = align_to(offset, align);
     type_add_member(t, c_mem_name, mem_type, offset);

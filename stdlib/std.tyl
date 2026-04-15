@@ -11,6 +11,7 @@ external fn __tyl_str_intern(s: str): str;
 external fn __tyl_str_to_array(out: ptr<Array<char>>, src: ptr<String>): void;
 external fn __tyl_array_to_str(out: ptr<String>, arr: ptr<Array<char>>): void;
 external fn __tyl_array_clone_dims(rank: i64, dims: ptr<i64>): ptr<i64>;
+external fn malloc(size: i64): ptr<void>;
 external fn panic(message: str): void;
 
 impl String {

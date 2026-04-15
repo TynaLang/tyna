@@ -42,20 +42,9 @@ Type *check_unary(Sema *s, AstNode *node) {
           type_to_name(operand_type));
       return type_get_primitive(s->types, PRIM_UNKNOWN);
     }
-    if (node->unary.expr->tag == NODE_VAR) {
-      Symbol *sym = sema_resolve(s, node->unary.expr->var.value);
-      if (sym && sym->is_const) {
-        sema_error(s, node, "Cannot increment/decrement constant '" SV_FMT "'",
-                   SV_ARG(sym->name));
-      }
-    } else if (node->unary.expr->tag == NODE_INDEX) {
-#ifdef TYNA_TEST_PRIMITIVES_ONLY
-      Type *arr_type = node->unary.expr->index.array->resolved_type;
-      if (arr_type && arr_type->kind == KIND_PRIMITIVE &&
-          arr_type->data.primitive == PRIM_STRING) {
-        sema_error(s, node, "Strings in tyl are immutable");
-      }
-#endif
+    if (!type_is_writable(s, node->unary.expr)) {
+      sema_error(s, node, "Cannot increment/decrement read-only l-value");
+      return type_get_primitive(s->types, PRIM_UNKNOWN);
     }
     return operand_type;
   }

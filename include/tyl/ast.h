@@ -38,6 +38,7 @@ enum AstKind {
   NODE_CHAR,
   NODE_BOOL,
   NODE_STRING,
+  NODE_NULL,
   NODE_VAR,
 
   NODE_BINARY_ARITH,
@@ -66,6 +67,7 @@ enum AstKind {
   NODE_UNION_DECL,
   NODE_IMPL_DECL,
   NODE_IMPORT,
+  NODE_NEW_EXPR,
 
   NODE_ARRAY_LITERAL,
   NODE_ARRAY_REPEAT,
@@ -224,8 +226,15 @@ struct AstNode {
 
     struct {
       AstNode *func;
-      List args; // List<AstNode*> for call arguments
+      List args;         // List<AstNode*> for call arguments
+      List generic_args; // List<Type*> for generic type arguments
     } call;
+
+    struct {
+      Type *target_type;
+      List args;        // List<AstNode*>
+      List field_inits; // List<AstNode* (NODE_ASSIGN_EXPR with var target)>
+    } new_expr;
 
     struct {
       AstNode *expr; // Optional
@@ -234,6 +243,7 @@ struct AstNode {
     struct {
       AstNode *name;
       Type *type;
+      AstNode *default_value;
     } param;
 
     struct {
@@ -316,6 +326,9 @@ AstNode *AstNode_new_number(double value, StringView raw_text, Location loc);
 AstNode *AstNode_new_char(char value, Location loc);
 AstNode *AstNode_new_bool(int value, Location loc);
 AstNode *AstNode_new_string(StringView value, Location loc);
+AstNode *AstNode_new_null(Location loc);
+AstNode *AstNode_new_new_expr(Type *target_type, List args, List field_inits,
+                              Location loc);
 
 AstNode *AstNode_new_var(StringView value, Location loc);
 AstNode *AstNode_new_array_literal(List items, Location loc);

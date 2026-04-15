@@ -116,13 +116,15 @@ Type *check_literal(Sema *s, AstNode *node) {
   case NODE_CHAR:
     return type_get_primitive(s->types, PRIM_CHAR);
 
-#ifndef TYNA_TEST_PRIMITIVES_ONLY
   case NODE_STRING:
     return type_get_primitive(s->types, PRIM_STRING);
-#endif
 
   case NODE_BOOL:
     return type_get_primitive(s->types, PRIM_BOOL);
+
+  case NODE_NULL:
+    return type_get_pointer(s->types,
+                            type_get_primitive(s->types, PRIM_UNKNOWN));
 
   default:
     return type_get_primitive(s->types, PRIM_UNKNOWN);

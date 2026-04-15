@@ -1,6 +1,59 @@
 #include "parser_internal.h"
 
-AstNode *Parser_parse_call(Parser *p, AstNode *expr) {
+static bool Parser_is_generic_call_start(Parser *p) {
+  if (p->current_token.type != TOKEN_LT)
+    return false;
+
+  int depth = 0;
+  int lookahead = 1;
+  while (true) {
+    Token t = Parser_token_peek(p->lexer, lookahead++);
+    if (t.type == TOKEN_EOF)
+      return false;
+    if (t.type == TOKEN_LT) {
+      depth++;
+    } else if (t.type == TOKEN_GT) {
+      if (depth == 0)
+        break;
+      depth--;
+    }
+  }
+
+  Token next = Parser_token_peek(p->lexer, lookahead);
+  return next.type == TOKEN_LPAREN;
+}
+
+static List Parser_parse_generic_type_args(Parser *p) {
+  List generic_args;
+  List_init(&generic_args);
+
+  if (!Parser_expect(p, TOKEN_LT, "Expected '<' to start generic arguments"))
+    return generic_args;
+
+  while (true) {
+    Type *arg_type = Parser_parse_type_full(p);
+    if (!arg_type) {
+      List_free(&generic_args, 0);
+      return generic_args;
+    }
+    List_push(&generic_args, arg_type);
+
+    if (p->current_token.type == TOKEN_COMMA) {
+      Parser_token_advance(p);
+      continue;
+    }
+    break;
+  }
+
+  if (!Parser_expect(p, TOKEN_GT, "Expected '>' after generic arguments")) {
+    List_free(&generic_args, 0);
+    return generic_args;
+  }
+
+  return generic_args;
+}
+
+AstNode *Parser_parse_call(Parser *p, AstNode *expr, List generic_args) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p);
   List args;
@@ -22,7 +75,9 @@ AstNode *Parser_parse_call(Parser *p, AstNode *expr) {
   if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after arguments"))
     return NULL;
 
-  return AstNode_new_call(expr, args, loc);
+  AstNode *node = AstNode_new_call(expr, args, loc);
+  node->call.generic_args = generic_args;
+  return node;
 }
 
 AstNode *Parser_parse_index(Parser *p, AstNode *expr) {
@@ -68,7 +123,13 @@ AstNode *Parser_parse_postfix_inc(Parser *p, AstNode *expr) {
 AstNode *Parser_make_postfix(Parser *p, AstNode *expr) {
   switch (p->current_token.type) {
   case TOKEN_LPAREN:
-    return Parser_parse_call(p, expr);
+    return Parser_parse_call(p, expr, (List){0});
+  case TOKEN_LT:
+    if (Parser_is_generic_call_start(p)) {
+      List generic_args = Parser_parse_generic_type_args(p);
+      return Parser_parse_call(p, expr, generic_args);
+    }
+    return expr;
   case TOKEN_LBRACKET:
     return Parser_parse_index(p, expr);
   case TOKEN_DOT:
@@ -79,6 +140,72 @@ AstNode *Parser_make_postfix(Parser *p, AstNode *expr) {
   default:
     return expr;
   }
+}
+
+static AstNode *Parser_parse_new_expr(Parser *p) {
+  Location loc = p->current_token.loc;
+
+  Type *target_type = Parser_parse_type_full(p);
+  if (!target_type)
+    return NULL;
+
+  List args;
+  List_init(&args);
+  List field_inits;
+  List_init(&field_inits);
+
+  if (p->current_token.type == TOKEN_LPAREN) {
+    Parser_token_advance(p);
+    if (p->current_token.type != TOKEN_RPAREN) {
+      while (1) {
+        AstNode *arg = Parser_parse_expression(p, 0);
+        if (!arg)
+          return NULL;
+        List_push(&args, arg);
+        if (p->current_token.type == TOKEN_COMMA)
+          Parser_token_advance(p);
+        else
+          break;
+      }
+    }
+    if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after constructor args"))
+      return NULL;
+  } else if (p->current_token.type == TOKEN_LBRACE) {
+    Parser_token_advance(p);
+    while (p->current_token.type != TOKEN_RBRACE &&
+           p->current_token.type != TOKEN_EOF) {
+      if (p->current_token.type != TOKEN_IDENT) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected field name in struct literal");
+        return NULL;
+      }
+      StringView field_name = p->current_token.text;
+      Location field_loc = p->current_token.loc;
+      Parser_token_advance(p);
+      if (!Parser_expect(p, TOKEN_COLON,
+                         "Expected ':' after struct field name"))
+        return NULL;
+      AstNode *value = Parser_parse_expression(p, 0);
+      if (!value)
+        return NULL;
+      AstNode *field_target = AstNode_new_var(field_name, field_loc);
+      AstNode *assign = AstNode_new_assign_expr(field_target, value, field_loc);
+      List_push(&field_inits, assign);
+      if (p->current_token.type == TOKEN_COMMA)
+        Parser_token_advance(p);
+      else
+        break;
+    }
+    if (!Parser_expect(p, TOKEN_RBRACE,
+                       "Expected '}' at end of struct literal"))
+      return NULL;
+  } else {
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Expected '(' or '{' after 'new' type");
+    return NULL;
+  }
+
+  return AstNode_new_new_expr(target_type, args, field_inits, loc);
 }
 
 AstNode *Parser_parse_primary(Parser *p) {
@@ -105,6 +232,10 @@ AstNode *Parser_parse_primary(Parser *p) {
     return AstNode_new_bool(1, t.loc);
   case TOKEN_FALSE:
     return AstNode_new_bool(0, t.loc);
+  case TOKEN_NULL:
+    return AstNode_new_null(t.loc);
+  case TOKEN_NEW:
+    return Parser_parse_new_expr(p);
 
   case TOKEN_LPAREN: {
     Token peek = p->current_token;
@@ -233,7 +364,7 @@ AstNode *Parser_parse_expression(Parser *p, int min_bp) {
   while (1) {
     Token op = p->current_token;
 
-    if (is_postfix(op)) {
+    if (Parser_is_postfix(p)) {
       if (100 < min_bp)
         break;
       left = Parser_make_postfix(p, left);

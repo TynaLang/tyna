@@ -1,0 +1,4 @@
+struct Node {
+    val: Node;
+    help: int;
+}

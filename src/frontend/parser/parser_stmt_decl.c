@@ -86,7 +86,17 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
       continue;
     }
 
-    List_push(&params, AstNode_new_param(param_name_node, param_type, p_loc));
+    AstNode *default_value = NULL;
+    if (p->current_token.type == TOKEN_ASSIGN) {
+      Parser_token_advance(p);
+      default_value = Parser_parse_expression(p, 0);
+      if (!default_value)
+        return NULL;
+    }
+
+    AstNode *param_node = AstNode_new_param(param_name_node, param_type, p_loc);
+    param_node->param.default_value = default_value;
+    List_push(&params, param_node);
     if (p->current_token.type == TOKEN_COMMA)
       Parser_token_advance(p);
   }

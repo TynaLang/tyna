@@ -81,6 +81,8 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
       }
       return str_ty;
     }
+    case PRIM_UNKNOWN:
+      return LLVMInt8TypeInContext(cg->context);
     default:
       panic("Unknown primitive kind: %d", t->data.primitive);
     }
@@ -91,8 +93,8 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
       panic("cg_get_llvm_type received pointer type with NULL target");
     }
     LLVMTypeRef pointee = cg_get_llvm_type(cg, t->data.pointer_to);
-    if (!pointee) {
-      // Generic placeholder pointer; lower as i8* to avoid LLVM crashes.
+    if (!pointee || LLVMGetTypeKind(pointee) == LLVMVoidTypeKind) {
+      // Lower void* and generic placeholder pointers as i8*
       pointee = LLVMInt8TypeInContext(cg->context);
     }
     return LLVMPointerType(pointee, 0);
@@ -153,6 +155,12 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     }
 
     if (LLVMIsOpaqueStruct(struct_ty)) {
+      for (size_t i = 0; i < cg->struct_types_in_progress.len; i++) {
+        if (cg->struct_types_in_progress.items[i] == t)
+          return struct_ty;
+      }
+
+      List_push(&cg->struct_types_in_progress, t);
       unsigned count = t->members.len;
       LLVMTypeRef *fields =
           xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
@@ -162,6 +170,7 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
       }
       LLVMStructSetBody(struct_ty, fields, count, false);
       free(fields);
+      List_pop(&cg->struct_types_in_progress);
     }
     return struct_ty;
   }

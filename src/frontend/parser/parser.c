@@ -80,6 +80,29 @@ int is_type_token(TokenType t) {
          t == TOKEN_STAR;
 }
 
+static bool Parser_is_generic_call_start(Parser *p) {
+  if (p->current_token.type != TOKEN_LT)
+    return false;
+
+  int depth = 0;
+  int lookahead = 1;
+  while (true) {
+    Token t = Parser_token_peek(p->lexer, lookahead++);
+    if (t.type == TOKEN_EOF)
+      return false;
+    if (t.type == TOKEN_LT) {
+      depth++;
+    } else if (t.type == TOKEN_GT) {
+      if (depth == 0)
+        break;
+      depth--;
+    }
+  }
+
+  Token next = Parser_token_peek(p->lexer, lookahead);
+  return next.type == TOKEN_LPAREN;
+}
+
 int is_binary_operator(TokenType t) {
   switch (t) {
   case TOKEN_ASSIGN:
@@ -104,10 +127,15 @@ int is_binary_operator(TokenType t) {
   }
 }
 
-int is_postfix(Token t) {
-  return t.type == TOKEN_LPAREN || t.type == TOKEN_LBRACKET ||
-         t.type == TOKEN_DOT || t.type == TOKEN_PLUS_PLUS ||
-         t.type == TOKEN_MINUS_MINUS;
+int Parser_is_postfix(Parser *p) {
+  Token t = p->current_token;
+  if (t.type == TOKEN_LPAREN || t.type == TOKEN_LBRACKET ||
+      t.type == TOKEN_DOT || t.type == TOKEN_PLUS_PLUS ||
+      t.type == TOKEN_MINUS_MINUS)
+    return 1;
+  if (t.type == TOKEN_LT)
+    return Parser_is_generic_call_start(p);
+  return 0;
 }
 
 ArithmOp token_to_arithm_op(TokenType type) {

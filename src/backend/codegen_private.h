@@ -46,6 +46,7 @@ struct Codegen {
   List system_functions; // printf, pow, etc.
 
   List string_pool; // List<char*>
+  List struct_types_in_progress; // Type* values being lowered to LLVM
 
   List string_globals; // List<LLVMValueRef>
 

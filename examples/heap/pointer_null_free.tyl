@@ -1,0 +1,16 @@
+fn pass_through(ptr: ptr<i64>): ptr<i64> {
+    return ptr;
+}
+
+fn main() {
+    let p: ptr<i64> = malloc(8);
+    *p = 123;
+    print(*p);
+
+    let q: ptr<i64> = null;
+    print(q == null);
+
+    p = pass_through(p);
+    free(p);
+    print(p == null);
+}

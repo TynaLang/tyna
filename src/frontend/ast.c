@@ -59,9 +59,23 @@ AstNode *AstNode_new_string(StringView value, Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_null(Location loc) {
+  AstNode *node = AstNode_new(NODE_NULL, loc);
+  return node;
+}
+
 AstNode *AstNode_new_var(StringView value, Location loc) {
   AstNode *node = AstNode_new(NODE_VAR, loc);
   node->var.value = value;
+  return node;
+}
+
+AstNode *AstNode_new_new_expr(Type *target_type, List args, List field_inits,
+                              Location loc) {
+  AstNode *node = AstNode_new(NODE_NEW_EXPR, loc);
+  node->new_expr.target_type = target_type;
+  node->new_expr.args = args;
+  node->new_expr.field_inits = field_inits;
   return node;
 }
 
@@ -139,6 +153,7 @@ AstNode *AstNode_new_call(AstNode *func, List args, Location loc) {
   AstNode *node = AstNode_new(NODE_CALL, loc);
   node->call.func = func;
   node->call.args = args;
+  List_init(&node->call.generic_args);
   return node;
 }
 
@@ -166,6 +181,7 @@ AstNode *AstNode_new_param(AstNode *name, Type *type, Location loc) {
   AstNode *node = AstNode_new(NODE_PARAM, loc);
   node->param.name = name;
   node->param.type = type;
+  node->param.default_value = NULL;
   return node;
 }
 
@@ -349,8 +365,11 @@ void Ast_free(AstNode *node) {
   case NODE_STRING:
   case NODE_VAR:
   case NODE_STATIC_MEMBER:
-  case NODE_PARAM:
     // These nodes have no pointers
+    break;
+  case NODE_PARAM:
+    Ast_free(node->param.name);
+    Ast_free(node->param.default_value);
     break;
   case NODE_AST_ROOT:
     for (size_t i = 0; i < node->ast_root.children.len; i++) {
@@ -408,6 +427,18 @@ void Ast_free(AstNode *node) {
       Ast_free((AstNode *)node->call.args.items[i]);
     }
     List_free(&node->call.args, 0);
+    List_free(&node->call.generic_args, 0);
+    break;
+
+  case NODE_NEW_EXPR:
+    for (size_t i = 0; i < node->new_expr.args.len; i++) {
+      Ast_free((AstNode *)node->new_expr.args.items[i]);
+    }
+    List_free(&node->new_expr.args, 0);
+    for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
+      Ast_free((AstNode *)node->new_expr.field_inits.items[i]);
+    }
+    List_free(&node->new_expr.field_inits, 0);
     break;
   case NODE_FUNC_DECL:
     for (size_t i = 0; i < node->func_decl.params.len; i++) {
@@ -561,6 +592,9 @@ AstNode *Ast_clone(AstNode *node) {
     copy->string = node->string;
     break;
 
+  case NODE_NULL:
+    break;
+
   case NODE_VAR:
     copy->var = node->var;
     break;
@@ -610,6 +644,20 @@ AstNode *Ast_clone(AstNode *node) {
     List_init(&copy->call.args);
     for (size_t i = 0; i < node->call.args.len; i++)
       List_push(&copy->call.args, Ast_clone(node->call.args.items[i]));
+    List_init(&copy->call.generic_args);
+    for (size_t i = 0; i < node->call.generic_args.len; i++)
+      List_push(&copy->call.generic_args, node->call.generic_args.items[i]);
+    break;
+
+  case NODE_NEW_EXPR:
+    copy->new_expr.target_type = node->new_expr.target_type;
+    List_init(&copy->new_expr.args);
+    for (size_t i = 0; i < node->new_expr.args.len; i++)
+      List_push(&copy->new_expr.args, Ast_clone(node->new_expr.args.items[i]));
+    List_init(&copy->new_expr.field_inits);
+    for (size_t i = 0; i < node->new_expr.field_inits.len; i++)
+      List_push(&copy->new_expr.field_inits,
+                Ast_clone(node->new_expr.field_inits.items[i]));
     break;
 
   case NODE_RETURN_STMT:
@@ -619,6 +667,7 @@ AstNode *Ast_clone(AstNode *node) {
   case NODE_PARAM:
     copy->param.name = Ast_clone(node->param.name);
     copy->param.type = node->param.type;
+    copy->param.default_value = Ast_clone(node->param.default_value);
     break;
 
   case NODE_BLOCK:
@@ -1089,6 +1138,23 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
     print_indent(indent + 1);
     printf("INDEX:\n");
     Ast_print(node->index.index, indent + 2);
+    break;
+  case NODE_NEW_EXPR:
+    printf("NEW_EXPR: %s\n", type_to_name(node->new_expr.target_type));
+    if (node->new_expr.args.len > 0) {
+      print_indent(indent + 1);
+      printf("ARGS:\n");
+      for (size_t i = 0; i < node->new_expr.args.len; i++) {
+        Ast_print(node->new_expr.args.items[i], indent + 2);
+      }
+    }
+    if (node->new_expr.field_inits.len > 0) {
+      print_indent(indent + 1);
+      printf("FIELD_INITS:\n");
+      for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
+        Ast_print(node->new_expr.field_inits.items[i], indent + 2);
+      }
+    }
     break;
   case NODE_FIELD:
     printf("FIELD_ACCESS: " SV_FMT "\n", SV_ARG(node->field.field));

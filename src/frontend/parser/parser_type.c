@@ -49,12 +49,8 @@ Type *Parser_parse_type_full(Parser *p) {
       return NULL;
     }
 
-    List args;
-    List_init(&args);
-    List_push(&args, elementType);
-    res = type_get_instance_fixed(p->type_ctx, array_template, args,
-                                  (uint64_t)array_len);
-    List_free(&args, 0);
+    res = type_get_array(p->type_ctx, elementType,
+                        has_fixed_length ? (uint64_t)array_len : 0);
   } else {
     PrimitiveKind kind = Token_token_to_type(p->current_token.type);
     if (kind != PRIM_UNKNOWN) {

@@ -32,6 +32,7 @@ Type *check_binary_logical(Sema *s, AstNode *node);
 Type *check_assignment(Sema *s, AstNode *node);
 Type *check_cast(Sema *s, AstNode *node);
 Type *check_ternary(Sema *s, AstNode *node);
+Type *check_new_expr(Sema *s, AstNode *node);
 
 // Sema Stmt
 void sema_scope_push(Sema *s);
