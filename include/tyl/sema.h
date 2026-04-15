@@ -32,6 +32,12 @@ typedef enum {
   SYM_MODULE,
 } SymbolKind;
 
+typedef enum {
+  BUILTIN_NONE,
+  BUILTIN_TYPEOF,
+  BUILTIN_FREE,
+} BuiltinKind;
+
 struct Symbol {
   StringView name;
   StringView original_name;
@@ -44,6 +50,7 @@ struct Symbol {
   struct SemaScope *scope;
   FuncStatus func_status;
   SymbolKind kind;
+  BuiltinKind builtin_kind;
   struct Module *module; // for SYM_MODULE symbols
 };
 

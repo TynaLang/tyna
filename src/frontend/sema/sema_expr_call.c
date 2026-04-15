@@ -1,9 +1,53 @@
 #include "sema_internal.h"
 
+static Type *check_builtin_call(Sema *s, AstNode *node) {
+  if (!node || !node->call.func || node->call.func->tag != NODE_VAR) {
+    return NULL;
+  }
+
+  Symbol *symbol = sema_resolve(s, node->call.func->var.value);
+  if (!symbol || symbol->builtin_kind == BUILTIN_NONE) {
+    return NULL;
+  }
+
+  switch (symbol->builtin_kind) {
+  case BUILTIN_TYPEOF:
+    if (node->call.args.len != 1) {
+      sema_error(s, node, "typeof() expects 1 argument, got %zu",
+                 node->call.args.len);
+    } else {
+      sema_check_expr(s, node->call.args.items[0]);
+    }
+    return type_get_primitive(s->types, PRIM_STRING);
+
+  case BUILTIN_FREE:
+    if (node->call.args.len != 1) {
+      sema_error(s, node, "free() expects 1 argument, got %zu",
+                 node->call.args.len);
+    } else {
+      Type *arg_ty = sema_check_expr(s, node->call.args.items[0]);
+      if (!type_is_array_struct(arg_ty)) {
+        sema_error(s, node->call.args.items[0],
+                   "free() expects an array, got %s",
+                   type_to_name(arg_ty));
+      }
+    }
+    return type_get_primitive(s->types, PRIM_VOID);
+
+  default:
+    return type_get_primitive(s->types, PRIM_UNKNOWN);
+  }
+}
+
 Type *check_call(Sema *s, AstNode *node) {
   if (!node || !node->call.func) {
     sema_error(s, node, "Invalid function call expression");
     return type_get_primitive(s->types, PRIM_UNKNOWN);
+  }
+
+  Type *builtin_type = check_builtin_call(s, node);
+  if (builtin_type) {
+    return builtin_type;
   }
 
   if (node->call.func->tag == NODE_FIELD) {
@@ -194,22 +238,6 @@ Type *check_call(Sema *s, AstNode *node) {
 
   if (node->call.func->tag == NODE_VAR) {
     StringView name = node->call.func->var.value;
-#ifdef TYNA_TEST_PRIMITIVES_ONLY
-    if (sv_eq(name, sv_from_parts("free", 4))) {
-      if (node->call.args.len != 1) {
-        sema_error(s, node, "free() expects 1 argument, got %zu",
-                   node->call.args.len);
-      } else {
-        Type *arg_ty = sema_check_expr(s, node->call.args.items[0]);
-        if (!type_is_array_struct(arg_ty)) {
-          sema_error(s, node->call.args.items[0],
-                     "free() expects an array, got %s", type_to_name(arg_ty));
-        }
-      }
-      return type_get_primitive(s->types, PRIM_VOID);
-    }
-#endif
-
     Symbol *symbol = sema_resolve(s, name);
     if (!symbol) {
       sema_error(s, node, "Call to undefined function '" SV_FMT "'",

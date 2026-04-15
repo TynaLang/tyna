@@ -16,7 +16,9 @@ Type *Parser_parse_type_full(Parser *p) {
       return NULL;
 
     size_t array_len = 0;
+    bool has_fixed_length = false;
     if (p->current_token.type == TOKEN_SEMI) {
+      has_fixed_length = true;
       Parser_token_advance(p);
       AstNode *len_expr = Parser_parse_expression(p, 0);
       if (!len_expr || len_expr->tag != NODE_NUMBER ||
@@ -33,7 +35,7 @@ Type *Parser_parse_type_full(Parser *p) {
     if (!Parser_expect(p, TOKEN_RBRACKET, "Expected ']' for array type"))
       return NULL;
 
-    if (array_len == 0) {
+    if (has_fixed_length && array_len == 0) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Fixed array length must be greater than zero");
       return NULL;

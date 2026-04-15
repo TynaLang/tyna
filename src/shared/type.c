@@ -545,7 +545,7 @@ const char *type_to_name(Type *t) {
     case PRIM_VOID:
       return "void";
     case PRIM_STRING:
-      return "string";
+      return "str";
     default:
       return "primitive";
     }

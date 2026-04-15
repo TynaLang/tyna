@@ -186,6 +186,24 @@ static LLVMTypeRef cg_const_target_type(Codegen *cg, AstNode *node) {
   }
 }
 
+static LLVMValueRef cg_typeof_string(Codegen *cg, Type *type) {
+  const char *type_name = type_to_name(type);
+  StringView name_sv = sv_from_cstr(type_name);
+  size_t pool_idx = cg_string_pool_insert(cg, name_sv);
+  LLVMValueRef const_str_global = cg->string_globals.items[pool_idx];
+  LLVMValueRef zero =
+      LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, false);
+  LLVMValueRef indices[] = {zero, zero};
+  LLVMValueRef ptr = LLVMConstInBoundsGEP2(LLVMInt8TypeInContext(cg->context),
+                                           const_str_global, indices, 2);
+  LLVMTypeRef string_ty =
+      cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+  LLVMValueRef len =
+      LLVMConstInt(LLVMInt64TypeInContext(cg->context), name_sv.len, false);
+  LLVMValueRef fields[] = {ptr, len};
+  return LLVMConstNamedStruct(string_ty, fields, 2);
+}
+
 static LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node) {
   LLVMTypeRef target_ty = cg_const_target_type(cg, node);
 
@@ -831,6 +849,17 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
   if (node->call.func->tag != NODE_VAR)
     panic("Function calls must be by name");
   StringView fn_name = node->call.func->var.value;
+  if (sv_eq(fn_name, sv_from_cstr("typeof"))) {
+    Type *arg_type = NULL;
+    if (node->call.args.len > 0) {
+      AstNode *arg_node = node->call.args.items[0];
+      arg_type = arg_node->resolved_type;
+    }
+    if (!arg_type)
+      arg_type = type_get_primitive(cg->type_ctx, PRIM_UNKNOWN);
+    return cg_typeof_string(cg, arg_type);
+  }
+
   CGFunction *fn = cg_find_function(cg, fn_name);
   if (!fn)
     panic("Call to undefined function '" SV_FMT "'", SV_ARG(fn_name));

@@ -100,11 +100,31 @@ Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
   sym->value = NULL;
   sym->func_status = FUNC_NONE;
   sym->kind = SYM_VAR; // Default to SYM_VAR
+  sym->builtin_kind = BUILTIN_NONE;
   sym->scope = s->scope;
   sym->module = NULL;
 
   List_push(&s->scope->symbols, sym);
   return sym;
+}
+
+Symbol *sema_define_builtin(Sema *s, StringView name, Type *type,
+                            BuiltinKind builtin_kind) {
+  Symbol *sym = sema_define(s, name, type, true, (Location){0, 0});
+  if (!sym)
+    return NULL;
+  sym->kind = SYM_FUNC;
+  sym->builtin_kind = builtin_kind;
+  return sym;
+}
+
+static void sema_register_builtins(Sema *s) {
+  sema_define_builtin(s, sv_from_parts("typeof", 6),
+                      type_get_primitive(s->types, PRIM_STRING),
+                      BUILTIN_TYPEOF);
+  sema_define_builtin(s, sv_from_parts("free", 4),
+                      type_get_primitive(s->types, PRIM_VOID),
+                      BUILTIN_FREE);
 }
 
 //  ----- External -----
@@ -124,6 +144,7 @@ void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx) {
   s->entry_dir = NULL;
 
   sema_scope_push(s);
+  sema_register_builtins(s);
 }
 
 static void sema_check_function_bodies(Sema *s, AstNode *node) {

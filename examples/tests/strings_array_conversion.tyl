@@ -1,4 +1,5 @@
 let s: String = "Hello";
-let arr = s.to_array();
+let arr: [char] = s.to_array();
+print("arr is of type: ", typeof(arr));
 let restored: String = String::from_array(arr);
 print(restored);
