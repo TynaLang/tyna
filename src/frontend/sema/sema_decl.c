@@ -1,5 +1,5 @@
 #include "sema_internal.h"
-#include "tyl/semantic.h"
+#include "tyl/sema.h"
 #include "tyl/utils.h"
 
 StringView sema_mangle_method_name(StringView owner, StringView method) {

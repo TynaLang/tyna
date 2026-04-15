@@ -1,14 +1,10 @@
 #include "tyl/ast.h"
-#include "tyl/semantic.h"
+#include "tyl/sema.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 static AstNode *AstNode_new(AstKind ast_kind, Location loc) {
   AstNode *node = xmalloc(sizeof(AstNode));
-  if (!node) {
-    fprintf(stderr, "Failed to allocate AST node\n");
-    exit(1);
-  }
   node->tag = ast_kind;
   node->loc = loc;
   node->resolved_type = NULL;
@@ -803,15 +799,23 @@ PrimitiveKind Token_token_to_type(TokenType t) {
   }
 }
 
+static FILE *ast_stream = NULL;
+
 static void print_indent(int indent) {
+  FILE *out = ast_stream ? ast_stream : stdout;
   for (int i = 0; i < indent; i++) {
-    printf("  ");
+    fprintf(out, "  ");
   }
 }
 
-void Ast_print(AstNode *node, int indent) {
+void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
   if (!node)
     return;
+
+  FILE *prev_stream = ast_stream;
+  ast_stream = out ? out : stdout;
+#define Ast_print(node, indent) Ast_print_to_stream(ast_stream, node, indent)
+#define printf(...) fprintf(ast_stream, __VA_ARGS__)
 
   print_indent(indent);
 
@@ -1159,4 +1163,11 @@ void Ast_print(AstNode *node, int indent) {
     printf("CONTINUE\n");
     break;
   }
+#undef printf
+#undef Ast_print
+  ast_stream = prev_stream;
+}
+
+void Ast_print(AstNode *node, int indent) {
+  Ast_print_to_stream(stdout, node, indent);
 }

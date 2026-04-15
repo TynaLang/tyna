@@ -5,7 +5,7 @@
 
 #include "codegen_private.h"
 #include "tyl/ast.h"
-#include "tyl/semantic.h"
+#include "tyl/sema.h"
 #include "tyl/utils.h"
 
 static void cg_sanitize_type_name(const char *src, char *dst, size_t dst_size) {

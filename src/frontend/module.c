@@ -8,11 +8,11 @@
 #define PATH_MAX 4096
 #endif
 
-#include "sema_internal.h"
+#include "sema/sema_internal.h"
 #include "tyl/ast.h"
 #include "tyl/errors.h"
 #include "tyl/parser.h"
-#include "tyl/semantic.h"
+#include "tyl/sema.h"
 #include "tyl/utils.h"
 
 static char *path_dirname(const char *path) {

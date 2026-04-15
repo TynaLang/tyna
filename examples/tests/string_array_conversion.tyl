@@ -1,0 +1,4 @@
+let s: String = "Hello";
+let arr = s.to_array();
+let restored: String = String::from_array(arr);
+print(restored);

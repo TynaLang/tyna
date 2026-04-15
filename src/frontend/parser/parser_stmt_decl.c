@@ -383,11 +383,15 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
     impl_type = type_get_instance(p->type_ctx, template_type, args);
     List_free(&args, 0);
   } else {
-    impl_type = type_get_named(p->type_ctx, owner_name);
-    if (!impl_type)
-      impl_type = type_get_struct(p->type_ctx, owner_name);
-    if (!impl_type)
-      impl_type = type_get_union(p->type_ctx, owner_name);
+    if (sv_eq_cstr(owner_name, "String")) {
+      impl_type = type_get_primitive(p->type_ctx, PRIM_STRING);
+    } else {
+      impl_type = type_get_named(p->type_ctx, owner_name);
+      if (!impl_type)
+        impl_type = type_get_struct(p->type_ctx, owner_name);
+      if (!impl_type)
+        impl_type = type_get_union(p->type_ctx, owner_name);
+    }
     if (!impl_type) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Undefined type '%.*s' for impl", (int)owner_name.len,

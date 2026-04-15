@@ -8,6 +8,8 @@ frozen struct Array<T> {
 
 external fn __tyl_str_concat(a: str, b: str): str;
 external fn __tyl_str_intern(s: str): str;
+external fn __tyl_str_to_array(out: ptr<Array<char>>, src: ptr<String>): void;
+external fn __tyl_array_to_str(out: ptr<String>, arr: ptr<Array<char>>): void;
 external fn __tyl_array_clone_dims(rank: i64, dims: ptr<i64>): ptr<i64>;
 external fn panic(message: str): void;
 
@@ -18,6 +20,18 @@ impl String {
 
     fn intern(self: String): String {
         return __tyl_str_intern(self);
+    }
+
+    fn to_array(self: String): Array<char> {
+        let result: Array<char>;
+        __tyl_str_to_array(&result, &self);
+        return result;
+    }
+
+    static fn from_array(arr: Array<char>): String {
+        let result: String;
+        __tyl_array_to_str(&result, &arr);
+        return result;
     }
 }
 

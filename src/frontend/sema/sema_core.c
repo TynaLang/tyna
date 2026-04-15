@@ -1,6 +1,6 @@
 #include "sema_internal.h"
 #include "tyl/lexer.h"
-#include "tyl/semantic.h"
+#include "tyl/sema.h"
 #include <stdio.h>
 
 void sema_prime_types(Sema *s) {
@@ -116,6 +116,7 @@ void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx) {
   s->ret_type = NULL;
   s->fn_node = NULL;
   s->generic_context_type = NULL;
+  s->pass = SEMA_PASS_REGISTRATION;
   s->jump = NULL;
   s->scope = NULL;
   List_init(&s->modules);
@@ -123,6 +124,55 @@ void sema_init(Sema *s, ErrorHandler *eh, TypeContext *type_ctx) {
   s->entry_dir = NULL;
 
   sema_scope_push(s);
+}
+
+static void sema_check_function_bodies(Sema *s, AstNode *node) {
+  if (!node)
+    return;
+
+  switch (node->tag) {
+  case NODE_FUNC_DECL:
+    if (node->func_decl.body) {
+      sema_check_stmt(s, node);
+    }
+    break;
+
+  case NODE_STRUCT_DECL: {
+    Type *old_generic_context = s->generic_context_type;
+    Type *t = NULL;
+    StringView name = node->struct_decl.name->var.value;
+    Symbol *sym = sema_resolve(s, name);
+    if (sym)
+      t = sym->type;
+    if (t && (t->data.instance.from_template || t->kind == KIND_TEMPLATE)) {
+      s->generic_context_type = t;
+    }
+    for (size_t i = 0; i < node->struct_decl.members.len; i++) {
+      AstNode *member = node->struct_decl.members.items[i];
+      if (member->tag == NODE_FUNC_DECL && member->func_decl.body) {
+        sema_check_stmt(s, member);
+      }
+    }
+    s->generic_context_type = old_generic_context;
+    break;
+  }
+
+  case NODE_IMPL_DECL: {
+    Type *old_generic_context = s->generic_context_type;
+    s->generic_context_type = node->impl_decl.type;
+    for (size_t i = 0; i < node->impl_decl.members.len; i++) {
+      AstNode *member = node->impl_decl.members.items[i];
+      if (member->tag == NODE_FUNC_DECL && member->func_decl.body) {
+        sema_check_stmt(s, member);
+      }
+    }
+    s->generic_context_type = old_generic_context;
+    break;
+  }
+
+  default:
+    break;
+  }
 }
 
 static void module_free(Module *module) {
@@ -157,6 +207,7 @@ void sema_analyze(Sema *s, AstNode *root) {
   if (!root || root->tag != NODE_AST_ROOT)
     return;
 
+  s->pass = SEMA_PASS_REGISTRATION;
   for (size_t i = 0; i < root->ast_root.children.len; i++) {
     AstNode *node = root->ast_root.children.items[i];
     if (node->tag == NODE_FUNC_DECL) {
@@ -180,7 +231,18 @@ void sema_analyze(Sema *s, AstNode *root) {
     }
   }
 
+  s->pass = SEMA_PASS_DEFINITION;
   for (size_t i = 0; i < root->ast_root.children.len; i++) {
-    sema_check_stmt(s, root->ast_root.children.items[i]);
+    AstNode *node = root->ast_root.children.items[i];
+    if (node->tag == NODE_FUNC_DECL)
+      continue;
+    sema_check_stmt(s, node);
   }
+
+  s->pass = SEMA_PASS_BODIES;
+  for (size_t i = 0; i < root->ast_root.children.len; i++) {
+    sema_check_function_bodies(s, root->ast_root.children.items[i]);
+  }
+
+  s->pass = SEMA_PASS_REGISTRATION;
 }

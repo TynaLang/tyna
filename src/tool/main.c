@@ -3,11 +3,13 @@
 #include <string.h>
 
 #include "tyl/ast.h"
+#include "tyl/ast_dump.h"
+#include "tyl/cli.h"
 #include "tyl/codegen.h"
 #include "tyl/lexer.h"
 #include "tyl/parser.h"
 #include "tyl/runner.h"
-#include "tyl/semantic.h"
+#include "tyl/sema.h"
 #include "tyl/utils.h"
 
 static Module *module_find_by_name(Sema *sema, StringView name) {
@@ -51,58 +53,28 @@ static void codegen_module_recursive(Codegen *cg, Sema *sema, Module *module,
   List_push(visited, module);
 }
 
-typedef enum { MODE_COMPILE, MODE_JIT, MODE_EMIT_IR, MODE_DUMP } RunMode;
-
-void print_usage(const char *prog_name) {
-  printf("Usage: %s [options] <file>\n", prog_name);
-  printf("Options:\n");
-  printf("  -c, --compile   Compile to executable\n");
-  printf("  -j, --jit       JIT compile and run (default)\n");
-  printf("  -e, --emit-ir   Emit LLVM IR to file\n");
-  printf("  -d, --dump      Dump AST and LLVM IR to stdout\n");
-  printf("  -h, --help      Show this help message\n");
-}
-
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    print_usage(argv[0]);
+  CliOptions opts;
+  if (!cli_parse_options(argc, argv, &opts)) {
+    cli_print_usage(argv[0]);
     return 1;
   }
 
-  RunMode mode = MODE_JIT;
-  const char *file_path = NULL;
+  if (opts.show_help) {
+    cli_print_usage(argv[0]);
+    return 0;
+  }
 
-  for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--compile") == 0) {
-      mode = MODE_COMPILE;
-    } else if (strcmp(argv[i], "-j") == 0 || strcmp(argv[i], "--jit") == 0) {
-      mode = MODE_JIT;
-    } else if (strcmp(argv[i], "-e") == 0 ||
-               strcmp(argv[i], "--emit-ir") == 0) {
-      mode = MODE_EMIT_IR;
-    } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--dump") == 0) {
-      mode = MODE_DUMP;
-    } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-      print_usage(argv[0]);
-      return 0;
-    } else if (argv[i][0] == '-') {
-      printf("Unknown option: %s\n", argv[i]);
-      print_usage(argv[0]);
+  RunMode mode = opts.mode;
+  const char *file_path = opts.input_path;
+
+  FILE *ast_out = stdout;
+  if ((opts.ast_print_entrypoint || opts.ast_print_lib) &&
+      opts.ast_output_path) {
+    ast_out = cli_open_ast_output(&opts);
+    if (!ast_out) {
       return 1;
-    } else {
-      if (file_path == NULL) {
-        file_path = argv[i];
-      } else {
-        printf("Error: Multiple files specified.\n");
-        return 1;
-      }
     }
-  }
-
-  if (!file_path) {
-    printf("Error: No input file specified.\n");
-    print_usage(argv[0]);
-    return 1;
   }
 
   const char *src = read_file(file_path);
@@ -159,22 +131,41 @@ int main(int argc, char **argv) {
   sema_init(&sema, &eh, type_ctx);
   sema.entry_dir = entry_dir;
 
+  size_t stdlib_modules_end = 0;
   if (std_ast) {
+    if (opts.ast_print_lib && opts.ast_print_before_sema) {
+      Ast_dump_root(ast_out, std_ast, "stdlib");
+    }
+
     if (std_eh_init)
       sema.eh = &std_eh;
     sema_analyze(&sema, std_ast);
+    stdlib_modules_end = sema.modules.len;
     sema.eh = &eh;
+
+    if (opts.ast_print_lib) {
+      if (!opts.ast_print_before_sema) {
+        Ast_dump_root(ast_out, std_ast, "stdlib");
+      }
+      Ast_dump_modules(ast_out, &sema, 0, "stdlib import");
+    }
 
     if (std_eh_init) {
       if (std_eh.has_errors) {
         ErrorHandler_show_all(&std_eh);
         ErrorHandler_free(&std_eh);
         sema_finish(&sema);
+        if (ast_out != stdout)
+          fclose(ast_out);
         type_context_free(type_ctx);
         return 1;
       }
       ErrorHandler_free(&std_eh);
     }
+  }
+
+  if (opts.ast_print_entrypoint && opts.ast_print_before_sema) {
+    Ast_dump_root(ast_out, user_ast, "main");
   }
 
   Module main_module = {0};
@@ -199,12 +190,21 @@ int main(int argc, char **argv) {
 
   sema_analyze(&sema, user_ast);
 
+  if (opts.ast_print_entrypoint) {
+    if (!opts.ast_print_before_sema) {
+      Ast_dump_root(ast_out, user_ast, "main");
+    }
+    Ast_dump_modules(ast_out, &sema, stdlib_modules_end, "main import");
+  }
+
   // printf("====  USER AST  ====\n");
   // Ast_print(user_ast, 0);
 
   if (eh.has_errors) {
     ErrorHandler_show_all(&eh);
     sema_finish(&sema);
+    if (ast_out != stdout)
+      fclose(ast_out);
     type_context_free(type_ctx);
     return 1;
   }
@@ -255,5 +255,8 @@ int main(int argc, char **argv) {
   free((char *)main_module.name);
   free(main_module.abs_path);
   type_context_free(type_ctx);
+  if (ast_out != stdout) {
+    fclose(ast_out);
+  }
   return 0;
 }

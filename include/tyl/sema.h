@@ -15,6 +15,12 @@ typedef struct SemaScope SemaScope;
 typedef struct SemaJump SemaJump;
 typedef struct Sema Sema;
 
+typedef enum {
+  SEMA_PASS_REGISTRATION,
+  SEMA_PASS_DEFINITION,
+  SEMA_PASS_BODIES,
+} SemaPass;
+
 enum FuncStatus { FUNC_NONE, FUNC_FORWARD_DECL, FUNC_IMPLEMENTATION };
 
 typedef enum {
@@ -70,6 +76,7 @@ struct Sema {
   Type *ret_type;
   AstNode *fn_node;
   Type *generic_context_type;
+  SemaPass pass;
 
   List modules; // List<Module*>
   Module *current_module;

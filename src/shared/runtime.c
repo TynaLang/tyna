@@ -111,26 +111,31 @@ int32_t __tyl_compare_arrays(const FatPtr *a, const FatPtr *b,
   return (int32_t)memcmp(a->data, b->data, a_len * elem_size);
 }
 
-void __tyl_str_to_array(FatPtr *out, const FatPtr *str) {
-  int64_t str_len = (str->rank > 0 && str->dims) ? str->dims[0] : 0;
-  if (str_len <= 0) {
-    *out = (FatPtr){0, NULL, NULL};
+void __tyl_str_to_array(FatPtr *out, const String *str) {
+  if (!out || !str || !str->ptr || str->len <= 0) {
+    if (out) {
+      *out = (FatPtr){0, NULL, NULL};
+    }
     return;
   }
-  // Allocate str_len + 1 to ensure space for a null terminator if needed,
-  // although arrays don't strictly need it, it's safer for string conversions.
+
+  int64_t str_len = str->len;
   void *new_data = malloc(str_len + 1);
   if (!new_data) {
     *out = (FatPtr){0, NULL, NULL};
     return;
   }
-  memcpy(new_data, str->data, str_len);
+  memcpy(new_data, str->ptr, str_len);
   ((char *)new_data)[str_len] = '\0';
 
-  // Allocate dims/strides for the new array
   int64_t *new_dims = malloc(sizeof(int64_t) * 2);
-  new_dims[0] = str_len; // dim0
-  new_dims[1] = 1;       // stride0
+  if (!new_dims) {
+    free(new_data);
+    *out = (FatPtr){0, NULL, NULL};
+    return;
+  }
+  new_dims[0] = str_len;
+  new_dims[1] = 1;
 
   *out = (FatPtr){1, new_data, new_dims};
 }
@@ -170,30 +175,30 @@ int64_t *__tyl_array_clone_dims(int64_t rank, const int64_t *dims) {
   return copy;
 }
 
-void __tyl_array_to_str(FatPtr *out, const FatPtr *arr) {
-  int64_t arr_len = (arr->rank > 0 && arr->dims) ? arr->dims[0] : 0;
+void __tyl_array_to_str(String *out, const FatPtr *arr) {
+  if (!out || !arr || !arr->data || arr->rank <= 0 || !arr->dims) {
+    if (out) {
+      *out = (String){NULL, 0};
+    }
+    return;
+  }
+
+  int64_t arr_len = arr->dims[0];
   if (arr_len <= 0) {
-    // Return empty string
-    int64_t *empty_dims = malloc(sizeof(int64_t) * 2);
-    empty_dims[0] = 0;
-    empty_dims[1] = 1;
-    *out = (FatPtr){1, "", empty_dims};
+    *out = (String){NULL, 0};
     return;
   }
 
-  // We MUST create a null-terminated copy for the string,
-  // because C's printf (used in the backend) expects it.
-  char *str_data = malloc(arr_len + 1);
-  if (!str_data) {
-    *out = (FatPtr){0, NULL, NULL};
+  StringHeader *hdr = malloc(sizeof(StringHeader) + arr_len + 1);
+  if (!hdr) {
+    *out = (String){NULL, 0};
     return;
   }
-  memcpy(str_data, arr->data, arr_len);
-  str_data[arr_len] = '\0';
 
-  int64_t *str_dims = malloc(sizeof(int64_t) * 2);
-  str_dims[0] = arr_len;
-  str_dims[1] = 1;
+  hdr->ref_count = 1;
+  hdr->hash = 0;
+  memcpy(hdr->data, arr->data, arr_len);
+  hdr->data[arr_len] = '\0';
 
-  *out = (FatPtr){1, str_data, str_dims};
+  *out = (String){hdr->data, arr_len};
 }
