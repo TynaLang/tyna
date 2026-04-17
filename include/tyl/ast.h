@@ -392,6 +392,5 @@ PrimitiveKind Token_token_to_type(TokenType t);
 void Ast_free(AstNode *node);
 void Ast_print(AstNode *node, int indent);
 void Ast_print_to_stream(FILE *out, AstNode *node, int indent);
-bool type_is_lvalue(AstNode *node);
 
 #endif // TYL_AST_H

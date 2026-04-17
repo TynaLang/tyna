@@ -11,16 +11,21 @@ bool type_is_array_struct(Type *type) {
   return false;
 }
 
-Type *check_field(Sema *s, AstNode *node) {
-  Type *obj_type = sema_check_expr(s, node->field.object);
+ExprInfo check_field(Sema *s, AstNode *node) {
+  ExprInfo object_info = sema_check_expr(s, node->field.object);
+  Type *obj_type = object_info.type;
   if (!obj_type) {
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
 
   while (obj_type->kind == KIND_POINTER) {
     obj_type = obj_type->data.pointer_to;
     if (!obj_type) {
-      return type_get_primitive(s->types, PRIM_UNKNOWN);
+      return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                        .category = VAL_RVALUE,
+                        };
     }
   }
 
@@ -31,13 +36,15 @@ Type *check_field(Sema *s, AstNode *node) {
     sema_error(s, node->field.object,
                "Member access only allowed on structs or unions, got %s",
                type_to_name(obj_type));
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
 
   Member *m = type_get_member(obj_type, node->field.field);
   if (m) {
     node->resolved_type = m->type;
-    return m->type;
+    return (ExprInfo){.type = m->type, .category = VAL_LVALUE};
   }
 
   if (obj_type->kind == KIND_UNION) {
@@ -45,7 +52,8 @@ Type *check_field(Sema *s, AstNode *node) {
     m = type_find_union_field(obj_type, node->field.field, &owner);
     if (m) {
       node->resolved_type = m->type;
-      return m->type;
+      return (ExprInfo){
+          .type = m->type, .category = VAL_LVALUE};
     }
   }
 
@@ -56,7 +64,8 @@ Type *check_field(Sema *s, AstNode *node) {
     if (sv_eq(lookup_name, node->field.field)) {
       if (method->kind == SYM_METHOD) {
         node->resolved_type = method->type;
-        return method->type;
+        return (ExprInfo){
+            .type = method->type, .category = VAL_RVALUE};
       }
     }
   }
@@ -70,7 +79,8 @@ Type *check_field(Sema *s, AstNode *node) {
       if (sv_eq(lookup_name, node->field.field)) {
         if (method->kind == SYM_METHOD) {
           node->resolved_type = method->type;
-          return method->type;
+          return (ExprInfo){
+              .type = method->type, .category = VAL_RVALUE};
         }
       }
     }
@@ -78,10 +88,12 @@ Type *check_field(Sema *s, AstNode *node) {
 
   sema_error(s, node, "Type %s has no member '" SV_FMT "'",
              type_to_name(obj_type), SV_ARG(node->field.field));
-  return type_get_primitive(s->types, PRIM_UNKNOWN);
+  return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                    .category = VAL_RVALUE,
+                    };
 }
 
-Type *check_static_member(Sema *s, AstNode *node) {
+ExprInfo check_static_member(Sema *s, AstNode *node) {
   Symbol *parent = sema_resolve(s, node->static_member.parent);
   Type *type = NULL;
   if (parent) {
@@ -95,7 +107,9 @@ Type *check_static_member(Sema *s, AstNode *node) {
                   type->data.primitive == PRIM_STRING))) {
     sema_error(s, node, "Undefined type '" SV_FMT "'",
                SV_ARG(node->static_member.parent));
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
 
   for (size_t i = 0; i < type->methods.len; i++) {
@@ -104,12 +118,15 @@ Type *check_static_member(Sema *s, AstNode *node) {
         method->original_name.len ? method->original_name : method->name;
     if (sv_eq(lookup_name, node->static_member.member)) {
       if (method->kind == SYM_STATIC_METHOD) {
-        return method->type;
+        return (ExprInfo){
+            .type = method->type, .category = VAL_RVALUE};
       }
     }
   }
 
   sema_error(s, node, "Type %s has no static member '" SV_FMT "'",
              type_to_name(type), SV_ARG(node->static_member.member));
-  return type_get_primitive(s->types, PRIM_UNKNOWN);
+  return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                    .category = VAL_RVALUE,
+                    };
 }

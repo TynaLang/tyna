@@ -25,7 +25,7 @@ static Type *check_builtin_call(Sema *s, AstNode *node) {
       sema_error(s, node, "free() expects 1 argument, got %zu",
                  node->call.args.len);
     } else {
-      Type *arg_ty = sema_check_expr(s, node->call.args.items[0]);
+      Type *arg_ty = sema_check_expr(s, node->call.args.items[0]).type;
       if (!arg_ty || arg_ty->kind != KIND_POINTER) {
         sema_error(s, node->call.args.items[0],
                    "free() expects a pointer, got %s", type_to_name(arg_ty));
@@ -38,25 +38,31 @@ static Type *check_builtin_call(Sema *s, AstNode *node) {
   }
 }
 
-Type *check_call(Sema *s, AstNode *node) {
+ExprInfo check_call(Sema *s, AstNode *node) {
   if (!node || !node->call.func) {
     sema_error(s, node, "Invalid function call expression");
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
 
   Type *builtin_type = check_builtin_call(s, node);
   if (builtin_type) {
-    return builtin_type;
+    return (ExprInfo){
+        .type = builtin_type, .category = VAL_RVALUE};
   }
 
   if (node->call.func->tag == NODE_FIELD) {
     AstNode *field_node = node->call.func;
     if (!field_node->field.object) {
       sema_error(s, node, "Invalid method call object");
-      return type_get_primitive(s->types, PRIM_UNKNOWN);
+      return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                        .category = VAL_RVALUE,
+                        };
     }
 
-    Type *orig_obj_type = sema_check_expr(s, field_node->field.object);
+    ExprInfo orig_obj_info = sema_check_expr(s, field_node->field.object);
+    Type *orig_obj_type = orig_obj_info.type;
     if (!orig_obj_type) {
       orig_obj_type = type_get_primitive(s->types, PRIM_UNKNOWN);
     }
@@ -229,10 +235,13 @@ Type *check_call(Sema *s, AstNode *node) {
     }
   }
 
-  Type *func_type = sema_check_expr(s, node->call.func);
+  ExprInfo func_info = sema_check_expr(s, node->call.func);
+  Type *func_type = func_info.type;
   if (func_type->kind == KIND_PRIMITIVE &&
       func_type->data.primitive == PRIM_UNKNOWN) {
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
 
   if (node->call.func->tag == NODE_VAR) {
@@ -241,7 +250,9 @@ Type *check_call(Sema *s, AstNode *node) {
     if (!symbol) {
       sema_error(s, node, "Call to undefined function '" SV_FMT "'",
                  SV_ARG(node->call.func->var.value));
-      return type_get_primitive(s->types, PRIM_UNKNOWN);
+      return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                        .category = VAL_RVALUE,
+                        };
     }
 
     if (symbol->value && symbol->value->tag == NODE_FUNC_DECL) {
@@ -277,7 +288,7 @@ Type *check_call(Sema *s, AstNode *node) {
       for (size_t i = 0;
            i < node->call.args.len && i < fn_decl->func_decl.params.len; i++) {
         AstNode *arg_node = node->call.args.items[i];
-        Type *arg_type = sema_check_expr(s, arg_node);
+        Type *arg_type = sema_check_expr(s, arg_node).type;
         AstNode *param_node = fn_decl->func_decl.params.items[i];
         Type *param_type = param_node->param.type;
         if (!type_can_implicitly_cast(param_type, arg_type)) {
@@ -289,8 +300,10 @@ Type *check_call(Sema *s, AstNode *node) {
       }
     }
 
-    return symbol->type;
+    return (ExprInfo){
+        .type = symbol->type, .category = VAL_RVALUE};
   } else {
-    return func_type;
+    return (ExprInfo){
+        .type = func_type, .category = VAL_RVALUE};
   }
 }

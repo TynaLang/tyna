@@ -1,7 +1,7 @@
 #include "sema_internal.h"
 
 void sema_check_if_stmt(Sema *s, AstNode *node) {
-  Type *cond = sema_check_expr(s, node->if_stmt.condition);
+  Type *cond = sema_check_expr(s, node->if_stmt.condition).type;
 
   if (!type_is_condition(cond)) {
     sema_error(s, node->if_stmt.condition,
@@ -17,7 +17,7 @@ void sema_check_if_stmt(Sema *s, AstNode *node) {
 }
 
 void sema_check_switch_stmt(Sema *s, AstNode *node) {
-  Type *expr_type = sema_check_expr(s, node->switch_stmt.expr);
+  Type *expr_type = sema_check_expr(s, node->switch_stmt.expr).type;
   if (!expr_type)
     return;
 

@@ -15,24 +15,35 @@ void sema_register_method_signature(Sema *s, AstNode *node,
 StringView sema_mangle_method_name(StringView owner, StringView method);
 
 // Sema Expr
+typedef enum ValueCategory {
+  VAL_RVALUE,
+  VAL_LVALUE,
+} ValueCategory;
+
+typedef struct ExprInfo {
+  Type *type;
+  ValueCategory category;
+} ExprInfo;
+
 Type *sema_coerce(Sema *s, AstNode *expr, Type *target);
-Type *sema_check_expr(Sema *s, AstNode *node);
+ExprInfo sema_check_expr(Sema *s, AstNode *node);
+bool sema_is_writable_address(Sema *s, AstNode *node);
 bool type_is_array_struct(Type *type);
 Type *sema_find_type_by_name(Sema *s, StringView name);
 Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
                                        AstNode *field_node);
-Type *check_field(Sema *s, AstNode *node);
-Type *check_static_member(Sema *s, AstNode *node);
-Type *check_call(Sema *s, AstNode *node);
-Type *check_index(Sema *s, AstNode *node);
-Type *check_array_expr(Sema *s, AstNode *node);
-Type *check_unary(Sema *s, AstNode *node);
-Type *check_binary_arith(Sema *s, AstNode *node);
-Type *check_binary_logical(Sema *s, AstNode *node);
-Type *check_assignment(Sema *s, AstNode *node);
-Type *check_cast(Sema *s, AstNode *node);
-Type *check_ternary(Sema *s, AstNode *node);
-Type *check_new_expr(Sema *s, AstNode *node);
+ExprInfo check_field(Sema *s, AstNode *node);
+ExprInfo check_static_member(Sema *s, AstNode *node);
+ExprInfo check_call(Sema *s, AstNode *node);
+ExprInfo check_index(Sema *s, AstNode *node);
+ExprInfo check_array_expr(Sema *s, AstNode *node);
+ExprInfo check_unary(Sema *s, AstNode *node);
+ExprInfo check_binary_arith(Sema *s, AstNode *node);
+ExprInfo check_binary_logical(Sema *s, AstNode *node);
+ExprInfo check_assignment(Sema *s, AstNode *node);
+ExprInfo check_cast(Sema *s, AstNode *node);
+ExprInfo check_ternary(Sema *s, AstNode *node);
+ExprInfo check_new_expr(Sema *s, AstNode *node);
 
 // Sema Stmt
 void sema_scope_push(Sema *s);
@@ -46,7 +57,6 @@ bool type_needs_inference(Type *t);
 bool type_is_condition(Type *t);
 bool type_can_be_polymorphic(Type *t);
 bool sema_allows_polymorphic_types(Sema *s);
-bool type_is_writable(Sema *s, AstNode *target);
 void sema_check_stmt(Sema *s, AstNode *node);
 
 // Statement helpers
@@ -68,8 +78,8 @@ void sema_check_impl_decl(Sema *s, AstNode *node);
 // Literal helpers
 bool literal_fits_in_type(AstNode *node, Type *target);
 void check_literal_bounds(Sema *s, AstNode *node, Type *target);
-Type *check_literal(Sema *s, AstNode *node);
-Type *check_var(Sema *s, AstNode *node);
+ExprInfo check_literal(Sema *s, AstNode *node);
+ExprInfo check_var(Sema *s, AstNode *node);
 
 // Module helpers
 Module *module_find_by_path(Sema *s, const char *abs_path);

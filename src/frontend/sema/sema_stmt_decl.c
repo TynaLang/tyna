@@ -146,7 +146,7 @@ void sema_check_return_stmt(Sema *s, AstNode *node) {
   }
 
   Type *expr_type = node->return_stmt.expr
-                        ? sema_check_expr(s, node->return_stmt.expr)
+                        ? sema_check_expr(s, node->return_stmt.expr).type
                         : type_get_primitive(s->types, PRIM_VOID);
 
   if (type_is_unknown(s->ret_type)) {

@@ -58,25 +58,29 @@ static bool get_array_size(Sema *s, AstNode *node, long long *out) {
   return false;
 }
 
-Type *check_index(Sema *s, AstNode *node) {
+ExprInfo check_index(Sema *s, AstNode *node) {
   AstNode *array_node = node->index.array;
   AstNode *index_node = node->index.index;
 
-  Type *array_type = sema_check_expr(s, array_node);
-  Type *index_type = sema_check_expr(s, index_node);
+  Type *array_type = sema_check_expr(s, array_node).type;
+  Type *index_type = sema_check_expr(s, index_node).type;
 
   if (array_type->kind == KIND_POINTER) {
     if (!type_is_numeric(index_type)) {
       sema_error(s, index_node, "Array index must be numeric, got %s",
                  type_to_name(index_type));
     }
-    return array_type->data.pointer_to;
+    return (ExprInfo){.type = array_type->data.pointer_to,
+                      .category = VAL_LVALUE,
+                      };
   }
 
   if (!type_is_array_struct(array_type)) {
     sema_error(s, array_node, "Indexing only allowed on arrays, got %s",
                type_to_name(array_type));
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
 
   if (!type_is_numeric(index_type)) {
@@ -100,25 +104,32 @@ Type *check_index(Sema *s, AstNode *node) {
     }
   }
 
+  Type *element_type = NULL;
   if (array_type->data.instance.generic_args.len > 0) {
-    return array_type->data.instance.generic_args.items[0];
+    element_type = array_type->data.instance.generic_args.items[0];
+    return (ExprInfo){
+        .type = element_type, .category = VAL_LVALUE};
   }
 
-  return type_get_primitive(s->types, PRIM_UNKNOWN);
+  return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                    .category = VAL_RVALUE,
+                    };
 }
 
-Type *check_array_expr(Sema *s, AstNode *node) {
+ExprInfo check_array_expr(Sema *s, AstNode *node) {
   Type *element_type = NULL;
 
   if (node->tag == NODE_ARRAY_LITERAL) {
     if (node->array_literal.items.len == 0) {
       sema_error(s, node, "Empty array literals are not yet supported");
-      return type_get_primitive(s->types, PRIM_UNKNOWN);
+      return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                        .category = VAL_RVALUE,
+                        };
     }
 
     for (size_t i = 0; i < node->array_literal.items.len; i++) {
       AstNode *item = node->array_literal.items.items[i];
-      Type *item_type = sema_check_expr(s, item);
+      Type *item_type = sema_check_expr(s, item).type;
 
       if (element_type == NULL) {
         element_type = item_type;
@@ -137,8 +148,8 @@ Type *check_array_expr(Sema *s, AstNode *node) {
       check_literal_bounds(s, item, element_type);
     }
   } else if (node->tag == NODE_ARRAY_REPEAT) {
-    element_type = sema_check_expr(s, node->array_repeat.value);
-    Type *count_type = sema_check_expr(s, node->array_repeat.count);
+    element_type = sema_check_expr(s, node->array_repeat.value).type;
+    Type *count_type = sema_check_expr(s, node->array_repeat.count).type;
     if (!type_is_numeric(count_type)) {
       sema_error(s, node->array_repeat.count,
                  "Array repeat count must be numeric, got %s",
@@ -151,7 +162,9 @@ Type *check_array_expr(Sema *s, AstNode *node) {
     sema_error(
         s, node,
         "Internal Error: Generic 'Array' template not found in TypeContext");
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
 
   List args;
@@ -180,5 +193,5 @@ Type *check_array_expr(Sema *s, AstNode *node) {
     node->resolved_type = instance;
   }
 
-  return instance;
+  return (ExprInfo){.type = instance, .category = VAL_RVALUE};
 }

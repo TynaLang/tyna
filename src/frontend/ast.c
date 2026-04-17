@@ -339,17 +339,6 @@ AstNode *AstNode_new_continue(Location loc) {
   return node;
 }
 
-bool type_is_lvalue(AstNode *node) {
-  if (node->tag == NODE_VAR || node->tag == NODE_FIELD ||
-      node->tag == NODE_INDEX) {
-    return true;
-  }
-  if (node->tag == NODE_UNARY && node->unary.op == OP_DEREF) {
-    return true;
-  }
-  return false;
-}
-
 void Ast_free(AstNode *node) {
   if (!node)
     return;

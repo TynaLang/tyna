@@ -116,33 +116,3 @@ bool type_can_be_polymorphic(Type *t) {
 bool sema_allows_polymorphic_types(Sema *s) {
   return s && s->generic_context_type != NULL;
 }
-
-bool type_is_writable(Sema *s, AstNode *target) {
-  if (!type_is_lvalue(target))
-    return false;
-
-  if (target->tag == NODE_VAR) {
-    Symbol *sym = sema_resolve(s, target->var.value);
-
-    if (sym && sym->is_const)
-      return false;
-    return true;
-  }
-
-  if (target->tag == NODE_INDEX) {
-    Type *arr_type = target->index.array->resolved_type;
-
-    if (arr_type && arr_type->kind == KIND_PRIMITIVE &&
-        arr_type->data.primitive == PRIM_STRING) {
-      return false;
-    }
-
-    return true;
-  }
-
-  if (target->tag == NODE_FIELD) {
-    return true;
-  }
-
-  return true;
-}

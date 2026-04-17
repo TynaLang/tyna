@@ -98,45 +98,65 @@ void check_literal_bounds(Sema *s, AstNode *node, Type *target) {
   }
 }
 
-Type *check_literal(Sema *s, AstNode *node) {
+ExprInfo check_literal(Sema *s, AstNode *node) {
   switch (node->tag) {
   case NODE_NUMBER:
     if (sv_contains(node->number.raw_text, '.') ||
         sv_ends_with(node->number.raw_text, "f") ||
         sv_ends_with(node->number.raw_text, "F")) {
-      return type_get_primitive(s->types,
-                                sv_ends_with(node->number.raw_text, "f") ||
-                                        sv_ends_with(node->number.raw_text, "F")
-                                    ? PRIM_F32
-                                    : PRIM_F64);
+      return (ExprInfo){
+          .type = type_get_primitive(
+              s->types, sv_ends_with(node->number.raw_text, "f") ||
+                                sv_ends_with(node->number.raw_text, "F")
+                            ? PRIM_F32
+                            : PRIM_F64),
+          .category = VAL_RVALUE,
+          };
     } else {
-      return type_get_primitive(s->types, PRIM_I32);
+      return (ExprInfo){.type = type_get_primitive(s->types, PRIM_I32),
+                        .category = VAL_RVALUE,
+                        };
     }
 
   case NODE_CHAR:
-    return type_get_primitive(s->types, PRIM_CHAR);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_CHAR),
+                      .category = VAL_RVALUE,
+                      };
 
   case NODE_STRING:
-    return type_get_primitive(s->types, PRIM_STRING);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_STRING),
+                      .category = VAL_RVALUE,
+                      };
 
   case NODE_BOOL:
-    return type_get_primitive(s->types, PRIM_BOOL);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_BOOL),
+                      .category = VAL_RVALUE,
+                      };
 
   case NODE_NULL:
-    return type_get_pointer(s->types,
-                            type_get_primitive(s->types, PRIM_UNKNOWN));
+    return (ExprInfo){.type = type_get_pointer(
+                          s->types, type_get_primitive(s->types, PRIM_UNKNOWN)),
+                      .category = VAL_RVALUE,
+                      };
 
   default:
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
 }
 
-Type *check_var(Sema *s, AstNode *node) {
+ExprInfo check_var(Sema *s, AstNode *node) {
   Symbol *sym = sema_resolve(s, node->var.value);
   if (!sym) {
     sema_error(s, node, "Undefined variable '" SV_FMT "'",
                SV_ARG(node->var.value));
-    return type_get_primitive(s->types, PRIM_UNKNOWN);
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE,
+                      };
   }
-  return sym->type;
+
+  bool is_lvalue = sym->kind == SYM_VAR || sym->kind == SYM_FIELD;
+  return (ExprInfo){
+      .type = sym->type, .category = is_lvalue ? VAL_LVALUE : VAL_RVALUE};
 }

@@ -8,7 +8,7 @@ void sema_check_loop_stmt(Sema *s, AstNode *node) {
 }
 
 void sema_check_while_stmt(Sema *s, AstNode *node) {
-  Type *cond = sema_check_expr(s, node->while_stmt.condition);
+  Type *cond = sema_check_expr(s, node->while_stmt.condition).type;
 
   if (!type_is_condition(cond)) {
     sema_error(s, node->while_stmt.condition,
@@ -30,7 +30,7 @@ void sema_check_for_stmt(Sema *s, AstNode *node) {
   }
 
   if (node->for_stmt.condition) {
-    Type *cond = sema_check_expr(s, node->for_stmt.condition);
+    Type *cond = sema_check_expr(s, node->for_stmt.condition).type;
     if (!type_is_bool(cond)) {
       sema_error(s, node->for_stmt.condition,
                  "for condition must be bool, got '%s'", type_to_name(cond));
@@ -50,7 +50,7 @@ void sema_check_for_stmt(Sema *s, AstNode *node) {
 }
 
 void sema_check_for_in_stmt(Sema *s, AstNode *node) {
-  Type *iter_type = sema_check_expr(s, node->for_in_stmt.iterable);
+  Type *iter_type = sema_check_expr(s, node->for_in_stmt.iterable).type;
 
   Type *elem_type = NULL;
   bool is_valid_iterable = false;

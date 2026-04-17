@@ -403,10 +403,6 @@ AstNode *Parser_parse_expression(Parser *p, int min_bp) {
         ErrorHandler_report(p->eh, op.loc, "Invalid assignment target");
         return NULL;
       }
-      if (Parser_is(right, NODE_ASSIGN_EXPR)) {
-        ErrorHandler_report(p->eh, op.loc, "Chained assignment not supported");
-        return NULL;
-      }
       left = AstNode_new_assign_expr(left, right, op.loc);
       break;
 
