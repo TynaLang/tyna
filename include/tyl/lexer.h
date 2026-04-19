@@ -30,6 +30,9 @@ typedef enum TokenType {
   TOKEN_IMPORT,
   TOKEN_EXPORT,
   TOKEN_EXTERNAL,
+  TOKEN_ERROR_KEYWORD,
+  TOKEN_ERRORS,
+  TOKEN_IS,
   TOKEN_NEW,
   TOKEN_DEFER,
   TOKEN_STRUCT,
@@ -117,7 +120,7 @@ typedef enum TokenType {
   TOKEN_BIT_OR,
 
   // Special
-  TOKEN_ERROR,
+  TOKEN_LEXER_ERROR,
   TOKEN_EOF,
   TOKEN_UNKNOWN
 } TokenType;

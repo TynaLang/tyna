@@ -1,0 +1,72 @@
+// 1. Declare a bare error (0 byte payload)
+error NotFound;
+
+// 2. Declare a rich error (20 byte payload)
+error InvalidInput {
+    code: i32,
+    expected: i32,
+}
+
+// 3. Function with implicit error set
+fn find_user(id: i32): i32 ! Error {
+    if (id == 0) {
+        // Test bare error return (NO 'error' keyword, no braces)
+        return NotFound;
+    }
+    return 42;
+}
+
+// 4. Function returning a rich error
+fn parse_age(val: i32): i32 ! Error {
+    if (val == 99) {
+        // Test rich error return
+        return InvalidInput { code: 400, expected: 18 };
+    }
+    return val;
+}
+
+fn main(): i32 {
+    // --- SCENARIO 1: Success Path ---
+    let user = find_user(1);
+    if (user is Error) {
+        print("FAIL: Scenario 1");
+        return 1;
+    }
+    print("Scenario 1 Pass: Got user");
+
+    // --- SCENARIO 2: Bare Error Check ---
+    let missing = find_user(0);
+    if (missing is NotFound) {
+        print("Scenario 2 Pass: Detected NotFound");
+    } else {
+        print("FAIL: Scenario 2");
+        return 1;
+    }
+
+    // --- SCENARIO 3: General Error Catch ---
+    if (missing is Error) {
+        print("Scenario 3 Pass: Caught by general Error");
+    }
+
+    // --- SCENARIO 4: Rich Error & Field Access (Type Narrowing) ---
+    let bad_age = parse_age(99);
+    if (bad_age is InvalidInput) {
+        // Inside this block, 'bad_age' should be narrowed to type InvalidInput
+        print("Scenario 4 Pass: Code is", bad_age.code);
+        print("Scenario 4 Pass: Expected is", bad_age.expected);
+    } else {
+        print("FAIL: Scenario 4");
+        return 1;
+    }
+
+    // --- SCENARIO 5: The 'else' Operator ---
+    // If parse_age fails, default to 0
+    let good_age = parse_age(99) else 0;
+    print("Scenario 5 Pass: else default gave", good_age);
+
+    // --- SCENARIO 6: Mixed Success/Else ---
+    let real_age = parse_age(25) else -1;
+    print("Scenario 6 Pass: actual success gave", real_age);
+
+    return 0;
+}

@@ -104,6 +104,12 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_EXPORT;
   else if (sv_eq_cstr(text, "external"))
     t.type = TOKEN_EXTERNAL;
+  else if (sv_eq_cstr(text, "error"))
+    t.type = TOKEN_ERROR_KEYWORD;
+  else if (sv_eq_cstr(text, "errors"))
+    t.type = TOKEN_ERRORS;
+  else if (sv_eq_cstr(text, "is"))
+    t.type = TOKEN_IS;
   else if (sv_eq_cstr(text, "int"))
     t.type = TOKEN_TYPE_INT;
   else if (sv_eq_cstr(text, "char"))
@@ -187,7 +193,7 @@ static Token read_string(Lexer *l) {
   t.loc = l->loc;
 
   if (peek(l) != '"') {
-    t.type = TOKEN_ERROR;
+    t.type = TOKEN_LEXER_ERROR;
     t.text = sv_from_cstr("unterminated string literal");
     return t;
   }
@@ -214,7 +220,7 @@ static Token read_char(Lexer *l) {
   t.loc = l->loc;
 
   if (peek(l) != '\'' || len != 1) {
-    t.type = TOKEN_ERROR;
+    t.type = TOKEN_LEXER_ERROR;
     t.text = sv_from_cstr("invalid char literal");
     if (peek(l) == '\'')
       advance(l);
@@ -361,7 +367,7 @@ Token Token_advance(Lexer *l) {
     break;
 
   default:
-    t.type = TOKEN_ERROR;
+    t.type = TOKEN_LEXER_ERROR;
     t.text = sv_from_cstr("unknown character");
     break;
   }

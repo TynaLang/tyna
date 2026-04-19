@@ -29,6 +29,7 @@ Type *sema_coerce(Sema *s, AstNode *expr, Type *target);
 ExprInfo sema_check_expr(Sema *s, AstNode *node);
 bool sema_is_writable_address(Sema *s, AstNode *node);
 bool type_is_array_struct(Type *type);
+bool error_set_contains(Type *set, Type *error);
 Type *sema_find_type_by_name(Sema *s, StringView name);
 Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
                                        AstNode *field_node);
@@ -44,6 +45,8 @@ ExprInfo check_assignment(Sema *s, AstNode *node);
 ExprInfo check_cast(Sema *s, AstNode *node);
 ExprInfo check_ternary(Sema *s, AstNode *node);
 ExprInfo check_new_expr(Sema *s, AstNode *node);
+ExprInfo check_binary_is(Sema *s, AstNode *node);
+ExprInfo check_binary_else(Sema *s, AstNode *node);
 
 // Sema Stmt
 void sema_scope_push(Sema *s);
@@ -73,6 +76,8 @@ void sema_check_for_stmt(Sema *s, AstNode *node);
 void sema_check_for_in_stmt(Sema *s, AstNode *node);
 void sema_check_struct_decl(Sema *s, AstNode *node);
 void sema_check_union_decl(Sema *s, AstNode *node);
+void sema_check_error_decl(Sema *s, AstNode *node);
+void sema_check_error_set_decl(Sema *s, AstNode *node);
 void sema_check_impl_decl(Sema *s, AstNode *node);
 
 // Literal helpers

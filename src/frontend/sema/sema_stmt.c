@@ -70,6 +70,14 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     sema_check_union_decl(s, node);
     break;
   }
+  case NODE_ERROR_DECL: {
+    sema_check_error_decl(s, node);
+    break;
+  }
+  case NODE_ERROR_SET_DECL: {
+    sema_check_error_set_decl(s, node);
+    break;
+  }
   case NODE_IMPL_DECL: {
     sema_check_impl_decl(s, node);
     break;

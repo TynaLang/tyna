@@ -121,6 +121,20 @@ AstNode *AstNode_new_binary_logical(AstNode *left, AstNode *right, LogicalOp op,
   return node;
 }
 
+AstNode *AstNode_new_binary_is(AstNode *left, AstNode *right, Location loc) {
+  AstNode *node = AstNode_new(NODE_BINARY_IS, loc);
+  node->binary_is.left = left;
+  node->binary_is.right = right;
+  return node;
+}
+
+AstNode *AstNode_new_binary_else(AstNode *left, AstNode *right, Location loc) {
+  AstNode *node = AstNode_new(NODE_BINARY_ELSE, loc);
+  node->binary_else.left = left;
+  node->binary_else.right = right;
+  return node;
+}
+
 AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc) {
   AstNode *node = AstNode_new(NODE_UNARY, loc);
   node->unary.expr = expr;
@@ -289,6 +303,24 @@ AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
   node->union_decl.placeholders = placeholders;
   node->union_decl.is_frozen = is_frozen;
   node->union_decl.is_export = is_export;
+  return node;
+}
+
+AstNode *AstNode_new_error_decl(AstNode *name, List members, bool is_export,
+                                Location loc) {
+  AstNode *node = AstNode_new(NODE_ERROR_DECL, loc);
+  node->error_decl.name = name;
+  node->error_decl.members = members;
+  node->error_decl.is_export = is_export;
+  return node;
+}
+
+AstNode *AstNode_new_error_set_decl(AstNode *name, List members,
+                                    bool is_export, Location loc) {
+  AstNode *node = AstNode_new(NODE_ERROR_SET_DECL, loc);
+  node->error_set_decl.name = name;
+  node->error_set_decl.members = members;
+  node->error_set_decl.is_export = is_export;
   return node;
 }
 
@@ -517,6 +549,20 @@ void Ast_free(AstNode *node) {
     }
     List_free(&node->union_decl.members, 0);
     break;
+  case NODE_ERROR_DECL:
+    Ast_free(node->error_decl.name);
+    for (size_t i = 0; i < node->error_decl.members.len; i++) {
+      Ast_free((AstNode *)node->error_decl.members.items[i]);
+    }
+    List_free(&node->error_decl.members, 0);
+    break;
+  case NODE_ERROR_SET_DECL:
+    Ast_free(node->error_set_decl.name);
+    for (size_t i = 0; i < node->error_set_decl.members.len; i++) {
+      Ast_free((AstNode *)node->error_set_decl.members.items[i]);
+    }
+    List_free(&node->error_set_decl.members, 0);
+    break;
   case NODE_IMPL_DECL:
     for (size_t i = 0; i < node->impl_decl.members.len; i++) {
       Ast_free((AstNode *)node->impl_decl.members.items[i]);
@@ -720,6 +766,24 @@ AstNode *Ast_clone(AstNode *node) {
                 node->union_decl.placeholders.items[i]);
     copy->union_decl.is_frozen = node->union_decl.is_frozen;
     copy->union_decl.is_export = node->union_decl.is_export;
+    break;
+
+  case NODE_ERROR_DECL:
+    copy->error_decl.name = Ast_clone(node->error_decl.name);
+    List_init(&copy->error_decl.members);
+    for (size_t i = 0; i < node->error_decl.members.len; i++)
+      List_push(&copy->error_decl.members,
+                Ast_clone(node->error_decl.members.items[i]));
+    copy->error_decl.is_export = node->error_decl.is_export;
+    break;
+
+  case NODE_ERROR_SET_DECL:
+    copy->error_set_decl.name = Ast_clone(node->error_set_decl.name);
+    List_init(&copy->error_set_decl.members);
+    for (size_t i = 0; i < node->error_set_decl.members.len; i++)
+      List_push(&copy->error_set_decl.members,
+                Ast_clone(node->error_set_decl.members.items[i]));
+    copy->error_set_decl.is_export = node->error_set_decl.is_export;
     break;
 
   case NODE_IMPL_DECL:

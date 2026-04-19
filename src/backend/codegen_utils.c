@@ -45,6 +45,29 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
       panic("Undefined variable '" SV_FMT "' during address-of",
             SV_ARG(node->var.value));
     }
+
+    if (sym->type && sym->type->kind == KIND_RESULT && node->resolved_type &&
+        node->resolved_type != sym->type) {
+      LLVMTypeRef result_ty = cg_get_llvm_type(cg, sym->type);
+      LLVMValueRef result_ptr = sym->value;
+      if (type_equals(node->resolved_type, sym->type->data.result.success)) {
+        LLVMValueRef success_field = LLVMBuildStructGEP2(
+            cg->builder, result_ty, result_ptr, 0, "result_success_addr");
+        LLVMTypeRef target_ptr_ty =
+            LLVMPointerType(cg_get_llvm_type(cg, node->resolved_type), 0);
+        return LLVMBuildBitCast(cg->builder, success_field, target_ptr_ty,
+                                "result_success_ptr");
+      }
+      if (node->resolved_type->kind == KIND_ERROR) {
+        LLVMValueRef payload_field = LLVMBuildStructGEP2(
+            cg->builder, result_ty, result_ptr, 2, "result_payload_addr");
+        LLVMTypeRef target_ptr_ty =
+            LLVMPointerType(cg_get_llvm_type(cg, node->resolved_type), 0);
+        return LLVMBuildBitCast(cg->builder, payload_field, target_ptr_ty,
+                                "result_payload_ptr");
+      }
+    }
+
     return sym->value;
   }
 

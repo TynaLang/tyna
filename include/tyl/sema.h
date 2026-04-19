@@ -27,8 +27,9 @@ typedef enum {
   SYM_FIELD,
   SYM_METHOD,
   SYM_STATIC_METHOD,
-  SYM_VAR,  // General variables/params
-  SYM_FUNC, // General functions
+  SYM_VAR,   // General variables/params
+  SYM_ERROR, // Declared error tag (no storage; not an assignable lvalue)
+  SYM_FUNC,  // General functions
   SYM_MODULE,
 } SymbolKind;
 

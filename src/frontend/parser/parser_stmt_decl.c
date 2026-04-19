@@ -229,6 +229,69 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
                                  false, loc);
 }
 
+AstNode *Parser_parse_error_decl(Parser *p, bool is_export) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'error'
+
+  Token name_token = p->current_token;
+  if (!Parser_expect(p, TOKEN_IDENT, "Expected error name"))
+    return NULL;
+  AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
+
+  List members;
+  List_init(&members);
+
+  if (p->current_token.type == TOKEN_LBRACE) {
+    Parser_token_advance(p);
+    while (p->current_token.type != TOKEN_RBRACE &&
+           p->current_token.type != TOKEN_EOF) {
+      Location mem_loc = p->current_token.loc;
+      Token mem_ident = p->current_token;
+      if (!Parser_expect(p, TOKEN_IDENT, "Expected payload field name")) {
+        Parser_sync(p);
+        continue;
+      }
+
+      if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after field name")) {
+        Parser_sync(p);
+        continue;
+      }
+
+      Type *type = Parser_parse_type_full(p);
+      if (!type) {
+        Parser_sync(p);
+        continue;
+      }
+
+      if (p->current_token.type == TOKEN_SEMI ||
+          p->current_token.type == TOKEN_COMMA) {
+        Parser_token_advance(p);
+      } else if (p->current_token.type != TOKEN_RBRACE) {
+        if (!Parser_expect(p, TOKEN_SEMI,
+                           "Expected ';' or ',' after field type")) {
+          Parser_sync(p);
+          continue;
+        }
+      }
+
+      AstNode *mem_name = AstNode_new_var(mem_ident.text, mem_ident.loc);
+      AstNode *mem_decl =
+          AstNode_new_var_decl(mem_name, NULL, type, 0, false, mem_loc);
+      List_push(&members, mem_decl);
+    }
+
+    if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after error payload")) {
+      Parser_sync(p);
+      return NULL;
+    }
+  } else {
+    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after error declaration"))
+      return NULL;
+  }
+
+  return AstNode_new_error_decl(name_node, members, is_export, loc);
+}
+
 AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume 'union'
@@ -325,6 +388,50 @@ AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
 
   return AstNode_new_union_decl(name_node, members, placeholders, is_frozen,
                                 false, loc);
+}
+
+AstNode *Parser_parse_error_set_decl(Parser *p, bool is_export) {
+  Location loc = p->current_token.loc;
+  Parser_token_advance(p); // consume 'errors'
+
+  Token name_token = p->current_token;
+  if (!Parser_expect(p, TOKEN_IDENT, "Expected error set name"))
+    return NULL;
+  AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
+
+  if (!Parser_expect(p, TOKEN_ASSIGN, "Expected '=' after error set name"))
+    return NULL;
+
+  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after error set name"))
+    return NULL;
+
+  List members;
+  List_init(&members);
+
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    if (p->current_token.type != TOKEN_IDENT) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected error type name in error set");
+      Parser_sync(p);
+      break;
+    }
+
+    AstNode *member =
+        AstNode_new_var(p->current_token.text, p->current_token.loc);
+    List_push(&members, member);
+    Parser_token_advance(p);
+
+    if (p->current_token.type == TOKEN_COMMA)
+      Parser_token_advance(p);
+  }
+
+  if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after error set"))
+    return NULL;
+  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after error set"))
+    return NULL;
+
+  return AstNode_new_error_set_decl(name_node, members, is_export, loc);
 }
 
 AstNode *Parser_parse_impl_decl(Parser *p) {

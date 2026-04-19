@@ -22,45 +22,38 @@ AstNode *Parser_parse_block(Parser *p) {
   return block;
 }
 
+static bool Parser_is_import_path_segment(TokenType type) {
+  return type == TOKEN_IDENT || type == TOKEN_ERROR_KEYWORD ||
+         type == TOKEN_ERRORS;
+}
+
 static AstNode *Parser_parse_import(Parser *p) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume 'import'
 
-  StringView path;
-  StringView alias;
-  size_t cursor = p->lexer->cursor - p->current_token.text.len;
-
-  AstNode *path_expr = Parser_parse_expression(p, 0);
-
-  if (!path_expr) {
+  if (!Parser_is_import_path_segment(p->current_token.type)) {
     ErrorHandler_report(p->eh, loc, "Expected module path after 'import'");
     return NULL;
   }
 
-  if (path_expr->tag == NODE_VAR) {
-    path = path_expr->var.value;
-    alias = path_expr->var.value;
-  } else if (path_expr->tag == NODE_FIELD) {
-    AstNode *root = path_expr;
-    while (root->tag == NODE_FIELD) {
-      root = root->field.object;
-    }
-    if (root->tag != NODE_VAR) {
-      ErrorHandler_report(
-          p->eh, loc,
-          "Expected module path to be an identifier or dotted path");
+  const char *path_start = p->current_token.text.data;
+  const char *path_end = p->current_token.text.data + p->current_token.text.len;
+  StringView alias = p->current_token.text;
+
+  Parser_token_advance(p);
+  while (p->current_token.type == TOKEN_DOT) {
+    Parser_token_advance(p);
+    if (!Parser_is_import_path_segment(p->current_token.type)) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected module path after '.'");
       return NULL;
     }
-
-    alias = path_expr->field.field;
-    const char *end = alias.data + alias.len;
-    path = (StringView){.data = p->lexer->src + cursor,
-                        .len = (size_t)(end - (p->lexer->src + cursor))};
-  } else {
-    ErrorHandler_report(
-        p->eh, loc, "Expected module path to be an identifier or dotted path");
-    return NULL;
+    alias = p->current_token.text;
+    path_end = p->current_token.text.data + p->current_token.text.len;
+    Parser_token_advance(p);
   }
+
+  StringView path = sv_from_parts(path_start, (size_t)(path_end - path_start));
 
   if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after import statement"))
     return NULL;
@@ -172,6 +165,10 @@ AstNode *Parser_parse_statement(Parser *p) {
     return Parser_parse_struct_decl(p, false, is_export);
   case TOKEN_UNION:
     return Parser_parse_union_decl(p, false, is_export);
+  case TOKEN_ERROR_KEYWORD:
+    return Parser_parse_error_decl(p, is_export);
+  case TOKEN_ERRORS:
+    return Parser_parse_error_set_decl(p, is_export);
   case TOKEN_IMPL:
     return Parser_parse_impl_decl(p);
   case TOKEN_FROZEN: {

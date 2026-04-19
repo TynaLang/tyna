@@ -263,6 +263,36 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
   if (!target_type)
     panic("new expression missing target type");
 
+  if (target_type->kind == KIND_ERROR) {
+    if (node->new_expr.args.len > 0 && node->new_expr.field_inits.len > 0) {
+      panic("Cannot mix constructor arguments and error literal fields");
+    }
+
+    LLVMTypeRef struct_ty = cg_get_llvm_type(cg, target_type);
+    LLVMValueRef tmp = LLVMBuildAlloca(cg->builder, struct_ty, "error_tmp");
+    LLVMBuildStore(cg->builder, LLVMConstNull(struct_ty), tmp);
+    for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
+      AstNode *assign = node->new_expr.field_inits.items[i];
+      if (assign->tag != NODE_ASSIGN_EXPR ||
+          assign->assign_expr.target->tag != NODE_VAR) {
+        panic("Invalid error field initializer in codegen");
+      }
+      StringView field_name = assign->assign_expr.target->var.value;
+      Member *member = type_get_member(target_type, field_name);
+      if (!member)
+        panic("Field '%.*s' not found on type %s", (int)field_name.len,
+              field_name.data, type_to_name(target_type));
+      LLVMValueRef field_ptr = LLVMBuildStructGEP2(cg->builder, struct_ty, tmp,
+                                                   member->index, "field_ptr");
+      LLVMValueRef value = cg_expression(cg, assign->assign_expr.value);
+      LLVMTypeRef field_ty = cg_get_llvm_type(cg, member->type);
+      LLVMValueRef casted = cg_cast_value(
+          cg, value, assign->assign_expr.value->resolved_type, field_ty);
+      LLVMBuildStore(cg->builder, casted, field_ptr);
+    }
+    return LLVMBuildLoad2(cg->builder, struct_ty, tmp, "error_value");
+  }
+
   LLVMTypeRef ptr_ty =
       cg_get_llvm_type(cg, type_get_pointer(cg->type_ctx, target_type));
   CGFunction *malloc_fn = cg_find_function(cg, sv_from_cstr("malloc"));
@@ -337,11 +367,17 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
 }
 
 static LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node) {
+  CGSymbol *cgsym = CGSymbolTable_find(cg->current_scope, node->var.value);
   if (!node->resolved_type) {
-    CGSymbol *sym = CGSymbolTable_find(cg->current_scope, node->var.value);
-    if (sym) {
-      node->resolved_type = sym->type;
+    if (cgsym) {
+      node->resolved_type = cgsym->type;
     }
+  }
+
+  if (!cgsym && node->resolved_type &&
+      node->resolved_type->kind == KIND_ERROR) {
+    LLVMTypeRef ty = cg_get_llvm_type(cg, node->resolved_type);
+    return LLVMConstNull(ty);
   }
 
   LLVMValueRef ptr = cg_get_address(cg, node);
@@ -696,6 +732,89 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
   default:
     return NULL;
   }
+}
+
+int cg_result_error_tag_index(Type *result_type, Type *error_type) {
+  if (!result_type || result_type->kind != KIND_RESULT ||
+      !result_type->data.result.error_set)
+    return 0;
+  Type *error_set = result_type->data.result.error_set;
+  for (size_t i = 0; i < error_set->members.len; i++) {
+    Member *m = error_set->members.items[i];
+    if (type_equals(m->type, error_type))
+      return (int)(i + 1);
+  }
+  return 0;
+}
+
+static LLVMValueRef cg_binary_is_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef left = cg_expression(cg, node->binary_is.left);
+  if (!left)
+    return NULL;
+
+  Type *left_type = node->binary_is.left->resolved_type;
+  Type *right_type = node->binary_is.right->resolved_type;
+  LLVMTypeRef bool_ty = LLVMInt1TypeInContext(cg->context);
+
+  if (left_type && left_type->kind == KIND_RESULT) {
+    LLVMValueRef tag =
+        LLVMBuildExtractValue(cg->builder, left, 1, "result_tag");
+    LLVMTypeRef tag_ty = LLVMInt16TypeInContext(cg->context);
+    if (node->binary_is.right->tag == NODE_VAR &&
+        sv_eq_cstr(node->binary_is.right->var.value, "Error")) {
+      return LLVMBuildICmp(cg->builder, LLVMIntNE, tag,
+                           LLVMConstInt(tag_ty, 0, false), "is_error");
+    }
+    if (right_type && right_type->kind == KIND_ERROR) {
+      int idx = cg_result_error_tag_index(left_type, right_type);
+      return LLVMBuildICmp(cg->builder, LLVMIntEQ, tag,
+                           LLVMConstInt(tag_ty, idx, false), "is_error_type");
+    }
+    if (right_type && right_type->kind == KIND_ERROR_SET) {
+      return LLVMBuildICmp(cg->builder, LLVMIntNE, tag,
+                           LLVMConstInt(tag_ty, 0, false), "is_error_set");
+    }
+  }
+
+  if (left_type && left_type->kind == KIND_ERROR) {
+    if (node->binary_is.right->tag == NODE_VAR &&
+        sv_eq_cstr(node->binary_is.right->var.value, "Error")) {
+      return LLVMConstInt(bool_ty, 1, false);
+    }
+    if (right_type && right_type->kind == KIND_ERROR_SET) {
+      return LLVMConstInt(bool_ty, 1, false);
+    }
+    if (right_type && right_type->kind == KIND_ERROR) {
+      LLVMValueRef right = cg_expression(cg, node->binary_is.right);
+      return cg_equality_expr(cg, left, right, OP_EQ);
+    }
+  }
+
+  return LLVMConstInt(bool_ty, 0, false);
+}
+
+static LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef left = cg_expression(cg, node->binary_else.left);
+  if (!left)
+    return NULL;
+  Type *left_type = node->binary_else.left->resolved_type;
+  if (!left_type || left_type->kind != KIND_RESULT)
+    return NULL;
+
+  LLVMValueRef tag = LLVMBuildExtractValue(cg->builder, left, 1, "result_tag");
+  LLVMTypeRef tag_ty = LLVMInt16TypeInContext(cg->context);
+  LLVMValueRef is_error =
+      LLVMBuildICmp(cg->builder, LLVMIntNE, tag, LLVMConstInt(tag_ty, 0, false),
+                    "result_is_error");
+
+  LLVMValueRef right = cg_expression(cg, node->binary_else.right);
+  LLVMValueRef success_raw =
+      LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+  LLVMValueRef success_val =
+      cg_cast_value(cg, success_raw, left_type->data.result.success,
+                    cg_get_llvm_type(cg, node->resolved_type));
+
+  return LLVMBuildSelect(cg->builder, is_error, right, success_val, "else_val");
 }
 
 static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
@@ -1488,6 +1607,10 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
   case NODE_BINARY_EQUALITY:
   case NODE_BINARY_LOGICAL:
     return cg_binary_expr(cg, node);
+  case NODE_BINARY_IS:
+    return cg_binary_is_expr(cg, node);
+  case NODE_BINARY_ELSE:
+    return cg_binary_else_expr(cg, node);
   case NODE_UNARY:
     return cg_unary_expr(cg, node);
   case NODE_TERNARY:

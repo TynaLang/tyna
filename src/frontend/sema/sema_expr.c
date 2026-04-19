@@ -230,6 +230,12 @@ ExprInfo sema_check_expr(Sema *s, AstNode *node) {
   case NODE_BINARY_LOGICAL:
     info = check_binary_logical(s, node);
     break;
+  case NODE_BINARY_IS:
+    info = check_binary_is(s, node);
+    break;
+  case NODE_BINARY_ELSE:
+    info = check_binary_else(s, node);
+    break;
 
   case NODE_CALL:
     info = check_call(s, node);

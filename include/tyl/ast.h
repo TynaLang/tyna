@@ -45,6 +45,8 @@ enum AstKind {
   NODE_BINARY_COMPARE,
   NODE_BINARY_EQUALITY,
   NODE_BINARY_LOGICAL,
+  NODE_BINARY_IS,
+  NODE_BINARY_ELSE,
 
   NODE_UNARY,
 
@@ -65,6 +67,8 @@ enum AstKind {
   NODE_STATIC_MEMBER,
   NODE_STRUCT_DECL,
   NODE_UNION_DECL,
+  NODE_ERROR_DECL,
+  NODE_ERROR_SET_DECL,
   NODE_IMPL_DECL,
   NODE_IMPORT,
   NODE_NEW_EXPR,
@@ -122,6 +126,18 @@ struct AstNode {
       bool is_frozen;
       bool is_export;
     } union_decl;
+
+    struct {
+      AstNode *name;
+      List members; // List<AstNode* (NODE_VAR_DECL)>
+      bool is_export;
+    } error_decl;
+
+    struct {
+      AstNode *name;
+      List members; // List<AstNode* (NODE_VAR)>
+      bool is_export;
+    } error_set_decl;
 
     struct {
       Type *type;
@@ -229,6 +245,16 @@ struct AstNode {
       List args;         // List<AstNode*> for call arguments
       List generic_args; // List<Type*> for generic type arguments
     } call;
+
+    struct {
+      AstNode *left;
+      AstNode *right;
+    } binary_is;
+
+    struct {
+      AstNode *left;
+      AstNode *right;
+    } binary_else;
 
     struct {
       Type *target_type;
@@ -383,8 +409,14 @@ AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
                                  bool is_frozen, bool is_export, Location loc);
 AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
                                 bool is_frozen, bool is_export, Location loc);
+AstNode *AstNode_new_error_decl(AstNode *name, List members, bool is_export,
+                                Location loc);
+AstNode *AstNode_new_error_set_decl(AstNode *name, List members, bool is_export,
+                                    Location loc);
 AstNode *AstNode_new_impl_decl(Type *type, List members, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
+AstNode *AstNode_new_binary_is(AstNode *left, AstNode *right, Location loc);
+AstNode *AstNode_new_binary_else(AstNode *left, AstNode *right, Location loc);
 AstNode *Ast_clone(AstNode *node);
 
 PrimitiveKind Token_token_to_type(TokenType t);

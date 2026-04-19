@@ -121,6 +121,8 @@ int is_binary_operator(TokenType t) {
   case TOKEN_AND:
   case TOKEN_OR:
   case TOKEN_QUESTION:
+  case TOKEN_IS:
+  case TOKEN_ELSE:
     return 1;
   default:
     return 0;
@@ -212,12 +214,16 @@ BindingPower infix_binding_power(TokenType t) {
 
   case TOKEN_EQ:
   case TOKEN_NE:
+  case TOKEN_IS:
     return (struct BindingPower){9, 10};
   case TOKEN_LT:
   case TOKEN_GT:
   case TOKEN_LE:
   case TOKEN_GE:
     return (struct BindingPower){11, 12};
+
+  case TOKEN_ELSE:
+    return (struct BindingPower){3, 4};
 
   case TOKEN_PLUS:
   case TOKEN_MINUS:

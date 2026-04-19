@@ -4,18 +4,56 @@ ExprInfo check_new_expr(Sema *s, AstNode *node) {
   Type *target_type = node->new_expr.target_type;
   if (!target_type) {
     sema_error(s, node, "Missing target type in new expression");
-    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+        .category = VAL_RVALUE,
+    };
+  }
+
+  if (target_type->kind == KIND_ERROR) {
+    if (node->new_expr.args.len > 0 && node->new_expr.field_inits.len > 0) {
+      sema_error(s, node,
+                 "Cannot mix constructor arguments and error literal fields");
+    }
+
+    for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
+      AstNode *assign = node->new_expr.field_inits.items[i];
+      if (assign->tag != NODE_ASSIGN_EXPR ||
+          assign->assign_expr.target->tag != NODE_VAR) {
+        sema_error(s, assign, "Invalid error field initializer");
+        continue;
+      }
+      StringView field_name = assign->assign_expr.target->var.value;
+      Member *member = type_get_member(target_type, field_name);
+      if (!member) {
+        sema_error(s, assign, "Error type '%s' has no field '%s'",
+                   type_to_name(target_type), field_name.data);
+        continue;
+      }
+      sema_coerce(s, assign->assign_expr.value, member->type);
+    }
+
+    if (s->fn_node && s->ret_type && s->ret_type->kind == KIND_RESULT &&
+        s->ret_type->data.result.error_set &&
+        sv_eq(s->ret_type->data.result.error_set->name,
+              sv_from_parts("Error", 5))) {
+      Type *error_set = s->ret_type->data.result.error_set;
+      if (!error_set_contains(error_set, target_type)) {
+        type_add_member(error_set, NULL, target_type, 0);
+      }
+    }
+
+    return (ExprInfo){.type = target_type, .category = VAL_RVALUE};
   }
 
   if (target_type->kind != KIND_STRUCT && target_type->kind != KIND_UNION) {
     sema_error(s, node,
                "Cannot allocate type '%s' with new; expected struct or union",
                type_to_name(target_type));
-    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+        .category = VAL_RVALUE,
+    };
   }
 
   if (node->new_expr.args.len > 0 && node->new_expr.field_inits.len > 0) {
@@ -41,9 +79,10 @@ ExprInfo check_new_expr(Sema *s, AstNode *node) {
         constructor->value->tag != NODE_FUNC_DECL) {
       sema_error(s, node, "Type '%s' has no constructor 'init' available",
                  type_to_name(target_type));
-      return (ExprInfo){.type = type_get_pointer(s->types, target_type),
-                        .category = VAL_RVALUE,
-                        };
+      return (ExprInfo){
+          .type = type_get_pointer(s->types, target_type),
+          .category = VAL_RVALUE,
+      };
     }
 
     AstNode *fn_decl = constructor->value;
@@ -51,18 +90,20 @@ ExprInfo check_new_expr(Sema *s, AstNode *node) {
     if (param_count == 0) {
       sema_error(s, node, "Constructor 'init' on '%s' has no self parameter",
                  type_to_name(target_type));
-      return (ExprInfo){.type = type_get_pointer(s->types, target_type),
-                        .category = VAL_RVALUE,
-                        };
+      return (ExprInfo){
+          .type = type_get_pointer(s->types, target_type),
+          .category = VAL_RVALUE,
+      };
     }
 
     size_t provided_args = node->new_expr.args.len;
     if (provided_args + 1 > param_count) {
       sema_error(s, node, "Constructor '%s' expects %zu arguments, got %zu",
                  type_to_name(target_type), param_count - 1, provided_args);
-      return (ExprInfo){.type = type_get_pointer(s->types, target_type),
-                        .category = VAL_RVALUE,
-                        };
+      return (ExprInfo){
+          .type = type_get_pointer(s->types, target_type),
+          .category = VAL_RVALUE,
+      };
     }
 
     for (size_t i = provided_args + 1; i < param_count; i++) {
@@ -70,9 +111,10 @@ ExprInfo check_new_expr(Sema *s, AstNode *node) {
       if (!param_node->param.default_value) {
         sema_error(s, node, "Constructor '%s' expects %zu arguments, got %zu",
                    type_to_name(target_type), param_count - 1, provided_args);
-        return (ExprInfo){.type = type_get_pointer(s->types, target_type),
-                          .category = VAL_RVALUE,
-                          };
+        return (ExprInfo){
+            .type = type_get_pointer(s->types, target_type),
+            .category = VAL_RVALUE,
+        };
       }
     }
 
@@ -105,7 +147,8 @@ ExprInfo check_new_expr(Sema *s, AstNode *node) {
     }
   }
 
-  return (ExprInfo){.type = type_get_pointer(s->types, target_type),
-                    .category = VAL_RVALUE,
-                    };
+  return (ExprInfo){
+      .type = type_get_pointer(s->types, target_type),
+      .category = VAL_RVALUE,
+  };
 }

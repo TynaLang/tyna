@@ -17,6 +17,9 @@ enum TypeKind {
   KIND_POINTER,  // New: ptr<T>
   KIND_STRUCT,   // Concrete Instance (Sized)
   KIND_UNION,    // Concrete Union (Sized)
+  KIND_ERROR,    // Error payload type
+  KIND_ERROR_SET, // Named or anonymous error set
+  KIND_RESULT,   // Result type T ! ErrorSet
   KIND_TEMPLATE, // Generic Blueprint (Unsized)
 };
 
@@ -63,6 +66,10 @@ struct Type {
       Type *from_template;
       List generic_args; // List<Type*> (e.g. [i32])
     } instance;
+    struct {
+      Type *success;
+      Type *error_set;
+    } result;
   } data;
 
   List members;         // List<Member*> - Resolved for concrete types
@@ -91,6 +98,10 @@ Type *type_get_pointer(TypeContext *ctx, Type *to);
 Type *type_get_named(TypeContext *ctx, StringView name);
 Type *type_get_struct(TypeContext *ctx, StringView name);
 Type *type_get_union(TypeContext *ctx, StringView name);
+Type *type_get_error(TypeContext *ctx, StringView name);
+Type *type_get_error_set(TypeContext *ctx, StringView name);
+Type *type_get_error_set_anonymous(TypeContext *ctx);
+Type *type_get_result(TypeContext *ctx, Type *success, Type *error_set);
 Type *type_get_union_anonymous(TypeContext *ctx, List types);
 Type *type_get_template(TypeContext *ctx, StringView name);
 Type *type_get_instance(TypeContext *ctx, Type *template_type, List args);

@@ -167,6 +167,79 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
   LLVMBuildCall2(cg->builder, print_fn->type, print_fn->value, nl_args, 1, "");
 }
 
+static LLVMValueRef cg_build_error_payload_array(Codegen *cg,
+                                                 LLVMValueRef error_val,
+                                                 Type *error_type,
+                                                 Type *result_type) {
+  LLVMTypeRef result_ty = cg_get_llvm_type(cg, result_type);
+  LLVMTypeRef payload_ty = LLVMStructGetTypeAtIndex(result_ty, 2);
+  LLVMValueRef tmp =
+      LLVMBuildAlloca(cg->builder, payload_ty, "result_error_payload");
+  LLVMBuildStore(cg->builder, LLVMConstNull(payload_ty), tmp);
+
+  LLVMTypeRef error_ty = cg_get_llvm_type(cg, error_type);
+  LLVMValueRef error_struct = error_val;
+  if (LLVMGetTypeKind(LLVMTypeOf(error_val)) == LLVMPointerTypeKind) {
+    error_struct =
+        LLVMBuildLoad2(cg->builder, error_ty, error_val, "error_struct_load");
+  }
+  LLVMValueRef error_ptr = LLVMBuildBitCast(
+      cg->builder, tmp, LLVMPointerType(error_ty, 0), "result_error_tmp");
+  LLVMBuildStore(cg->builder, error_struct, error_ptr);
+
+  return LLVMBuildLoad2(cg->builder, payload_ty, tmp, "result_payload");
+}
+
+static LLVMValueRef cg_build_result_value(Codegen *cg, AstNode *expr,
+                                          Type *result_type) {
+  if (!expr) {
+    return LLVMConstNull(cg_get_llvm_type(cg, result_type));
+  }
+
+  LLVMValueRef expr_val = cg_expression(cg, expr);
+  Type *expr_type = expr->resolved_type;
+  if (!expr_type) {
+    expr_type = type_get_primitive(cg->type_ctx, PRIM_UNKNOWN);
+  }
+
+  if (expr_type->kind == KIND_RESULT) {
+    return expr_val;
+  }
+
+  LLVMTypeRef result_ty = cg_get_llvm_type(cg, result_type);
+  if (result_type->kind != KIND_RESULT)
+    return expr_val;
+
+  LLVMValueRef result = LLVMGetUndef(result_ty);
+  if (expr_type->kind != KIND_ERROR) {
+    LLVMValueRef success_val =
+        cg_cast_value(cg, expr_val, expr_type,
+                      cg_get_llvm_type(cg, result_type->data.result.success));
+    result = LLVMBuildInsertValue(cg->builder, result, success_val, 0,
+                                  "result_success");
+  }
+
+  LLVMTypeRef tag_ty = LLVMInt16TypeInContext(cg->context);
+  LLVMValueRef tag = LLVMConstInt(tag_ty, 0, false);
+  if (expr_type->kind == KIND_ERROR) {
+    int idx = cg_result_error_tag_index(result_type, expr_type);
+    if (idx <= 0) {
+      panic("error type '%s' not in function result error set",
+            type_to_name(expr_type));
+    }
+    tag = LLVMConstInt(tag_ty, (unsigned)idx, false);
+  }
+  result = LLVMBuildInsertValue(cg->builder, result, tag, 1, "result_tag");
+
+  if (expr_type->kind == KIND_ERROR) {
+    LLVMValueRef payload_val =
+        cg_build_error_payload_array(cg, expr_val, expr_type, result_type);
+    result = LLVMBuildInsertValue(cg->builder, result, payload_val, 2,
+                                  "result_payload");
+  }
+  return result;
+}
+
 static LLVMValueRef cg_string_hash(Codegen *cg, LLVMValueRef str_val) {
   CGFunction *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_hash"));
   if (!fn)
@@ -497,7 +570,17 @@ void cg_statement(Codegen *cg, AstNode *node) {
   }
   case NODE_RETURN_STMT: {
     if (node->return_stmt.expr) {
-      LLVMValueRef val = cg_expression(cg, node->return_stmt.expr);
+      LLVMValueRef val;
+      if (cg->current_function_ref && cg->current_function_ref->decl &&
+          cg->current_function_ref->decl->func_decl.return_type &&
+          cg->current_function_ref->decl->func_decl.return_type->kind ==
+              KIND_RESULT) {
+        val = cg_build_result_value(
+            cg, node->return_stmt.expr,
+            cg->current_function_ref->decl->func_decl.return_type);
+      } else {
+        val = cg_expression(cg, node->return_stmt.expr);
+      }
       LLVMBuildRet(cg->builder, val);
     } else {
       LLVMBuildRetVoid(cg->builder);
@@ -506,10 +589,10 @@ void cg_statement(Codegen *cg, AstNode *node) {
   }
   case NODE_STRUCT_DECL:
   case NODE_UNION_DECL:
-    // Type declarations are handled globally in cg_lower_all_structs
-    break;
+  case NODE_ERROR_DECL:
+  case NODE_ERROR_SET_DECL:
   case NODE_IMPORT:
-    // Imports are handled during semantic analysis and do not emit code.
+    // Declarations and module imports do not emit code directly.
     break;
   case NODE_DEFER: {
     if (cg->defers.len == 0)

@@ -1,0 +1,13 @@
+import std.error;
+
+export fn open(path: String): *void ! Error {
+    let handle: *void = null;
+    if (handle == null) {
+        return IOError {
+            code: 1,
+            message: "File not found",
+            path: path,
+        };
+    }
+    return handle;
+}

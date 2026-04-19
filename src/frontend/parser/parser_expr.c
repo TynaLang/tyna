@@ -225,6 +225,57 @@ AstNode *Parser_parse_primary(Parser *p) {
         return NULL;
       return AstNode_new_static_member(t.text, member.text, t.loc);
     }
+
+    if (p->current_token.type == TOKEN_LBRACE) {
+      Type *target_type = type_get_named(p->type_ctx, t.text);
+      if (!target_type)
+        target_type = type_get_struct(p->type_ctx, t.text);
+      if (!target_type)
+        target_type = type_get_union(p->type_ctx, t.text);
+
+      if (!target_type) {
+        ErrorHandler_report(p->eh, t.loc, "Unknown type '%.*s' in constructor",
+                            (int)t.text.len, t.text.data);
+        return NULL;
+      }
+
+      List args;
+      List_init(&args);
+      List field_inits;
+      List_init(&field_inits);
+
+      Parser_token_advance(p);
+      while (p->current_token.type != TOKEN_RBRACE &&
+             p->current_token.type != TOKEN_EOF) {
+        if (p->current_token.type != TOKEN_IDENT) {
+          ErrorHandler_report(p->eh, p->current_token.loc,
+                              "Expected field name in struct literal");
+          return NULL;
+        }
+        StringView field_name = p->current_token.text;
+        Location field_loc = p->current_token.loc;
+        Parser_token_advance(p);
+        if (!Parser_expect(p, TOKEN_COLON,
+                           "Expected ':' after struct field name"))
+          return NULL;
+        AstNode *value = Parser_parse_expression(p, 0);
+        if (!value)
+          return NULL;
+        AstNode *field_target = AstNode_new_var(field_name, field_loc);
+        AstNode *assign = AstNode_new_assign_expr(field_target, value, field_loc);
+        List_push(&field_inits, assign);
+        if (p->current_token.type == TOKEN_COMMA)
+          Parser_token_advance(p);
+        else
+          break;
+      }
+      if (!Parser_expect(p, TOKEN_RBRACE,
+                         "Expected '}' at end of struct literal"))
+        return NULL;
+
+      return AstNode_new_new_expr(target_type, args, field_inits, t.loc);
+    }
+
     return AstNode_new_var(t.text, t.loc);
   case TOKEN_STRING:
     return AstNode_new_string(t.text, t.loc);
@@ -434,6 +485,14 @@ AstNode *Parser_parse_expression(Parser *p, int min_bp) {
     case TOKEN_OR:
       left = AstNode_new_binary_logical(left, right,
                                         token_to_logical_op(op.type), op.loc);
+      break;
+
+    case TOKEN_IS:
+      left = AstNode_new_binary_is(left, right, op.loc);
+      break;
+
+    case TOKEN_ELSE:
+      left = AstNode_new_binary_else(left, right, op.loc);
       break;
 
     default:

@@ -4,9 +4,16 @@ Type *Parser_parse_type_full(Parser *p) {
   Type *res = NULL;
   int pointer_depth = 0;
 
+  while (p->current_token.type == TOKEN_CONST) {
+    Parser_token_advance(p);
+  }
+
   while (p->current_token.type == TOKEN_STAR) {
     pointer_depth++;
     Parser_token_advance(p);
+    while (p->current_token.type == TOKEN_CONST) {
+      Parser_token_advance(p);
+    }
   }
 
   if (p->current_token.type == TOKEN_LBRACKET) {
@@ -50,7 +57,7 @@ Type *Parser_parse_type_full(Parser *p) {
     }
 
     res = type_get_array(p->type_ctx, elementType,
-                        has_fixed_length ? (uint64_t)array_len : 0);
+                         has_fixed_length ? (uint64_t)array_len : 0);
   } else {
     PrimitiveKind kind = Token_token_to_type(p->current_token.type);
     if (kind != PRIM_UNKNOWN) {
@@ -113,6 +120,8 @@ Type *Parser_parse_type_full(Parser *p) {
       } else {
         if (sv_eq_cstr(name, "String")) {
           res = type_get_primitive(p->type_ctx, PRIM_STRING);
+        } else if (sv_eq_cstr(name, "Error")) {
+          res = type_get_error_set_anonymous(p->type_ctx);
         } else {
           res = type_get_named(p->type_ctx, name);
           if (!res)
@@ -125,6 +134,18 @@ Type *Parser_parse_type_full(Parser *p) {
   if (!res) {
     ErrorHandler_report(p->eh, p->current_token.loc, "Expected type");
     return NULL;
+  }
+
+  while (pointer_depth-- > 0) {
+    res = type_get_pointer(p->type_ctx, res);
+  }
+
+  if (p->current_token.type == TOKEN_NOT) {
+    Parser_token_advance(p);
+    Type *error_set = Parser_parse_type_full(p);
+    if (!error_set)
+      return NULL;
+    res = type_get_result(p->type_ctx, res, error_set);
   }
 
   if (p->current_token.type == TOKEN_BIT_OR) {

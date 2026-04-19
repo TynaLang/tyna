@@ -1,0 +1,16 @@
+export error IOError {
+    code: i32;
+    message: *const char;
+    path: *const char;
+}
+
+export error NullError {
+    code: i32;
+    message: *const char;
+    some_field: i32;
+}
+
+export errors SystemDefined = {
+    IOError,
+    NullError,
+};

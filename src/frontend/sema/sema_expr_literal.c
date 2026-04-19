@@ -111,52 +111,65 @@ ExprInfo check_literal(Sema *s, AstNode *node) {
                             ? PRIM_F32
                             : PRIM_F64),
           .category = VAL_RVALUE,
-          };
+      };
     } else {
-      return (ExprInfo){.type = type_get_primitive(s->types, PRIM_I32),
-                        .category = VAL_RVALUE,
-                        };
+      return (ExprInfo){
+          .type = type_get_primitive(s->types, PRIM_I32),
+          .category = VAL_RVALUE,
+      };
     }
 
   case NODE_CHAR:
-    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_CHAR),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_CHAR),
+        .category = VAL_RVALUE,
+    };
 
   case NODE_STRING:
-    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_STRING),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_STRING),
+        .category = VAL_RVALUE,
+    };
 
   case NODE_BOOL:
-    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_BOOL),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_BOOL),
+        .category = VAL_RVALUE,
+    };
 
   case NODE_NULL:
-    return (ExprInfo){.type = type_get_pointer(
-                          s->types, type_get_primitive(s->types, PRIM_UNKNOWN)),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_pointer(s->types,
+                                 type_get_primitive(s->types, PRIM_UNKNOWN)),
+        .category = VAL_RVALUE,
+    };
 
   default:
-    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+        .category = VAL_RVALUE,
+    };
   }
 }
 
 ExprInfo check_var(Sema *s, AstNode *node) {
   Symbol *sym = sema_resolve(s, node->var.value);
   if (!sym) {
+    if (sv_eq_cstr(node->var.value, "Error")) {
+      Type *error_set = type_get_error_set(s->types, node->var.value);
+      return (ExprInfo){.type = error_set, .category = VAL_RVALUE};
+    }
+
     sema_error(s, node, "Undefined variable '" SV_FMT "'",
                SV_ARG(node->var.value));
-    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+        .category = VAL_RVALUE,
+    };
   }
 
+  node->resolved_type = sym->type;
   bool is_lvalue = sym->kind == SYM_VAR || sym->kind == SYM_FIELD;
-  return (ExprInfo){
-      .type = sym->type, .category = is_lvalue ? VAL_LVALUE : VAL_RVALUE};
+  return (ExprInfo){.type = sym->type,
+                    .category = is_lvalue ? VAL_LVALUE : VAL_RVALUE};
 }

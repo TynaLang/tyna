@@ -139,10 +139,9 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     return union_ty;
   }
 
-  if (t->kind == KIND_STRUCT) {
-    // For structs, we use named types to support recursion and cache them.
-    // Use a stable semantic name for generic instances so equivalent types
-    // share the same LLVM type across the compiler.
+  if (t->kind == KIND_STRUCT || t->kind == KIND_ERROR) {
+    // For structs and error payloads, use named types to support recursion
+    // and cache them. Error payloads are structurally equivalent to structs.
     char buf[512];
     cg_get_struct_name(t, buf, sizeof(buf));
     LLVMTypeRef struct_ty = LLVMGetTypeByName2(cg->context, buf);
@@ -173,6 +172,59 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
       List_pop(&cg->struct_types_in_progress);
     }
     return struct_ty;
+  }
+
+  if (t->kind == KIND_ERROR_SET) {
+    char buf[512];
+    if (t->name.len > 0) {
+      snprintf(buf, sizeof(buf), "errors_%.*s", (int)t->name.len, t->name.data);
+    } else {
+      snprintf(buf, sizeof(buf), "anon_errors_%p", (void *)t);
+    }
+    LLVMTypeRef set_ty = LLVMGetTypeByName2(cg->context, buf);
+    if (!set_ty) {
+      set_ty = LLVMStructCreateNamed(cg->context, buf);
+    }
+    if (!set_ty || LLVMGetTypeKind(set_ty) != LLVMStructTypeKind) {
+      panic("Expected LLVM struct type for '%s'", buf);
+    }
+    if (LLVMIsOpaqueStruct(set_ty)) {
+      // Error sets do not currently carry a direct runtime representation.
+      // We lower them to an empty named struct so they can still participate
+      // in type lowering and naming.
+      LLVMStructSetBody(set_ty, NULL, 0, false);
+    }
+    return set_ty;
+  }
+
+  if (t->kind == KIND_RESULT) {
+    char success_name[256] = {0};
+    char error_name[256] = {0};
+    cg_sanitize_type_name(type_to_name(t->data.result.success), success_name,
+                          sizeof(success_name));
+    cg_sanitize_type_name(type_to_name(t->data.result.error_set), error_name,
+                          sizeof(error_name));
+    char buf[512];
+    snprintf(buf, sizeof(buf), "result_%s_%s", success_name, error_name);
+    LLVMTypeRef result_ty = LLVMGetTypeByName2(cg->context, buf);
+    if (!result_ty) {
+      result_ty = LLVMStructCreateNamed(cg->context, buf);
+    }
+    if (!result_ty || LLVMGetTypeKind(result_ty) != LLVMStructTypeKind) {
+      panic("Expected LLVM struct type for '%s'", buf);
+    }
+    if (LLVMIsOpaqueStruct(result_ty)) {
+      LLVMTypeRef success_ty = cg_get_llvm_type(cg, t->data.result.success);
+      if (LLVMGetTypeKind(success_ty) == LLVMVoidTypeKind) {
+        success_ty = LLVMArrayType(LLVMInt8TypeInContext(cg->context), 0);
+      }
+      LLVMTypeRef tag_ty = LLVMInt16TypeInContext(cg->context);
+      LLVMTypeRef payload_ty =
+          LLVMArrayType(LLVMInt8TypeInContext(cg->context), 46);
+      LLVMTypeRef fields[3] = {success_ty, tag_ty, payload_ty};
+      LLVMStructSetBody(result_ty, fields, 3, false);
+    }
+    return result_ty;
   }
 
   if (t->kind == KIND_TEMPLATE) {

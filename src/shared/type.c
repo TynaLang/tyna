@@ -215,6 +215,95 @@ Type *type_get_union(TypeContext *ctx, StringView name) {
   return u;
 }
 
+Type *type_get_error(TypeContext *ctx, StringView name) {
+  Type *existing = type_get_named(ctx, name);
+  if (existing) {
+    if (existing->kind == KIND_ERROR)
+      return existing;
+    if (existing->kind == KIND_STRUCT && existing->members.len == 0 &&
+        !existing->is_intrinsic) {
+      existing->kind = KIND_ERROR;
+      return existing;
+    }
+    return existing;
+  }
+
+  Type *err = xcalloc(1, sizeof(Type));
+  err->kind = KIND_ERROR;
+  err->name = name;
+  List_init(&err->members);
+  List_init(&err->methods);
+  err->alignment = 0;
+  err->size = 0;
+  err->is_frozen = false;
+  err->is_intrinsic = false;
+  List_push(&ctx->structs, err);
+  return err;
+}
+
+Type *type_get_error_set(TypeContext *ctx, StringView name) {
+  Type *existing = type_get_named(ctx, name);
+  if (existing) {
+    if (existing->kind == KIND_ERROR_SET)
+      return existing;
+    if (existing->kind == KIND_STRUCT && existing->members.len == 0 &&
+        !existing->is_intrinsic) {
+      existing->kind = KIND_ERROR_SET;
+      return existing;
+    }
+    return existing;
+  }
+
+  Type *set = xcalloc(1, sizeof(Type));
+  set->kind = KIND_ERROR_SET;
+  set->name = name;
+  List_init(&set->members);
+  List_init(&set->methods);
+  set->alignment = 0;
+  set->size = 0;
+  set->is_frozen = false;
+  set->is_intrinsic = false;
+  List_push(&ctx->structs, set);
+  return set;
+}
+
+Type *type_get_error_set_anonymous(TypeContext *ctx) {
+  Type *set = xcalloc(1, sizeof(Type));
+  set->kind = KIND_ERROR_SET;
+  set->name = sv_from_parts("", 0);
+  List_init(&set->members);
+  List_init(&set->methods);
+  set->alignment = 0;
+  set->size = 0;
+  set->is_frozen = false;
+  set->is_intrinsic = false;
+  List_push(&ctx->instances, set);
+  return set;
+}
+
+Type *type_get_result(TypeContext *ctx, Type *success, Type *error_set) {
+  for (size_t i = 0; i < ctx->instances.len; i++) {
+    Type *t = ctx->instances.items[i];
+    if (t->kind == KIND_RESULT && t->data.result.success == success &&
+        t->data.result.error_set == error_set) {
+      return t;
+    }
+  }
+
+  Type *res = xcalloc(1, sizeof(Type));
+  res->kind = KIND_RESULT;
+  res->data.result.success = success;
+  res->data.result.error_set = error_set;
+  res->alignment = 0;
+  res->size = 0;
+  List_init(&res->members);
+  List_init(&res->methods);
+  res->is_frozen = true;
+  res->is_intrinsic = false;
+  List_push(&ctx->instances, res);
+  return res;
+}
+
 Type *type_get_union_anonymous(TypeContext *ctx, List types) {
   // Deduplicate identical anonymous unions if possible.
   for (size_t i = 0; i < ctx->instances.len; i++) {
@@ -345,8 +434,8 @@ Type *type_get_array(TypeContext *ctx, Type *element_type,
   List args;
   List_init(&args);
   List_push(&args, element_type);
-  Type *result = type_get_instance_fixed(ctx, array_template, args,
-                                         fixed_array_len);
+  Type *result =
+      type_get_instance_fixed(ctx, array_template, args, fixed_array_len);
   List_free(&args, 0);
   return result;
 }
@@ -494,6 +583,7 @@ bool type_equals(Type *a, Type *b) {
     return a->data.primitive == b->data.primitive;
   case KIND_STRUCT:
   case KIND_UNION:
+  case KIND_ERROR:
     if (!sv_eq(a->name, b->name))
       return false;
     if (a->data.instance.from_template != b->data.instance.from_template)
@@ -501,6 +591,19 @@ bool type_equals(Type *a, Type *b) {
     if (a->fixed_array_len != b->fixed_array_len)
       return false;
     return true;
+  case KIND_ERROR_SET:
+    if (a->name.len == 0 || b->name.len == 0)
+      return a == b;
+    if (!sv_eq(a->name, b->name))
+      return false;
+    if (a->data.instance.from_template != b->data.instance.from_template)
+      return false;
+    if (a->fixed_array_len != b->fixed_array_len)
+      return false;
+    return true;
+  case KIND_RESULT:
+    return type_equals(a->data.result.success, b->data.result.success) &&
+           type_equals(a->data.result.error_set, b->data.result.error_set);
   case KIND_TEMPLATE:
     if (!sv_eq(a->name, b->name))
       return false;
@@ -595,6 +698,44 @@ const char *type_to_name(Type *t) {
     depth--;
     return struct_buf;
   }
+  case KIND_ERROR: {
+    static char error_buf[1024];
+    snprintf(error_buf, sizeof(error_buf), "error %.*s", (int)t->name.len,
+             t->name.data);
+    depth--;
+    return error_buf;
+  }
+  case KIND_ERROR_SET: {
+    static char set_buf[1024];
+    if (t->name.len > 0) {
+      snprintf(set_buf, sizeof(set_buf), "errors %.*s", (int)t->name.len,
+               t->name.data);
+    } else if (t->members.len == 0) {
+      snprintf(set_buf, sizeof(set_buf), "errors {}");
+    } else {
+      char members_buf[512] = {0};
+      strcat(members_buf, "{");
+      for (size_t i = 0; i < t->members.len; i++) {
+        if (i > 0)
+          strcat(members_buf, ", ");
+        Member *m = t->members.items[i];
+        if (m->type)
+          strcat(members_buf, type_to_name(m->type));
+      }
+      strcat(members_buf, "}");
+      snprintf(set_buf, sizeof(set_buf), "errors %s", members_buf);
+    }
+    depth--;
+    return set_buf;
+  }
+  case KIND_RESULT: {
+    static char result_buf[1024];
+    snprintf(result_buf, sizeof(result_buf), "%s ! %s",
+             type_to_name(t->data.result.success),
+             type_to_name(t->data.result.error_set));
+    depth--;
+    return result_buf;
+  }
   case KIND_UNION: {
     static char union_buf[1024];
     if (t->name.len > 0 &&
@@ -658,6 +799,8 @@ bool type_is_concrete(Type *t) {
     return type_is_concrete(t->data.pointer_to);
   case KIND_STRUCT:
   case KIND_UNION:
+  case KIND_ERROR:
+  case KIND_ERROR_SET:
     if (t->data.instance.from_template == NULL)
       return t->members.len > 0;
     for (size_t i = 0; i < t->data.instance.generic_args.len; i++) {
@@ -671,6 +814,9 @@ bool type_is_concrete(Type *t) {
         return false;
     }
     return true;
+  case KIND_RESULT:
+    return type_is_concrete(t->data.result.success) &&
+           type_is_concrete(t->data.result.error_set);
   case KIND_TEMPLATE:
     return false;
   default:
@@ -727,8 +873,7 @@ int type_can_implicitly_cast(Type *to, Type *from) {
     return to->size >= from->size;
   }
   // Pointer to void* is usually allowed
-  if (to->kind == KIND_POINTER &&
-      to->data.pointer_to->kind == KIND_PRIMITIVE &&
+  if (to->kind == KIND_POINTER && to->data.pointer_to->kind == KIND_PRIMITIVE &&
       to->data.pointer_to->data.primitive == PRIM_VOID)
     return 1;
 
@@ -739,6 +884,42 @@ int type_can_implicitly_cast(Type *to, Type *from) {
     if (from->data.pointer_to->kind == KIND_PRIMITIVE &&
         from->data.pointer_to->data.primitive == PRIM_VOID)
       return 1;
+  }
+
+  if (to->kind == KIND_ERROR_SET && from->kind == KIND_ERROR) {
+    for (size_t i = 0; i < to->members.len; i++) {
+      Member *m = to->members.items[i];
+      if (type_equals(m->type, from))
+        return 1;
+    }
+  }
+
+  if (to->kind == KIND_RESULT) {
+    if (type_equals(to->data.result.success, from))
+      return 1;
+    if (from->kind == KIND_RESULT) {
+      if (type_equals(to, from))
+        return 1;
+      if (to->data.result.error_set &&
+          to->data.result.error_set->kind == KIND_ERROR_SET &&
+          sv_eq(to->data.result.error_set->name, sv_from_parts("Error", 5))) {
+        return type_can_implicitly_cast(to->data.result.success,
+                                        from->data.result.success);
+      }
+      return 0;
+    }
+    if (from->kind == KIND_ERROR && to->data.result.error_set) {
+      Type *error_set = to->data.result.error_set;
+      if (error_set->kind == KIND_ERROR_SET) {
+        if (sv_eq(error_set->name, sv_from_parts("Error", 5)))
+          return 1;
+        for (size_t i = 0; i < error_set->members.len; i++) {
+          Member *m = error_set->members.items[i];
+          if (type_equals(m->type, from))
+            return 1;
+        }
+      }
+    }
   }
 
   if (to->kind == KIND_UNION && to->is_tagged_union) {

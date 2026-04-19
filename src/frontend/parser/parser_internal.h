@@ -39,6 +39,8 @@ AstNode *Parser_parse_for_stmt(Parser *p);
 AstNode *Parser_parse_switch_stmt(Parser *p);
 AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export);
 AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export);
+AstNode *Parser_parse_error_decl(Parser *p, bool is_export);
+AstNode *Parser_parse_error_set_decl(Parser *p, bool is_export);
 AstNode *Parser_parse_impl_decl(Parser *p);
 
 AstNode *Parser_parse_call(Parser *p, AstNode *expr, List generic_args);

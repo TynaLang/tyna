@@ -37,10 +37,11 @@ static LLVMTypeRef *cg_build_param_types(Codegen *cg, AstNode *func_node) {
 }
 
 void cg_init_CGFunction(CGFunction *f, StringView name, LLVMValueRef value,
-                        LLVMTypeRef type, bool is_system) {
+                        LLVMTypeRef type, bool is_system, AstNode *decl) {
   f->name = name;
   f->value = value;
   f->type = type;
+  f->decl = decl;
   f->is_system = is_system;
 }
 
@@ -76,7 +77,7 @@ void cg_define_function(Codegen *cg, AstNode *node) {
   }
 
   CGFunction *f = malloc(sizeof(CGFunction));
-  cg_init_CGFunction(f, name, func, func_type, false);
+  cg_init_CGFunction(f, name, func, func_type, false, node);
   List_push(&cg->functions, f);
 
   free(llvm_name);

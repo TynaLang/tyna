@@ -1,0 +1,21 @@
+import std.error;
+import std.fs;
+
+fn main(): i32 {
+    let result = open("missing.txt");
+
+    if (result is Error) {
+        print("we got an error:");
+    }
+
+    if (result is IOError) {
+        print("ioerror:", result.path);
+        return 1;
+    } else {
+        print("some other error");
+        return 1;
+    }
+
+    print("opened");
+    return 0;
+}
