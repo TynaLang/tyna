@@ -55,8 +55,12 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
   Token ident = p->current_token;
   Location loc = ident.loc;
 
-  if (!Parser_expect(p, TOKEN_IDENT, "Expected function name"))
+  if (p->current_token.type != TOKEN_IDENT &&
+      p->current_token.type != TOKEN_NEW) {
+    ErrorHandler_report(p->eh, p->current_token.loc, "Expected function name");
     return NULL;
+  }
+  Parser_token_advance(p);
 
   if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after function name"))
     return NULL;
@@ -185,8 +189,11 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
 
     if (p->current_token.type == TOKEN_FN) {
       AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
-      if (fn)
+      if (fn) {
         List_push(&members, fn);
+      } else {
+        Parser_sync(p);
+      }
       continue;
     }
 
@@ -346,8 +353,11 @@ AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
 
     if (p->current_token.type == TOKEN_FN) {
       AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
-      if (fn)
+      if (fn) {
         List_push(&members, fn);
+      } else {
+        Parser_sync(p);
+      }
       continue;
     }
 
@@ -438,70 +448,67 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume 'impl'
 
-  if (p->current_token.type != TOKEN_IDENT) {
-    ErrorHandler_report(p->eh, p->current_token.loc,
-                        "Expected type name after 'impl'");
-    Parser_sync(p);
-    return NULL;
-  }
-
-  StringView owner_name = p->current_token.text;
-  Parser_token_advance(p);
-
   List placeholders;
   List_init(&placeholders);
-  if (p->current_token.type == TOKEN_LT) {
-    Parser_token_advance(p);
-    while (p->current_token.type != TOKEN_GT &&
-           p->current_token.type != TOKEN_EOF) {
-      if (p->current_token.type != TOKEN_IDENT) {
-        ErrorHandler_report(p->eh, p->current_token.loc,
-                            "Expected placeholder name");
-        break;
-      }
-      StringView *pl = xmalloc(sizeof(StringView));
-      *pl = p->current_token.text;
-      List_push(&placeholders, pl);
-      Parser_token_advance(p);
-      if (p->current_token.type == TOKEN_COMMA)
-        Parser_token_advance(p);
-    }
-    Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
-  }
-
-  if (placeholders.len > 0) {
-    Parser_placeholder_scope_push(p);
-    for (size_t i = 0; i < placeholders.len; i++) {
-      StringView placeholder_name = *(StringView *)placeholders.items[i];
-      Parser_add_placeholder(p, placeholder_name);
-    }
-  }
-
   Type *impl_type = NULL;
-  if (placeholders.len > 0) {
-    Type *template_type = type_get_template(p->type_ctx, owner_name);
-    if (!template_type) {
-      ErrorHandler_report(p->eh, p->current_token.loc,
-                          "Undefined generic type '%.*s' for impl",
-                          (int)owner_name.len, owner_name.data);
-      Parser_sync(p);
-      if (placeholders.len > 0)
-        Parser_placeholder_scope_pop(p);
-      return NULL;
+  StringView owner_name = {0};
+
+  if (p->current_token.type == TOKEN_IDENT) {
+    owner_name = p->current_token.text;
+    Parser_token_advance(p);
+
+    if (p->current_token.type == TOKEN_LT) {
+      Parser_token_advance(p);
+      while (p->current_token.type != TOKEN_GT &&
+             p->current_token.type != TOKEN_EOF) {
+        if (p->current_token.type != TOKEN_IDENT) {
+          ErrorHandler_report(p->eh, p->current_token.loc,
+                              "Expected placeholder name");
+          break;
+        }
+        StringView *pl = xmalloc(sizeof(StringView));
+        *pl = p->current_token.text;
+        List_push(&placeholders, pl);
+        Parser_token_advance(p);
+        if (p->current_token.type == TOKEN_COMMA)
+          Parser_token_advance(p);
+      }
+      Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
     }
 
-    List args;
-    List_init(&args);
-    for (size_t i = 0; i < placeholders.len; i++) {
-      StringView placeholder_name = *(StringView *)placeholders.items[i];
-      Type *placeholder = Parser_find_placeholder(p, placeholder_name);
-      List_push(&args, placeholder);
+    if (placeholders.len > 0) {
+      Parser_placeholder_scope_push(p);
+      for (size_t i = 0; i < placeholders.len; i++) {
+        StringView placeholder_name = *(StringView *)placeholders.items[i];
+        Parser_add_placeholder(p, placeholder_name);
+      }
     }
-    impl_type = type_get_instance(p->type_ctx, template_type, args);
-    List_free(&args, 0);
-  } else {
+
     if (sv_eq_cstr(owner_name, "String")) {
+      impl_type = type_get_string_buffer(p->type_ctx);
+    } else if (sv_eq_cstr(owner_name, "str")) {
       impl_type = type_get_primitive(p->type_ctx, PRIM_STRING);
+    } else if (placeholders.len > 0) {
+      Type *template_type = type_get_template(p->type_ctx, owner_name);
+      if (!template_type) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Undefined generic type '%.*s' for impl",
+                            (int)owner_name.len, owner_name.data);
+        Parser_sync(p);
+        if (placeholders.len > 0)
+          Parser_placeholder_scope_pop(p);
+        return NULL;
+      }
+
+      List args;
+      List_init(&args);
+      for (size_t i = 0; i < placeholders.len; i++) {
+        StringView placeholder_name = *(StringView *)placeholders.items[i];
+        Type *placeholder = Parser_find_placeholder(p, placeholder_name);
+        List_push(&args, placeholder);
+      }
+      impl_type = type_get_instance(p->type_ctx, template_type, args);
+      List_free(&args, 0);
     } else {
       impl_type = type_get_named(p->type_ctx, owner_name);
       if (!impl_type)
@@ -509,15 +516,24 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
       if (!impl_type)
         impl_type = type_get_union(p->type_ctx, owner_name);
     }
+  } else {
+    impl_type = Parser_parse_type_full(p);
     if (!impl_type) {
       ErrorHandler_report(p->eh, p->current_token.loc,
-                          "Undefined type '%.*s' for impl", (int)owner_name.len,
-                          owner_name.data);
+                          "Expected type name after 'impl'");
       Parser_sync(p);
-      if (placeholders.len > 0)
-        Parser_placeholder_scope_pop(p);
       return NULL;
     }
+  }
+
+  if (!impl_type) {
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Undefined type '%.*s' for impl", (int)owner_name.len,
+                        owner_name.data);
+    Parser_sync(p);
+    if (placeholders.len > 0)
+      Parser_placeholder_scope_pop(p);
+    return NULL;
   }
 
   if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after impl type name")) {
@@ -539,8 +555,11 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
 
     if (p->current_token.type == TOKEN_FN) {
       AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
-      if (fn)
+      if (fn) {
         List_push(&members, fn);
+      } else {
+        Parser_sync(p);
+      }
       continue;
     }
 

@@ -1,0 +1,265 @@
+// Phase 2: mutable String buffer, str view, C pointer, intern pool.
+external fn puts(c: *const char): i32;
+
+fn make_message(): str {
+    let s = String.new();
+    s.push("scoped ");
+    s.push("return");
+    return s.into_str();
+}
+
+fn make_buffer(): String {
+    let s = String.new();
+    s.push("return me");
+    return s;
+}
+
+fn take_buffer(s: String): str {
+    return s.into_str();
+}
+
+fn free_nested(s: String): i32 {
+    s.free();
+    return 0;
+}
+
+fn test_buffer_into_str(): i32 {
+    let s = String.new();
+    s.push("Hello, ");
+    s.push("world!");
+
+    let slice: str = s.into_str();
+    if (slice != "Hello, world!") {
+        print("FAIL: buffer -> slice conversion broken");
+        return 1;
+    }
+
+    puts(slice.as_c_ptr());
+    return 0;
+}
+
+fn test_return_into_str(): i32 {
+    let returned: str = make_message();
+    if (returned != "scoped return") {
+        print("FAIL: return into_str failed");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_return_string(): i32 {
+    let returned_buf: String = make_buffer();
+    let final: str = returned_buf.into_str();
+    if (final != "return me") {
+        print("FAIL: return String failed");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_arena_into_str_heap_copy(): i32 {
+    __tyl_test_string_reset_counts();
+
+    let s = String.new();
+    s.push("arena-copy-longer-than-sso");
+    let result: str = s.into_str();
+    if (result != "arena-copy-longer-than-sso") {
+        print("FAIL: arena into_str returned wrong text");
+        return 1;
+    }
+
+    let heap_allocs: i64 = __tyl_test_string_heap_alloc_count();
+    if (heap_allocs != 1) {
+        print("FAIL: arena into_str did not allocate heap copy");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_move_by_value_arg(): i32 {
+    let t2 = String.new();
+    t2.push("arg");
+    let arg_slice: str = take_buffer(t2);
+    if (arg_slice != "arg") {
+        print("FAIL: move-by-value arg failed");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_move_assignment(): i32 {
+    let t1 = String.new();
+    t1.push("hello");
+    let u: String = t1;
+    let moved_out: str = u.into_str();
+    if (moved_out != "hello") {
+        print("FAIL: move assignment failed");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_clone_and_into_str(): i32 {
+    let t = String.new();
+    t.push("hello");
+    let cloned: str = t.clone_str();
+    if (cloned != "hello") {
+        print("FAIL: clone_str returned wrong text");
+        return 1;
+    }
+    t.push(" world");
+    let out: str = t.into_str();
+    if (out != "hello world") {
+        print("FAIL: into_str after clone_str failed");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_clone_and_free(): i32 {
+    let keep = String.new();
+    keep.push("keep");
+    let keep_clone: str = keep.clone_str();
+    keep.free();
+    if (keep_clone != "keep") {
+        print("FAIL: free after clone_str failed");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_scope_cleanup(): i32 {
+    __tyl_test_string_reset_counts();
+
+    if (true) {
+        let s = String.new();
+        s.push("temp");
+    }
+
+    let allocs: i64 = __tyl_test_string_alloc_count();
+    let frees: i64 = __tyl_test_string_free_count();
+    if (allocs != 1) {
+        print("FAIL: scope cleanup alloc count");
+        return 1;
+    }
+    if (frees != 1) {
+        print("FAIL: scope cleanup free count");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_branch_cleanup(): i32 {
+    __tyl_test_string_reset_counts();
+
+    let condition = true;
+    if (condition) {
+        let s = String.new();
+        s.push("branch");
+    } else {
+        let t = String.new();
+        t.push("branch");
+    }
+
+    let allocs: i64 = __tyl_test_string_alloc_count();
+    let frees: i64 = __tyl_test_string_free_count();
+    if (allocs != 1) {
+        print("FAIL: branch cleanup alloc count");
+        return 1;
+    }
+    if (frees != 1) {
+        print("FAIL: branch cleanup free count");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_loop_cleanup(): i32 {
+    __tyl_test_string_reset_counts();
+
+    let i: i64 = 0;
+    while (i < 2) {
+        let s = String.new();
+        s.push("loop");
+        i = i + 1;
+    }
+
+    let allocs: i64 = __tyl_test_string_alloc_count();
+    let frees: i64 = __tyl_test_string_free_count();
+    if (allocs != 2) {
+        print("FAIL: loop cleanup alloc count");
+        return 1;
+    }
+    if (frees != 2) {
+        print("FAIL: loop cleanup free count");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_nested_free(): i32 {
+    let nested_target = String.new();
+    nested_target.push("nested");
+    let nested_rc = free_nested(nested_target);
+    if (nested_rc != 0) {
+        print("FAIL: nested free returned non-zero");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_intern_pool(): i32 {
+    let tail: str = "me";
+    let a: str = "intern ".concat(tail);
+    let b: str = "intern ".concat(tail);
+    
+    // Prove they're different allocations before interning
+    if (__tyl_ptr_eq(a.as_c_ptr(), b.as_c_ptr()) == 1) {
+        print("FAIL: concat returned same pointer (impossible)");
+        return 1;
+    }
+
+    let ia: str = a.intern();
+    let ib: str = b.intern();
+    if (__tyl_ptr_eq(ia.as_c_ptr(), ib.as_c_ptr()) != 1) {
+        print("FAIL: intern pool not sharing memory");
+        return 1;
+    }
+    return 0;
+}
+
+fn test_sso_as_c_ptr_slots(): i32 {
+    let a_buf = String.new();
+    a_buf.push("tiny");
+    let b_buf = String.new();
+    b_buf.push("short");
+    let a: str = a_buf.into_str();
+    let b: str = b_buf.into_str();
+    let ap = a.as_c_ptr();
+    let bp = b.as_c_ptr();
+    if (__tyl_ptr_eq(ap, bp) == 1) {
+        print("FAIL: SSO as_c_ptr slot aliasing");
+        return 1;
+    }
+    return 0;
+}
+
+fn main(): i32 {
+    if (test_buffer_into_str() != 0) return 1;
+    if (test_return_into_str() != 0) return 1;
+    if (test_return_string() != 0) return 1;
+    if (test_move_by_value_arg() != 0) return 1;
+    if (test_move_assignment() != 0) return 1;
+    if (test_arena_into_str_heap_copy() != 0) return 1;
+    if (test_clone_and_into_str() != 0) return 1;
+    if (test_clone_and_free() != 0) return 1;
+    if (test_scope_cleanup() != 0) return 1;
+    if (test_branch_cleanup() != 0) return 1;
+    if (test_loop_cleanup() != 0) return 1;
+    if (test_nested_free() != 0) return 1;
+    if (test_intern_pool() != 0) return 1;
+    if (test_sso_as_c_ptr_slots() != 0) return 1;
+
+    print("string_buffer: all checks passed");
+    return 0;
+}

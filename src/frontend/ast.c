@@ -182,6 +182,8 @@ AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
   node->func_decl.is_static = is_static;
   node->func_decl.is_export = is_export;
   node->func_decl.is_external = is_external;
+  node->func_decl.requires_arena = false;
+  node->func_decl.consumes_string_arg = false;
   return node;
 }
 
@@ -196,6 +198,7 @@ AstNode *AstNode_new_param(AstNode *name, Type *type, Location loc) {
   node->param.name = name;
   node->param.type = type;
   node->param.default_value = NULL;
+  node->param.requires_storage = false;
   return node;
 }
 
@@ -315,8 +318,8 @@ AstNode *AstNode_new_error_decl(AstNode *name, List members, bool is_export,
   return node;
 }
 
-AstNode *AstNode_new_error_set_decl(AstNode *name, List members,
-                                    bool is_export, Location loc) {
+AstNode *AstNode_new_error_set_decl(AstNode *name, List members, bool is_export,
+                                    Location loc) {
   AstNode *node = AstNode_new(NODE_ERROR_SET_DECL, loc);
   node->error_set_decl.name = name;
   node->error_set_decl.members = members;
@@ -408,6 +411,8 @@ void Ast_free(AstNode *node) {
     }
     List_free(&node->print_stmt.values, 0);
     break;
+  case NODE_NULL:
+    break;
   case NODE_BINARY_ARITH:
     Ast_free(node->binary_arith.left);
     Ast_free(node->binary_arith.right);
@@ -423,6 +428,14 @@ void Ast_free(AstNode *node) {
   case NODE_BINARY_LOGICAL:
     Ast_free(node->binary_logical.left);
     Ast_free(node->binary_logical.right);
+    break;
+  case NODE_BINARY_IS:
+    Ast_free(node->binary_is.left);
+    Ast_free(node->binary_is.right);
+    break;
+  case NODE_BINARY_ELSE:
+    Ast_free(node->binary_else.left);
+    Ast_free(node->binary_else.right);
     break;
   case NODE_UNARY:
     Ast_free(node->unary.expr);
@@ -573,6 +586,8 @@ void Ast_free(AstNode *node) {
     // import path and alias are views into source text, no heap ownership
     break;
 
+  default:
+    break;
     // end
   }
 
@@ -635,18 +650,32 @@ AstNode *Ast_clone(AstNode *node) {
     break;
 
   case NODE_BINARY_ARITH:
-  case NODE_BINARY_COMPARE:
-  case NODE_BINARY_EQUALITY:
-  case NODE_BINARY_LOGICAL:
     copy->binary_arith.left = Ast_clone(node->binary_arith.left);
     copy->binary_arith.right = Ast_clone(node->binary_arith.right);
     copy->binary_arith.op = node->binary_arith.op;
-    if (node->tag == NODE_BINARY_COMPARE)
-      copy->binary_compare.op = node->binary_compare.op;
-    if (node->tag == NODE_BINARY_EQUALITY)
-      copy->binary_equality.op = node->binary_equality.op;
-    if (node->tag == NODE_BINARY_LOGICAL)
-      copy->binary_logical.op = node->binary_logical.op;
+    break;
+  case NODE_BINARY_COMPARE:
+    copy->binary_compare.left = Ast_clone(node->binary_compare.left);
+    copy->binary_compare.right = Ast_clone(node->binary_compare.right);
+    copy->binary_compare.op = node->binary_compare.op;
+    break;
+  case NODE_BINARY_EQUALITY:
+    copy->binary_equality.left = Ast_clone(node->binary_equality.left);
+    copy->binary_equality.right = Ast_clone(node->binary_equality.right);
+    copy->binary_equality.op = node->binary_equality.op;
+    break;
+  case NODE_BINARY_LOGICAL:
+    copy->binary_logical.left = Ast_clone(node->binary_logical.left);
+    copy->binary_logical.right = Ast_clone(node->binary_logical.right);
+    copy->binary_logical.op = node->binary_logical.op;
+    break;
+  case NODE_BINARY_IS:
+    copy->binary_is.left = Ast_clone(node->binary_is.left);
+    copy->binary_is.right = Ast_clone(node->binary_is.right);
+    break;
+  case NODE_BINARY_ELSE:
+    copy->binary_else.left = Ast_clone(node->binary_else.left);
+    copy->binary_else.right = Ast_clone(node->binary_else.right);
     break;
 
   case NODE_UNARY:
@@ -703,6 +732,7 @@ AstNode *Ast_clone(AstNode *node) {
     copy->param.name = Ast_clone(node->param.name);
     copy->param.type = node->param.type;
     copy->param.default_value = Ast_clone(node->param.default_value);
+    copy->param.requires_storage = node->param.requires_storage;
     break;
 
   case NODE_BLOCK:
@@ -738,6 +768,8 @@ AstNode *Ast_clone(AstNode *node) {
     copy->func_decl.is_static = node->func_decl.is_static;
     copy->func_decl.is_export = node->func_decl.is_export;
     copy->func_decl.is_external = node->func_decl.is_external;
+    copy->func_decl.requires_arena = node->func_decl.requires_arena;
+    copy->func_decl.consumes_string_arg = node->func_decl.consumes_string_arg;
     break;
 
   case NODE_STRUCT_DECL:
@@ -1000,6 +1032,40 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
     print_indent(indent + 1);
     printf("RIGHT:\n");
     Ast_print(node->binary_logical.right, indent + 2);
+    break;
+  case NODE_BINARY_IS:
+    printf("BINARY IS\n");
+    print_indent(indent + 1);
+    printf("LEFT:\n");
+    Ast_print(node->binary_is.left, indent + 2);
+    print_indent(indent + 1);
+    printf("RIGHT:\n");
+    Ast_print(node->binary_is.right, indent + 2);
+    break;
+  case NODE_BINARY_ELSE:
+    printf("BINARY ELSE\n");
+    print_indent(indent + 1);
+    printf("LEFT:\n");
+    Ast_print(node->binary_else.left, indent + 2);
+    print_indent(indent + 1);
+    printf("RIGHT:\n");
+    Ast_print(node->binary_else.right, indent + 2);
+    break;
+  case NODE_NULL:
+    printf("NULL\n");
+    break;
+  case NODE_ERROR_DECL:
+    printf("ERROR_DECL: " SV_FMT "\n", SV_ARG(node->error_decl.name->var.value));
+    for (size_t i = 0; i < node->error_decl.members.len; i++) {
+      Ast_print(node->error_decl.members.items[i], indent + 1);
+    }
+    break;
+  case NODE_ERROR_SET_DECL:
+    printf("ERROR_SET_DECL: " SV_FMT "\n",
+           SV_ARG(node->error_set_decl.name->var.value));
+    for (size_t i = 0; i < node->error_set_decl.members.len; i++) {
+      Ast_print(node->error_set_decl.members.items[i], indent + 1);
+    }
     break;
   case NODE_UNARY:
     printf("UNARY OP: %d\n", node->unary.op);

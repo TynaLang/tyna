@@ -59,6 +59,9 @@ void sema_check_for_in_stmt(Sema *s, AstNode *node) {
       iter_type->data.primitive == PRIM_STRING) {
     elem_type = type_get_primitive(s->types, PRIM_CHAR);
     is_valid_iterable = true;
+  } else if (iter_type->kind == KIND_STRING_BUFFER) {
+    elem_type = type_get_primitive(s->types, PRIM_CHAR);
+    is_valid_iterable = true;
   } else if (iter_type->kind == KIND_STRUCT &&
              iter_type->data.instance.from_template &&
              sv_eq(iter_type->data.instance.from_template->name,

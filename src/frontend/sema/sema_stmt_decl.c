@@ -67,6 +67,24 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
                 decl_type->data.instance.from_template == NULL)) {
       decl_type = actual_type;
     }
+
+    if (decl_type && decl_type->kind == KIND_STRING_BUFFER) {
+      AstNode *rhs_var = NULL;
+      if (node->var_decl.value->tag == NODE_VAR) {
+        rhs_var = node->var_decl.value;
+      } else if (node->var_decl.value->tag == NODE_UNARY &&
+                 node->var_decl.value->unary.op == OP_ADDR_OF) {
+        AstNode *inner = node->var_decl.value->unary.expr;
+        if (inner && inner->tag == NODE_VAR)
+          rhs_var = inner;
+      }
+      if (rhs_var && !sv_eq(name, rhs_var->var.value)) {
+        Symbol *sym = sema_resolve(s, rhs_var->var.value);
+        if (sym && sym->kind == SYM_VAR && !sym->is_const) {
+          sym->is_moved = 1;
+        }
+      }
+    }
   } else {
     if (!type_is_concrete(decl_type) && !(sema_allows_polymorphic_types(s) &&
                                           type_can_be_polymorphic(decl_type))) {
@@ -125,6 +143,12 @@ void sema_check_error_decl(Sema *s, AstNode *node) {
         mem_type->data.primitive == PRIM_STRING) {
       sema_error(s, mem,
                  "Heap-allocated types are forbidden in error payloads. Use "
+                 "*const char.");
+    }
+
+    if (mem_type->kind == KIND_STRING_BUFFER) {
+      sema_error(s, mem,
+                 "String buffers are forbidden in error payloads. Use "
                  "*const char.");
     }
 
@@ -221,8 +245,10 @@ void sema_check_func_decl(Sema *s, AstNode *node) {
                  type_to_name(param->param.type));
     }
 
-    sema_define(s, param->param.name->var.value, param->param.type, false,
-                param->loc);
+    Symbol *param_sym = sema_define(s, param->param.name->var.value,
+                                    param->param.type, false, param->loc);
+    if (param_sym)
+      param_sym->value = param;
   }
 
   sema_check_stmt(s, node->func_decl.body);

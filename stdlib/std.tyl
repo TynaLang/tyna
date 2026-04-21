@@ -8,31 +8,71 @@ frozen struct Array<T> {
 
 external fn __tyl_str_concat(a: str, b: str): str;
 external fn __tyl_str_intern(s: str): str;
-external fn __tyl_str_to_array(out: ptr<Array<char>>, src: ptr<String>): void;
-external fn __tyl_array_to_str(out: ptr<String>, arr: ptr<Array<char>>): void;
+external fn __tyl_str_to_array(out: ptr<Array<char>>, src: ptr<str>): void;
+external fn __tyl_array_to_str(out: ptr<str>, arr: ptr<Array<char>>): void;
 external fn __tyl_array_clone_dims(rank: i64, dims: ptr<i64>): ptr<i64>;
 external fn malloc(size: i64): ptr<void>;
 external fn panic(message: str): void;
 
-impl String {
-    fn concat(self: String, other: String): String {
+external fn __tyl_string_new(out: ptr<String>): void;
+external fn __tyl_string_push(buf: ptr<String>, piece: str): void;
+external fn __tyl_string_free(buf: ptr<String>): void;
+external fn __tyl_string_into_str(buf: ptr<String>): str;
+external fn __tyl_string_clone_str(buf: ptr<String>): str;
+external fn __tyl_as_c_ptr(s: str): *const char;
+external fn __tyl_ptr_eq(a: *const char, b: *const char): i32;
+external fn __tyl_test_string_alloc_count(): i64;
+external fn __tyl_test_string_free_count(): i64;
+external fn __tyl_test_string_heap_alloc_count(): i64;
+external fn __tyl_test_string_reset_counts(): void;
+
+impl str {
+    fn concat(self: str, other: str): str {
         return __tyl_str_concat(self, other);
     }
 
-    fn intern(self: String): String {
+    fn intern(self: str): str {
         return __tyl_str_intern(self);
     }
 
-    fn to_array(self: String): Array<char> {
+    fn to_array(self: str): Array<char> {
         let result: Array<char>;
         __tyl_str_to_array(&result, &self);
         return result;
     }
 
-    static fn from_array(arr: Array<char>): String {
-        let result: String;
+    static fn from_array(arr: Array<char>): str {
+        let result: str;
         __tyl_array_to_str(&result, &arr);
         return result;
+    }
+
+    fn as_c_ptr(self: str): *const char {
+        return __tyl_as_c_ptr(self);
+    }
+}
+
+impl String {
+    static fn new(): String {
+        let result: String;
+        __tyl_string_new(&result);
+        return result;
+    }
+
+    fn push(self: ptr<String>, piece: str): void {
+        __tyl_string_push(self, piece);
+    }
+
+    fn free(self: ptr<String>): void {
+        __tyl_string_free(self);
+    }
+
+    fn into_str(self: ptr<String>): str {
+        return __tyl_string_into_str(self);
+    }
+
+    fn clone_str(self: ptr<String>): str {
+        return __tyl_string_clone_str(self);
     }
 }
 

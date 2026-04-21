@@ -6,6 +6,33 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool cg_type_requires_zero_init(Type *t) {
+  if (!t)
+    return false;
+
+  switch (t->kind) {
+  case KIND_STRING_BUFFER:
+  case KIND_STRUCT:
+  case KIND_UNION:
+    return true;
+  case KIND_PRIMITIVE:
+  case KIND_POINTER:
+    return false;
+  default:
+    return type_is_array_struct(t);
+  }
+}
+
+static AstNode *cg_find_underlying_var_in_decl(AstNode *node) {
+  if (!node)
+    return NULL;
+  if (node->tag == NODE_VAR)
+    return node;
+  if (node->tag == NODE_UNARY && node->unary.op == OP_ADDR_OF)
+    return cg_find_underlying_var_in_decl(node->unary.expr);
+  return NULL;
+}
+
 void cg_var_decl(Codegen *cg, AstNode *node) {
   bool is_global_decl =
       cg->current_function_ref &&
@@ -24,12 +51,21 @@ void cg_var_decl(Codegen *cg, AstNode *node) {
       LLVMSetGlobalConstant(ptr, true);
     }
   } else {
-    ptr = cg_alloca_in_entry(cg, node->var_decl.declared_type,
-                             node->var_decl.name->var.value);
+    ptr = cg_alloca_in_entry_uninitialized(cg, node->var_decl.declared_type,
+                                           node->var_decl.name->var.value);
   }
 
   CGSymbolTable_add(cg->current_scope, node->var_decl.name->var.value,
                     node->var_decl.declared_type, ptr);
+
+  if (node->var_decl.value && node->var_decl.declared_type &&
+      node->var_decl.declared_type->kind == KIND_STRING_BUFFER) {
+    AstNode *rhs_var = cg_find_underlying_var_in_decl(node->var_decl.value);
+    if (rhs_var && rhs_var->tag == NODE_VAR &&
+        !sv_eq(rhs_var->var.value, node->var_decl.name->var.value)) {
+      cg_mark_symbol_moved(cg->current_scope, rhs_var->var.value);
+    }
+  }
 
   if (node->var_decl.value) {
     LLVMValueRef init_val = cg_expression(cg, node->var_decl.value);
@@ -53,7 +89,51 @@ void cg_var_decl(Codegen *cg, AstNode *node) {
     } else {
       LLVMBuildStore(cg->builder, init_val, ptr);
     }
+  } else if (!is_global_decl &&
+             cg_type_requires_zero_init(node->var_decl.declared_type)) {
+    LLVMValueRef zero =
+        LLVMConstNull(cg_get_llvm_type(cg, node->var_decl.declared_type));
+    LLVMBuildStore(cg->builder, zero, ptr);
   }
+}
+
+static void cg_execute_defer_list(Codegen *cg, List *defer_list) {
+  if (!defer_list)
+    return;
+
+  for (int i = (int)defer_list->len - 1; i >= 0; i--) {
+    AstNode *defer_node = defer_list->items[i];
+    if (defer_node->tag == NODE_DEFER) {
+      cg_statement(cg, defer_node->defer.expr);
+    } else {
+      cg_statement(cg, defer_node);
+    }
+  }
+}
+
+static void cg_cleanup_scope_data(Codegen *cg, CGSymbolTable *scope,
+                                  List *defer_list) {
+  cg_execute_defer_list(cg, defer_list);
+  cg_cleanup_string_vars_in_scope(cg, scope);
+}
+
+static void cg_cleanup_active_scopes(Codegen *cg) {
+  CGSymbolTable *scope = cg->current_scope;
+  for (int i = (int)cg->defers.len - 1; i >= 0 && scope; i--) {
+    if (!scope->parent)
+      break;
+
+    List *defer_list = List_get(&cg->defers, i);
+    cg_cleanup_scope_data(cg, scope, defer_list);
+    scope = scope->parent;
+  }
+}
+
+static LLVMValueRef cg_get_string_constant_ptr(Codegen *cg, StringView str) {
+  size_t idx = cg_string_pool_insert(cg, str);
+  LLVMValueRef global = cg->string_globals.items[idx];
+  LLVMTypeRef i8_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+  return LLVMBuildBitCast(cg->builder, global, i8_ptr_ty, "str_ptr");
 }
 
 static void cg_print_stmt(Codegen *cg, AstNode *node) {
@@ -77,10 +157,10 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
         switch (resolved_type->data.primitive) {
         case PRIM_BOOL: {
           fmt_str = "%s";
-          LLVMValueRef true_str =
-              LLVMBuildGlobalStringPtr(cg->builder, "true", "t_str");
-          LLVMValueRef false_str =
-              LLVMBuildGlobalStringPtr(cg->builder, "false", "f_str");
+          LLVMValueRef true_str = cg_get_string_constant_ptr(
+              cg, sv_from_cstr("true"));
+          LLVMValueRef false_str = cg_get_string_constant_ptr(
+              cg, sv_from_cstr("false"));
           LLVMValueRef is_true =
               LLVMBuildICmp(cg->builder, LLVMIntEQ, val,
                             LLVMConstInt(val_ty, 1, 0), "is_true");
@@ -141,6 +221,9 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
           fmt_str = "%p";
           break;
         }
+      } else if (resolved_type->kind == KIND_STRING_BUFFER) {
+        fmt_str = "%s";
+        val = cg_coerce_string_buffer_to_str(cg, val, resolved_type);
       } else if (resolved_type->kind == KIND_POINTER) {
         if (resolved_type->data.pointer_to->kind == KIND_PRIMITIVE &&
             resolved_type->data.pointer_to->data.primitive == PRIM_CHAR) {
@@ -156,13 +239,13 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
     }
 
     LLVMValueRef fmt_ptr =
-        LLVMBuildGlobalStringPtr(cg->builder, fmt_str, "p_fmt");
+        cg_get_string_constant_ptr(cg, sv_from_cstr(fmt_str));
     LLVMValueRef args[] = {fmt_ptr, val};
     LLVMBuildCall2(cg->builder, print_fn->type, print_fn->value, args, 2, "");
   }
 
   // Print newline after variadic print
-  LLVMValueRef nl_ptr = LLVMBuildGlobalStringPtr(cg->builder, "\n", "nl_fmt");
+  LLVMValueRef nl_ptr = cg_get_string_constant_ptr(cg, sv_from_cstr("\n"));
   LLVMValueRef nl_args[] = {nl_ptr};
   LLVMBuildCall2(cg->builder, print_fn->type, print_fn->value, nl_args, 1, "");
 }
@@ -282,6 +365,9 @@ void cg_statement(Codegen *cg, AstNode *node) {
   if (!node)
     return;
 
+  if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder)))
+    return;
+
   switch (node->tag) {
   case NODE_VAR_DECL:
     cg_var_decl(cg, node);
@@ -341,8 +427,21 @@ void cg_statement(Codegen *cg, AstNode *node) {
     LLVMBasicBlockRef merge_bb =
         LLVMAppendBasicBlockInContext(cg->context, func, "switch_end");
 
-    if (expr_type && expr_type->kind == KIND_PRIMITIVE &&
-        expr_type->data.primitive == PRIM_STRING) {
+    if (expr_type && ((expr_type->kind == KIND_PRIMITIVE &&
+                       expr_type->data.primitive == PRIM_STRING) ||
+                      expr_type->kind == KIND_STRING_BUFFER)) {
+      if (expr_type->kind == KIND_STRING_BUFFER) {
+        LLVMTypeRef slice_ty =
+            cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+        LLVMValueRef undef = LLVMGetUndef(slice_ty);
+        LLVMValueRef p =
+            LLVMBuildExtractValue(cg->builder, expr_val, 0, "swbuf_ptr");
+        LLVMValueRef l =
+            LLVMBuildExtractValue(cg->builder, expr_val, 1, "swbuf_len");
+        LLVMValueRef s0 =
+            LLVMBuildInsertValue(cg->builder, undef, p, 0, "swbuf_slice0");
+        expr_val = LLVMBuildInsertValue(cg->builder, s0, l, 1, "swbuf_slice");
+      }
       bool use_hash = node->switch_stmt.cases.len > 3;
       LLVMValueRef expr_hash = NULL;
       if (use_hash) {
@@ -569,8 +668,13 @@ void cg_statement(Codegen *cg, AstNode *node) {
     break;
   }
   case NODE_RETURN_STMT: {
-    if (node->return_stmt.expr) {
-      LLVMValueRef val;
+    LLVMValueRef val = NULL;
+    bool has_value = node->return_stmt.expr != NULL;
+    if (has_value) {
+      if (node->return_stmt.expr->tag == NODE_VAR) {
+        cg_mark_symbol_moved(cg->current_scope,
+                             node->return_stmt.expr->var.value);
+      }
       if (cg->current_function_ref && cg->current_function_ref->decl &&
           cg->current_function_ref->decl->func_decl.return_type &&
           cg->current_function_ref->decl->func_decl.return_type->kind ==
@@ -581,6 +685,17 @@ void cg_statement(Codegen *cg, AstNode *node) {
       } else {
         val = cg_expression(cg, node->return_stmt.expr);
       }
+    }
+    cg_cleanup_active_scopes(cg);
+    if (cg->current_function_uses_arena) {
+      CGFunction *arena_pop =
+          cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_pop"));
+      if (arena_pop) {
+        LLVMBuildCall2(cg->builder, arena_pop->type, arena_pop->value, NULL, 0,
+                       "");
+      }
+    }
+    if (has_value) {
       LLVMBuildRet(cg->builder, val);
     } else {
       LLVMBuildRetVoid(cg->builder);
@@ -634,16 +749,24 @@ void cg_statement(Codegen *cg, AstNode *node) {
                    index_ptr);
 
     LLVMValueRef data_ptr = NULL;
-    LLVMTypeRef string_ptr_ty = NULL;
     LLVMValueRef len_val = NULL;
-    LLVMValueRef string_ptr_var = NULL;
     if (iter_type->kind == KIND_PRIMITIVE &&
         iter_type->data.primitive == PRIM_STRING) {
-      string_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
-      string_ptr_var = LLVMBuildAlloca(cg->builder, string_ptr_ty, "str_ptr");
-      LLVMBuildStore(cg->builder, iterable_val, string_ptr_var);
-      data_ptr = string_ptr_var;
-      len_val = NULL;
+      LLVMValueRef str_ptr_val =
+          LLVMBuildExtractValue(cg->builder, iterable_val, 0, "str_ptr");
+      LLVMValueRef str_len_val =
+          LLVMBuildExtractValue(cg->builder, iterable_val, 1, "str_len");
+      data_ptr = str_ptr_val;
+      len_val = str_len_val;
+    } else if (iter_type->kind == KIND_STRING_BUFFER) {
+      LLVMValueRef string_val =
+          cg_coerce_string_buffer_to_str(cg, iterable_val, iter_type);
+      LLVMValueRef str_ptr_val =
+          LLVMBuildExtractValue(cg->builder, string_val, 0, "str_ptr");
+      LLVMValueRef str_len_val =
+          LLVMBuildExtractValue(cg->builder, string_val, 1, "str_len");
+      data_ptr = str_ptr_val;
+      len_val = str_len_val;
     } else if (iter_type->kind == KIND_STRUCT &&
                iter_type->data.instance.generic_args.len > 0 &&
                sv_eq(iter_type->data.instance.from_template->name,
@@ -668,64 +791,36 @@ void cg_statement(Codegen *cg, AstNode *node) {
     LLVMBuildBr(cg->builder, cond_bb);
     LLVMPositionBuilderAtEnd(cg->builder, cond_bb);
 
-    LLVMValueRef cond = NULL;
-    if (len_val) {
-      LLVMValueRef idx = LLVMBuildLoad2(
-          cg->builder, LLVMInt64TypeInContext(cg->context), index_ptr, "idx");
-      cond =
-          LLVMBuildICmp(cg->builder, LLVMIntULT, idx, len_val, "for_in_cond");
-    } else {
-      LLVMValueRef current_ptr =
-          LLVMBuildLoad2(cg->builder, string_ptr_ty, data_ptr, "str_ptr_load");
-      LLVMValueRef char_val = LLVMBuildLoad2(
-          cg->builder, LLVMInt8TypeInContext(cg->context), current_ptr, "ch");
-      cond = LLVMBuildICmp(
-          cg->builder, LLVMIntNE, char_val,
-          LLVMConstInt(LLVMInt8TypeInContext(cg->context), 0, 0), "str_cond");
+    if (!len_val) {
+      panic("for-in: unsupported iterable type");
     }
+
+    LLVMValueRef idx_cond = LLVMBuildLoad2(
+        cg->builder, LLVMInt64TypeInContext(cg->context), index_ptr, "idx");
+    LLVMValueRef cond = LLVMBuildICmp(cg->builder, LLVMIntULT, idx_cond,
+                                      len_val, "for_in_cond");
     LLVMBuildCondBr(cg->builder, cond, body_bb, end_bb);
 
     LLVMPositionBuilderAtEnd(cg->builder, body_bb);
-    if (len_val) {
-      LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
-      LLVMValueRef idx = LLVMBuildLoad2(
-          cg->builder, LLVMInt64TypeInContext(cg->context), index_ptr, "idx");
-      LLVMValueRef element_ptr =
-          LLVMBuildGEP2(cg->builder, llvm_elem_ty, data_ptr,
-                        (LLVMValueRef[]){idx}, 1, "elem_ptr");
-      LLVMValueRef elem =
-          LLVMBuildLoad2(cg->builder, llvm_elem_ty, element_ptr, "elem");
-      LLVMBuildStore(cg->builder, elem, loop_var);
-    } else {
-      LLVMValueRef current_ptr =
-          LLVMBuildLoad2(cg->builder, string_ptr_ty, data_ptr, "str_ptr_load");
-      LLVMValueRef ch =
-          LLVMBuildLoad2(cg->builder, LLVMInt8TypeInContext(cg->context),
-                         current_ptr, "ch_val");
-      LLVMBuildStore(cg->builder, ch, loop_var);
-    }
+    LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
+    LLVMValueRef idx = LLVMBuildLoad2(
+        cg->builder, LLVMInt64TypeInContext(cg->context), index_ptr, "idx");
+    LLVMValueRef element_ptr =
+        LLVMBuildGEP2(cg->builder, llvm_elem_ty, data_ptr,
+                      (LLVMValueRef[]){idx}, 1, "elem_ptr");
+    LLVMValueRef elem =
+        LLVMBuildLoad2(cg->builder, llvm_elem_ty, element_ptr, "elem");
+    LLVMBuildStore(cg->builder, elem, loop_var);
 
     cg_statement(cg, node->for_in_stmt.body);
 
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
-      if (len_val) {
-        LLVMValueRef idx = LLVMBuildLoad2(
-            cg->builder, LLVMInt64TypeInContext(cg->context), index_ptr, "idx");
-        LLVMValueRef next_idx = LLVMBuildAdd(
-            cg->builder, idx,
-            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0),
-            "next_idx");
-        LLVMBuildStore(cg->builder, next_idx, index_ptr);
-      } else {
-        LLVMValueRef current_ptr = LLVMBuildLoad2(cg->builder, string_ptr_ty,
-                                                  data_ptr, "str_ptr_load");
-        LLVMValueRef next_ptr = LLVMBuildGEP2(
-            cg->builder, LLVMInt8TypeInContext(cg->context), current_ptr,
-            (LLVMValueRef[]){
-                LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0)},
-            1, "next_ptr");
-        LLVMBuildStore(cg->builder, next_ptr, string_ptr_var);
-      }
+      LLVMValueRef idx = LLVMBuildLoad2(
+          cg->builder, LLVMInt64TypeInContext(cg->context), index_ptr, "idx");
+      LLVMValueRef next_idx = LLVMBuildAdd(
+          cg->builder, idx,
+          LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "next_idx");
+      LLVMBuildStore(cg->builder, next_idx, index_ptr);
       LLVMBuildBr(cg->builder, cond_bb);
     }
 

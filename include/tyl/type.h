@@ -21,6 +21,7 @@ enum TypeKind {
   KIND_ERROR_SET, // Named or anonymous error set
   KIND_RESULT,   // Result type T ! ErrorSet
   KIND_TEMPLATE, // Generic Blueprint (Unsized)
+  KIND_STRING_BUFFER, // Mutable heap buffer { ptr, len, cap } ("String")
 };
 
 enum PrimitiveKind {
@@ -82,6 +83,7 @@ struct Type {
 
 struct TypeContext {
   Type *primitives[PRIM_UNKNOWN + 1];
+  Type *string_buffer; // Singleton KIND_STRING_BUFFER ("String")
   List structs;                // Generic structs
   List templates;              // List<Type*>
   List instances;              // List<Type*>
@@ -94,6 +96,7 @@ void type_context_free(TypeContext *ctx);
 
 // Type Retrieval
 Type *type_get_primitive(TypeContext *ctx, PrimitiveKind primitive);
+Type *type_get_string_buffer(TypeContext *ctx);
 Type *type_get_pointer(TypeContext *ctx, Type *to);
 Type *type_get_named(TypeContext *ctx, StringView name);
 Type *type_get_struct(TypeContext *ctx, StringView name);

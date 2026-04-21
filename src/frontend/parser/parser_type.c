@@ -119,7 +119,7 @@ Type *Parser_parse_type_full(Parser *p) {
         }
       } else {
         if (sv_eq_cstr(name, "String")) {
-          res = type_get_primitive(p->type_ctx, PRIM_STRING);
+          res = type_get_string_buffer(p->type_ctx);
         } else if (sv_eq_cstr(name, "Error")) {
           res = type_get_error_set_anonymous(p->type_ctx);
         } else {

@@ -96,7 +96,8 @@ AstNode *Parser_parse_field(Parser *p, AstNode *expr) {
   Location loc = p->current_token.loc;
   Parser_token_advance(p); // consume '.'
 
-  if (p->current_token.type != TOKEN_IDENT) {
+  if (p->current_token.type != TOKEN_IDENT &&
+      p->current_token.type != TOKEN_NEW) {
     ErrorHandler_report(p->eh, p->current_token.loc,
                         "Expected identifier after '.'");
     return NULL;
@@ -262,7 +263,8 @@ AstNode *Parser_parse_primary(Parser *p) {
         if (!value)
           return NULL;
         AstNode *field_target = AstNode_new_var(field_name, field_loc);
-        AstNode *assign = AstNode_new_assign_expr(field_target, value, field_loc);
+        AstNode *assign =
+            AstNode_new_assign_expr(field_target, value, field_loc);
         List_push(&field_inits, assign);
         if (p->current_token.type == TOKEN_COMMA)
           Parser_token_advance(p);

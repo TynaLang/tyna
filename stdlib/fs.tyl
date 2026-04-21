@@ -1,6 +1,6 @@
 import std.error;
 
-export fn open(path: String): *void ! Error {
+export fn open(path: str): *void ! Error {
     let handle: *void = null;
     if (handle == null) {
         return IOError {

@@ -1,5 +1,44 @@
 #include "sema_internal.h"
 
+static bool sema_type_is_move_only(Type *type) {
+  return type && type->kind == KIND_STRING_BUFFER;
+}
+
+static AstNode *sema_find_underlying_var(AstNode *node) {
+  if (!node)
+    return NULL;
+  if (node->tag == NODE_VAR)
+    return node;
+  if (node->tag == NODE_UNARY && node->unary.op == OP_ADDR_OF)
+    return sema_find_underlying_var(node->unary.expr);
+  return NULL;
+}
+
+static void sema_mark_symbol_requires_storage(Symbol *sym) {
+  if (!sym || sym->kind != SYM_VAR)
+    return;
+
+  sym->requires_storage = 1;
+  if (sym->value && sym->value->tag == NODE_PARAM) {
+    sym->value->param.requires_storage = true;
+  }
+}
+
+static void sema_mark_node_requires_storage(Sema *s, AstNode *node) {
+  AstNode *var_node = sema_find_underlying_var(node);
+  if (!var_node)
+    return;
+
+  Symbol *sym = sema_resolve(s, var_node->var.value);
+  sema_mark_symbol_requires_storage(sym);
+}
+
+static void sema_mark_moved_symbol(Symbol *sym) {
+  if (!sym || sym->kind != SYM_VAR)
+    return;
+  sym->is_moved = 1;
+}
+
 ExprInfo check_assignment(Sema *s, AstNode *node) {
   AstNode *target = node->assign_expr.target;
   ExprInfo lhs_info = sema_check_expr(s, target);
@@ -21,14 +60,30 @@ ExprInfo check_assignment(Sema *s, AstNode *node) {
                type_to_name(lhs), type_to_name(rhs));
   }
 
+  if (sema_type_is_move_only(lhs)) {
+    AstNode *rhs_var = sema_find_underlying_var(node->assign_expr.value);
+    if (rhs_var && rhs_var->tag == NODE_VAR) {
+      if (!(target->tag == NODE_VAR &&
+            sv_eq(target->var.value, rhs_var->var.value))) {
+        Symbol *sym = sema_resolve(s, rhs_var->var.value);
+        if (sym && sym->kind == SYM_VAR && !sym->is_const) {
+          sema_mark_moved_symbol(sym);
+        }
+      }
+    }
+  }
+
+  sema_mark_node_requires_storage(s, target);
+
   return (ExprInfo){.type = lhs, .category = VAL_RVALUE};
 }
 
 ExprInfo check_cast(Sema *s, AstNode *node) {
   sema_check_expr(s, node->cast_expr.expr);
-  return (ExprInfo){.type = node->cast_expr.target_type,
-                    .category = VAL_RVALUE,
-                    };
+  return (ExprInfo){
+      .type = node->cast_expr.target_type,
+      .category = VAL_RVALUE,
+  };
 }
 
 ExprInfo check_ternary(Sema *s, AstNode *node) {
@@ -36,9 +91,10 @@ ExprInfo check_ternary(Sema *s, AstNode *node) {
   if (!type_is_bool(cond)) {
     sema_error(s, node->ternary.condition,
                "Ternary condition must be boolean, got %s", type_to_name(cond));
-    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
-                      .category = VAL_RVALUE,
-                      };
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+        .category = VAL_RVALUE,
+    };
   }
   Type *t_expr = sema_check_expr(s, node->ternary.true_expr).type;
   Type *f_expr = sema_check_expr(s, node->ternary.false_expr).type;
@@ -67,7 +123,8 @@ ExprInfo check_ternary(Sema *s, AstNode *node) {
   sema_error(s, node,
              "Ternary branches must have compatible types: got %s and %s",
              type_to_name(t_expr), type_to_name(f_expr));
-  return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
-                    .category = VAL_RVALUE,
-                    };
+  return (ExprInfo){
+      .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+      .category = VAL_RVALUE,
+  };
 }

@@ -8,6 +8,10 @@
 #include "tyl/ast.h"
 
 Type *sema_find_type_by_name(Sema *s, StringView name) {
+  if (sv_eq_cstr(name, "String")) {
+    return type_get_string_buffer(s->types);
+  }
+
   for (size_t i = 0; i < s->types->structs.len; i++) {
     Type *t = s->types->structs.items[i];
     if (sv_eq(t->name, name))
@@ -24,8 +28,7 @@ Type *sema_find_type_by_name(Sema *s, StringView name) {
     if (!t)
       continue;
     const char *prim_name = type_to_name(t);
-    if (sv_eq_cstr(name, prim_name) ||
-        (i == PRIM_STRING && sv_eq_cstr(name, "String"))) {
+    if (sv_eq_cstr(name, prim_name)) {
       return t;
     }
   }
@@ -147,6 +150,52 @@ static ExprInfo expr_info_for_cached_node(Sema *s, AstNode *node, Type *type) {
   }
 }
 
+static bool sema_fn_decl_can_use_arena(AstNode *fn_decl) {
+  if (!fn_decl || fn_decl->tag != NODE_FUNC_DECL)
+    return false;
+
+  if (fn_decl->func_decl.return_type &&
+      ((fn_decl->func_decl.return_type->kind == KIND_PRIMITIVE &&
+        fn_decl->func_decl.return_type->data.primitive == PRIM_STRING) ||
+       fn_decl->func_decl.return_type->kind == KIND_STRING_BUFFER)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < fn_decl->func_decl.params.len; i++) {
+    AstNode *param_node = fn_decl->func_decl.params.items[i];
+    if (!param_node || param_node->tag != NODE_PARAM)
+      continue;
+    Type *param_type = param_node->param.type;
+    if (!param_type)
+      continue;
+
+    Type *resolved = param_type;
+    while (resolved && resolved->kind == KIND_POINTER) {
+      resolved = resolved->data.pointer_to;
+    }
+    if (resolved && resolved->kind == KIND_STRING_BUFFER) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static void sema_mark_current_function_requires_arena(Sema *s, AstNode *node,
+                                                      Type *type) {
+  if (!s || !s->fn_node || !type)
+    return;
+  if (!sema_fn_decl_can_use_arena(s->fn_node))
+    return;
+  if (type->kind != KIND_PRIMITIVE ||
+      type->data.primitive != PRIM_STRING) {
+    return;
+  }
+  if (node->tag == NODE_STRING)
+    return;
+  s->fn_node->func_decl.requires_arena = true;
+}
+
 Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
   ExprInfo expr_info = sema_check_expr(s, expr);
   Type *expr_type = expr_info.type;
@@ -265,5 +314,6 @@ ExprInfo sema_check_expr(Sema *s, AstNode *node) {
   }
 
   node->resolved_type = info.type;
+  sema_mark_current_function_requires_arena(s, node, info.type);
   return info;
 }

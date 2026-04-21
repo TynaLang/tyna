@@ -97,6 +97,9 @@ Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
   sym->is_const = is_const;
   sym->is_export = false;
   sym->is_external = false;
+  sym->is_moved = 0;
+  sym->requires_storage = 0;
+  sym->requires_arena = 0;
   sym->value = NULL;
   sym->func_status = FUNC_NONE;
   sym->kind = SYM_VAR; // Default to SYM_VAR
@@ -123,8 +126,7 @@ static void sema_register_builtins(Sema *s) {
                       type_get_primitive(s->types, PRIM_STRING),
                       BUILTIN_TYPEOF);
   sema_define_builtin(s, sv_from_parts("free", 4),
-                      type_get_primitive(s->types, PRIM_VOID),
-                      BUILTIN_FREE);
+                      type_get_primitive(s->types, PRIM_VOID), BUILTIN_FREE);
 }
 
 //  ----- External -----

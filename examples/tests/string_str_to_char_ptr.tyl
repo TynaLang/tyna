@@ -1,0 +1,9 @@
+// This example should fail to compile because `str` cannot implicitly convert to *const char.
+external fn puts(c: *const char): i32;
+
+fn main(): i32 {
+    let text: str = "hello";
+    // The call below must require explicit as_c_ptr(), not implicit decay.
+    puts(text);
+    return 0;
+}

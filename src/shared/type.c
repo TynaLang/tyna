@@ -38,6 +38,8 @@ size_t type_get_primitive_size(PrimitiveKind prim) {
     return 8;
   case PRIM_BOOL:
     return 1;
+  case PRIM_STRING:
+    return 16;
   default:
     return 0;
   }
@@ -95,8 +97,13 @@ static void register_array_template(TypeContext *ctx) {
   List_push(&ctx->templates, array_tmpl);
 }
 
+Type *type_get_string_buffer(TypeContext *ctx) {
+  return ctx->string_buffer;
+}
+
 TypeContext *type_context_create() {
   TypeContext *ctx = xmalloc(sizeof(TypeContext));
+  ctx->string_buffer = NULL;
   for (int i = 0; i <= PRIM_UNKNOWN; i++) {
     ctx->primitives[i] = xcalloc(1, sizeof(Type));
     ctx->primitives[i]->kind = KIND_PRIMITIVE;
@@ -119,12 +126,25 @@ TypeContext *type_context_create() {
 
   register_array_template(ctx);
 
+  Type *sb = xcalloc(1, sizeof(Type));
+  sb->kind = KIND_STRING_BUFFER;
+  sb->name = sv_from_cstr("String");
+  sb->size = 24;
+  sb->alignment = 8;
+  List_init(&sb->members);
+  List_init(&sb->methods);
+  List_init(&sb->impls);
+  sb->is_frozen = true;
+  sb->is_intrinsic = true;
+  ctx->string_buffer = sb;
+
   return ctx;
 }
 
 void type_context_free(TypeContext *ctx) {
   for (int i = 0; i <= PRIM_UNKNOWN; i++)
     type_free_internal(ctx->primitives[i]);
+  type_free_internal(ctx->string_buffer);
   for (size_t i = 0; i < ctx->templates.len; i++)
     type_free_internal(ctx->templates.items[i]);
   for (size_t i = 0; i < ctx->instances.len; i++)
@@ -604,6 +624,8 @@ bool type_equals(Type *a, Type *b) {
   case KIND_RESULT:
     return type_equals(a->data.result.success, b->data.result.success) &&
            type_equals(a->data.result.error_set, b->data.result.error_set);
+  case KIND_STRING_BUFFER:
+    return a == b;
   case KIND_TEMPLATE:
     if (!sv_eq(a->name, b->name))
       return false;
@@ -762,6 +784,9 @@ const char *type_to_name(Type *t) {
     depth--;
     return template_buf;
   }
+  case KIND_STRING_BUFFER:
+    depth--;
+    return "String";
   default:
     depth--;
     return "complex";
@@ -819,6 +844,8 @@ bool type_is_concrete(Type *t) {
            type_is_concrete(t->data.result.error_set);
   case KIND_TEMPLATE:
     return false;
+  case KIND_STRING_BUFFER:
+    return true;
   default:
     return false;
   }
@@ -928,6 +955,15 @@ int type_can_implicitly_cast(Type *to, Type *from) {
       if (type_equals(m->type, from))
         return 1;
     }
+  }
+
+  if (to->kind == KIND_PRIMITIVE && to->data.primitive == PRIM_STRING &&
+      from->kind == KIND_STRING_BUFFER) {
+    return 1;
+  }
+
+  if (to->kind == KIND_POINTER && from->kind == KIND_STRING_BUFFER) {
+    return 0;
   }
 
   return 0;

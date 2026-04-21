@@ -152,6 +152,8 @@ struct AstNode {
       bool is_static;
       bool is_export;
       bool is_external;
+      bool requires_arena;
+      bool consumes_string_arg;
     } func_decl;
 
     struct {
@@ -270,6 +272,7 @@ struct AstNode {
       AstNode *name;
       Type *type;
       AstNode *default_value;
+      bool requires_storage;
     } param;
 
     struct {

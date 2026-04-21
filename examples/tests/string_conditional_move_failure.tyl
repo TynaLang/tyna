@@ -1,0 +1,19 @@
+// This example should fail to compile because `s` may be moved in one branch
+// and then used after the conditional.
+fn main(): i32 {
+    let s = String.new();
+    s.push("hello");
+
+    let condition = true;
+    if (condition) {
+        let slice: str = s.into_str();
+        if (slice != "hello") {
+            print("FAIL");
+            return 1;
+        }
+    }
+
+    // s was moved in the true branch, so reusing it here should be illegal.
+    s.push(" world");
+    return 0;
+}

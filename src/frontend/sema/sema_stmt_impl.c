@@ -5,7 +5,7 @@ void sema_check_impl_decl(Sema *s, AstNode *node) {
   StringView name = sv_from_cstr(type_to_name(t));
   if (!t ||
       (t->kind != KIND_STRUCT && t->kind != KIND_UNION &&
-       t->kind != KIND_TEMPLATE &&
+       t->kind != KIND_TEMPLATE && t->kind != KIND_STRING_BUFFER &&
        !(t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING))) {
     sema_error(s, node,
                "Undefined type '" SV_FMT "' or it is not a struct/union",

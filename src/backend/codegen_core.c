@@ -125,29 +125,6 @@ static void cg_initiate_system_functions(Codegen *cg) {
                      str_len_type, true, NULL);
   List_push(&cg->system_functions, f_str_len);
 
-  // void __tyl_str_retain(String *out, const String *s)
-  LLVMTypeRef str_retain_args[] = {LLVMPointerType(string_ty, 0),
-                                   LLVMPointerType(string_ty, 0)};
-  LLVMTypeRef str_retain_type = LLVMFunctionType(
-      LLVMVoidTypeInContext(cg->context), str_retain_args, 2, false);
-  LLVMValueRef str_retain_val =
-      LLVMAddFunction(cg->module, "__tyl_str_retain", str_retain_type);
-  CGFunction *f_str_retain = xmalloc(sizeof(CGFunction));
-  cg_init_CGFunction(f_str_retain, sv_from_parts("__tyl_str_retain", 16),
-                     str_retain_val, str_retain_type, true, NULL);
-  List_push(&cg->system_functions, f_str_retain);
-
-  // void __tyl_str_release(const String *s)
-  LLVMTypeRef str_release_args[] = {LLVMPointerType(string_ty, 0)};
-  LLVMTypeRef str_release_type = LLVMFunctionType(
-      LLVMVoidTypeInContext(cg->context), str_release_args, 1, false);
-  LLVMValueRef str_release_val =
-      LLVMAddFunction(cg->module, "__tyl_str_release", str_release_type);
-  CGFunction *f_str_release = xmalloc(sizeof(CGFunction));
-  cg_init_CGFunction(f_str_release, sv_from_parts("__tyl_str_release", 17),
-                     str_release_val, str_release_type, true, NULL);
-  List_push(&cg->system_functions, f_str_release);
-
   // i64 __tyl_str_hash(String s)
   LLVMTypeRef str_hash_args[] = {string_ty};
   LLVMTypeRef str_hash_type = LLVMFunctionType(i64_ty, str_hash_args, 1, false);
@@ -168,6 +145,148 @@ static void cg_initiate_system_functions(Codegen *cg) {
   cg_init_CGFunction(f_str_eq, sv_from_cstr("__tyl_str_equals"), str_eq_val,
                      str_eq_type, true, NULL);
   List_push(&cg->system_functions, f_str_eq);
+
+  LLVMTypeRef buf_ty =
+      cg_get_llvm_type(cg, type_get_string_buffer(cg->type_ctx));
+  LLVMTypeRef buf_ptr_ty = LLVMPointerType(buf_ty, 0);
+
+  // void __tyl_string_new(tyl_string_buf *out)
+  LLVMTypeRef str_new_args[] = {buf_ptr_ty};
+  LLVMTypeRef str_new_type = LLVMFunctionType(
+      LLVMVoidTypeInContext(cg->context), str_new_args, 1, false);
+  LLVMValueRef str_new_val =
+      LLVMAddFunction(cg->module, "__tyl_string_new", str_new_type);
+  CGFunction *f_str_new = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_new, sv_from_cstr("__tyl_string_new"), str_new_val,
+                     str_new_type, true, NULL);
+  List_push(&cg->system_functions, f_str_new);
+
+  // void __tyl_string_push(tyl_string_buf *buf, tyl_string piece)
+  LLVMTypeRef str_push_args[] = {buf_ptr_ty, string_ty};
+  LLVMTypeRef str_push_type = LLVMFunctionType(
+      LLVMVoidTypeInContext(cg->context), str_push_args, 2, false);
+  LLVMValueRef str_push_val =
+      LLVMAddFunction(cg->module, "__tyl_string_push", str_push_type);
+  CGFunction *f_str_push = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_push, sv_from_cstr("__tyl_string_push"),
+                     str_push_val, str_push_type, true, NULL);
+  List_push(&cg->system_functions, f_str_push);
+
+  // void __tyl_string_free(tyl_string_buf *buf)
+  LLVMTypeRef str_free_buf_args[] = {buf_ptr_ty};
+  LLVMTypeRef str_free_buf_type = LLVMFunctionType(
+      LLVMVoidTypeInContext(cg->context), str_free_buf_args, 1, false);
+  LLVMValueRef str_free_buf_val =
+      LLVMAddFunction(cg->module, "__tyl_string_free", str_free_buf_type);
+  CGFunction *f_str_free_buf = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_free_buf, sv_from_cstr("__tyl_string_free"),
+                     str_free_buf_val, str_free_buf_type, true, NULL);
+  List_push(&cg->system_functions, f_str_free_buf);
+
+  // tyl_string __tyl_string_into_str(tyl_string_buf *buf)
+  LLVMTypeRef str_into_args[] = {buf_ptr_ty};
+  LLVMTypeRef str_into_type =
+      LLVMFunctionType(string_ty, str_into_args, 1, false);
+  LLVMValueRef str_into_val =
+      LLVMAddFunction(cg->module, "__tyl_string_into_str", str_into_type);
+  CGFunction *f_str_into = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_into, sv_from_cstr("__tyl_string_into_str"),
+                     str_into_val, str_into_type, true, NULL);
+  List_push(&cg->system_functions, f_str_into);
+
+  // tyl_string __tyl_string_clone_str(tyl_string_buf *buf)
+  LLVMTypeRef str_clone_args[] = {buf_ptr_ty};
+  LLVMTypeRef str_clone_type =
+      LLVMFunctionType(string_ty, str_clone_args, 1, false);
+  LLVMValueRef str_clone_val =
+      LLVMAddFunction(cg->module, "__tyl_string_clone_str", str_clone_type);
+  CGFunction *f_str_clone = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_str_clone, sv_from_cstr("__tyl_string_clone_str"),
+                     str_clone_val, str_clone_type, true, NULL);
+  List_push(&cg->system_functions, f_str_clone);
+
+  // void __tyl_string_arena_push(void)
+  LLVMTypeRef arena_push_type =
+      LLVMFunctionType(LLVMVoidTypeInContext(cg->context), NULL, 0, false);
+  LLVMValueRef arena_push_val =
+      LLVMAddFunction(cg->module, "__tyl_string_arena_push", arena_push_type);
+  CGFunction *f_arena_push = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_arena_push, sv_from_cstr("__tyl_string_arena_push"),
+                     arena_push_val, arena_push_type, true, NULL);
+  List_push(&cg->system_functions, f_arena_push);
+
+  // void __tyl_string_arena_pop(void)
+  LLVMTypeRef arena_pop_type =
+      LLVMFunctionType(LLVMVoidTypeInContext(cg->context), NULL, 0, false);
+  LLVMValueRef arena_pop_val =
+      LLVMAddFunction(cg->module, "__tyl_string_arena_pop", arena_pop_type);
+  CGFunction *f_arena_pop = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_arena_pop, sv_from_cstr("__tyl_string_arena_pop"),
+                     arena_pop_val, arena_pop_type, true, NULL);
+  List_push(&cg->system_functions, f_arena_pop);
+
+  // const char *__tyl_as_c_ptr(tyl_string s)
+  LLVMTypeRef as_cptr_args[] = {string_ty};
+  LLVMTypeRef as_cptr_type =
+      LLVMFunctionType(LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+                       as_cptr_args, 1, false);
+  LLVMValueRef as_cptr_val =
+      LLVMAddFunction(cg->module, "__tyl_as_c_ptr", as_cptr_type);
+  CGFunction *f_as_cptr = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_as_cptr, sv_from_cstr("__tyl_as_c_ptr"), as_cptr_val,
+                     as_cptr_type, true, NULL);
+  List_push(&cg->system_functions, f_as_cptr);
+
+  // i32 __tyl_ptr_eq(const char *a, const char *b)
+  LLVMTypeRef ptr_eq_args[] = {
+      LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+      LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0)};
+  LLVMTypeRef ptr_eq_type = LLVMFunctionType(
+      LLVMInt32TypeInContext(cg->context), ptr_eq_args, 2, false);
+  LLVMValueRef ptr_eq_val =
+      LLVMAddFunction(cg->module, "__tyl_ptr_eq", ptr_eq_type);
+  CGFunction *f_ptr_eq = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_ptr_eq, sv_from_cstr("__tyl_ptr_eq"), ptr_eq_val,
+                     ptr_eq_type, true, NULL);
+  List_push(&cg->system_functions, f_ptr_eq);
+
+  // int64 __tyl_test_string_alloc_count(void)
+  LLVMTypeRef count_type =
+      LLVMFunctionType(LLVMInt64TypeInContext(cg->context), NULL, 0, false);
+  LLVMValueRef alloc_count_val =
+      LLVMAddFunction(cg->module, "__tyl_test_string_alloc_count", count_type);
+  CGFunction *f_alloc_count = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_alloc_count,
+                     sv_from_cstr("__tyl_test_string_alloc_count"),
+                     alloc_count_val, count_type, true, NULL);
+  List_push(&cg->system_functions, f_alloc_count);
+
+  // int64 __tyl_test_string_free_count(void)
+  LLVMValueRef free_count_val =
+      LLVMAddFunction(cg->module, "__tyl_test_string_free_count", count_type);
+  CGFunction *f_free_count = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_free_count, sv_from_cstr("__tyl_test_string_free_count"),
+                     free_count_val, count_type, true, NULL);
+  List_push(&cg->system_functions, f_free_count);
+
+  // int64 __tyl_test_string_heap_alloc_count(void)
+  LLVMValueRef heap_count_val = LLVMAddFunction(
+      cg->module, "__tyl_test_string_heap_alloc_count", count_type);
+  CGFunction *f_heap_count = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_heap_count,
+                     sv_from_cstr("__tyl_test_string_heap_alloc_count"),
+                     heap_count_val, count_type, true, NULL);
+  List_push(&cg->system_functions, f_heap_count);
+
+  // void __tyl_test_string_reset_counts(void)
+  LLVMTypeRef reset_type =
+      LLVMFunctionType(LLVMVoidTypeInContext(cg->context), NULL, 0, false);
+  LLVMValueRef reset_val =
+      LLVMAddFunction(cg->module, "__tyl_test_string_reset_counts", reset_type);
+  CGFunction *f_reset = xmalloc(sizeof(CGFunction));
+  cg_init_CGFunction(f_reset, sv_from_cstr("__tyl_test_string_reset_counts"),
+                     reset_val, reset_type, true, NULL);
+  List_push(&cg->system_functions, f_reset);
 
   // void __tyl_array_init_fixed(void *arr, i64 elem_size, i64 len)
   LLVMTypeRef init_fixed_args[] = {ptr_ty, i64_ty, i64_ty};
@@ -341,6 +460,7 @@ Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx,
   List_init(&cg->struct_types_in_progress);
   List_init(&cg->break_stack);
   List_init(&cg->continue_stack);
+  cg->current_function_uses_arena = false;
 
   cg_initiate_system_functions(cg);
 
@@ -479,7 +599,7 @@ size_t cg_string_pool_insert(Codegen *cg, StringView str) {
   sprintf(name, ".str.%zu", cg->string_pool.len - 1);
 
   LLVMValueRef const_str =
-      LLVMConstStringInContext(cg->context, copy, str.len + 1, false);
+      LLVMConstStringInContext(cg->context, copy, str.len, false);
   LLVMValueRef global = LLVMAddGlobal(cg->module, LLVMTypeOf(const_str), name);
   LLVMSetInitializer(global, const_str);
   LLVMSetGlobalConstant(global, true);

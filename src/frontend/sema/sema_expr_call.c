@@ -1,5 +1,53 @@
 #include "sema_internal.h"
 
+static void sema_mark_moved_symbol(Symbol *sym) {
+  if (!sym || sym->kind != SYM_VAR)
+    return;
+  sym->is_moved = 1;
+}
+
+static AstNode *sema_find_underlying_var(AstNode *node) {
+  if (!node)
+    return NULL;
+  if (node->tag == NODE_VAR)
+    return node;
+  if (node->tag == NODE_UNARY && node->unary.op == OP_ADDR_OF)
+    return sema_find_underlying_var(node->unary.expr);
+  return NULL;
+}
+
+static bool sema_is_consuming_method(Symbol *method) {
+  if (!method)
+    return false;
+
+  StringView method_name =
+      method->original_name.len ? method->original_name : method->name;
+  return sv_eq_cstr(method_name, "into_str") || sv_eq_cstr(method_name, "free");
+}
+
+static void sema_mark_current_function_consumes_string_arg(Sema *s) {
+  if (!s || !s->fn_node)
+    return;
+  s->fn_node->func_decl.consumes_string_arg = true;
+}
+
+static void sema_mark_move_if_consuming_arg(Sema *s, AstNode *arg,
+                                            Type *param_type, bool force_move) {
+  if (!arg)
+    return;
+  if (!force_move && (!param_type || param_type->kind != KIND_STRING_BUFFER))
+    return;
+
+  AstNode *var_node = sema_find_underlying_var(arg);
+  if (!var_node)
+    return;
+
+  Symbol *sym = sema_resolve(s, var_node->var.value);
+  if (sym && sym->kind == SYM_VAR && !sym->is_const) {
+    sema_mark_moved_symbol(sym);
+  }
+}
+
 static Type *check_builtin_call(Sema *s, AstNode *node) {
   if (!node || !node->call.func || node->call.func->tag != NODE_VAR) {
     return NULL;
@@ -38,6 +86,50 @@ static Type *check_builtin_call(Sema *s, AstNode *node) {
   }
 }
 
+static bool sema_is_string_literal(AstNode *node) {
+  return node && node->tag == NODE_STRING;
+}
+
+static void sema_fold_string_concat_literals(Sema *s, AstNode *node) {
+  if (!node || node->call.args.len == 0)
+    return;
+
+  AstNode *left = NULL;
+  AstNode *right = NULL;
+
+  if (node->call.func->tag == NODE_VAR && node->call.args.len == 2) {
+    StringView fn_name = node->call.func->var.value;
+    if (!sv_eq(fn_name, sv_from_cstr("__tyl_str_concat")))
+      return;
+    left = node->call.args.items[0];
+    right = node->call.args.items[1];
+  } else if (node->call.func->tag == NODE_FIELD && node->call.args.len == 1) {
+    AstNode *field_node = node->call.func;
+    if (!field_node->field.field.data ||
+        !sv_eq_cstr(field_node->field.field, "concat")) {
+      return;
+    }
+    left = field_node->field.object;
+    right = node->call.args.items[0];
+  } else {
+    return;
+  }
+
+  if (!sema_is_string_literal(left) || !sema_is_string_literal(right))
+    return;
+
+  size_t len = left->string.value.len + right->string.value.len;
+  char *buf = xmalloc(len + 1);
+  memcpy(buf, left->string.value.data, left->string.value.len);
+  memcpy(buf + left->string.value.len, right->string.value.data,
+         right->string.value.len);
+  buf[len] = '\0';
+
+  node->tag = NODE_STRING;
+  node->string.value = sv_from_parts(buf, len);
+  node->resolved_type = type_get_primitive(s->types, PRIM_STRING);
+}
+
 ExprInfo check_call(Sema *s, AstNode *node) {
   if (!node || !node->call.func) {
     sema_error(s, node, "Invalid function call expression");
@@ -45,6 +137,13 @@ ExprInfo check_call(Sema *s, AstNode *node) {
         .type = type_get_primitive(s->types, PRIM_UNKNOWN),
         .category = VAL_RVALUE,
     };
+  }
+
+  sema_fold_string_concat_literals(s, node);
+
+  if (node->tag == NODE_STRING) {
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_STRING),
+                      .category = VAL_RVALUE};
   }
 
   Type *builtin_type = check_builtin_call(s, node);
@@ -74,6 +173,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
     }
 
     if (obj_type->kind == KIND_STRUCT || obj_type->kind == KIND_TEMPLATE ||
+        obj_type->kind == KIND_STRING_BUFFER ||
         (obj_type->kind == KIND_PRIMITIVE &&
          obj_type->data.primitive == PRIM_STRING)) {
       for (size_t i = 0; i < obj_type->methods.len; i++) {
@@ -85,7 +185,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
         if (!field_node->field.field.data)
           continue;
         if (sv_eq(lookup_name, field_node->field.field) &&
-            method->kind == SYM_METHOD) {
+            (method->kind == SYM_METHOD || method->kind == SYM_STATIC_METHOD)) {
           Symbol *concrete_method =
               sema_instantiate_method_symbol(s, obj_type, method, field_node);
           if (!concrete_method)
@@ -107,22 +207,24 @@ ExprInfo check_call(Sema *s, AstNode *node) {
           List new_args;
           List_init(&new_args);
 
-          AstNode *self_arg = field_node->field.object;
-          if (concrete_method->value &&
-              concrete_method->value->tag == NODE_FUNC_DECL &&
-              concrete_method->value->func_decl.params.len > 0) {
-            AstNode *first_param =
-                concrete_method->value->func_decl.params.items[0];
-            Type *param_type = first_param->param.type;
-            if (param_type->kind == KIND_POINTER &&
-                orig_obj_type->kind != KIND_POINTER &&
-                type_equals(param_type->data.pointer_to, orig_obj_type)) {
-              self_arg = AstNode_new_unary(OP_ADDR_OF, field_node->field.object,
-                                           field_node->loc);
+          if (concrete_method->kind == SYM_METHOD) {
+            AstNode *self_arg = field_node->field.object;
+            if (concrete_method->value &&
+                concrete_method->value->tag == NODE_FUNC_DECL &&
+                concrete_method->value->func_decl.params.len > 0) {
+              AstNode *first_param =
+                  concrete_method->value->func_decl.params.items[0];
+              Type *param_type = first_param->param.type;
+              if (param_type->kind == KIND_POINTER &&
+                  orig_obj_type->kind != KIND_POINTER &&
+                  type_equals(param_type->data.pointer_to, orig_obj_type)) {
+                self_arg = AstNode_new_unary(
+                    OP_ADDR_OF, field_node->field.object, field_node->loc);
+              }
             }
+            List_push(&new_args, self_arg);
           }
 
-          List_push(&new_args, self_arg);
           for (size_t j = 0; j < node->call.args.len; j++) {
             List_push(&new_args, node->call.args.items[j]);
           }
@@ -147,7 +249,8 @@ ExprInfo check_call(Sema *s, AstNode *node) {
           if (!field_node->field.field.data)
             continue;
           if (sv_eq(lookup_name, field_node->field.field) &&
-              method->kind == SYM_METHOD) {
+              (method->kind == SYM_METHOD ||
+               method->kind == SYM_STATIC_METHOD)) {
             Symbol *concrete_method =
                 sema_instantiate_method_symbol(s, obj_type, method, field_node);
             if (!concrete_method)
@@ -169,22 +272,23 @@ ExprInfo check_call(Sema *s, AstNode *node) {
             List new_args;
             List_init(&new_args);
 
-            AstNode *self_arg = field_node->field.object;
-            if (concrete_method->value &&
-                concrete_method->value->tag == NODE_FUNC_DECL &&
-                concrete_method->value->func_decl.params.len > 0) {
-              AstNode *first_param =
-                  concrete_method->value->func_decl.params.items[0];
-              Type *param_type = first_param->param.type;
-              if (param_type->kind == KIND_POINTER &&
-                  orig_obj_type->kind != KIND_POINTER &&
-                  type_equals(param_type->data.pointer_to, orig_obj_type)) {
-                self_arg = AstNode_new_unary(
-                    OP_ADDR_OF, field_node->field.object, field_node->loc);
+            if (concrete_method->kind == SYM_METHOD) {
+              AstNode *self_arg = field_node->field.object;
+              if (concrete_method->value &&
+                  concrete_method->value->tag == NODE_FUNC_DECL &&
+                  concrete_method->value->func_decl.params.len > 0) {
+                AstNode *first_param =
+                    concrete_method->value->func_decl.params.items[0];
+                Type *param_type = first_param->param.type;
+                if (param_type->kind == KIND_POINTER &&
+                    orig_obj_type->kind != KIND_POINTER &&
+                    type_equals(param_type->data.pointer_to, orig_obj_type)) {
+                  self_arg = AstNode_new_unary(
+                      OP_ADDR_OF, field_node->field.object, field_node->loc);
+                }
               }
+              List_push(&new_args, self_arg);
             }
-
-            List_push(&new_args, self_arg);
             for (size_t j = 0; j < node->call.args.len; j++) {
               List_push(&new_args, node->call.args.items[j]);
             }
@@ -208,6 +312,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
                : sema_find_type_by_name(s, sm->static_member.parent);
     if (parent_type && (parent_type->kind == KIND_STRUCT ||
                         parent_type->kind == KIND_TEMPLATE ||
+                        parent_type->kind == KIND_STRING_BUFFER ||
                         (parent_type->kind == KIND_PRIMITIVE &&
                          parent_type->data.primitive == PRIM_STRING))) {
       for (size_t i = 0; i < parent_type->methods.len; i++) {
@@ -246,6 +351,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
     };
   }
 
+  bool consumes = false;
   if (node->call.func->tag == NODE_VAR) {
     StringView name = node->call.func->var.value;
     Symbol *symbol = sema_resolve(s, name);
@@ -289,6 +395,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
         }
       }
 
+      consumes = sema_is_consuming_method(symbol);
       for (size_t i = 0;
            i < node->call.args.len && i < fn_decl->func_decl.params.len; i++) {
         AstNode *arg_node = node->call.args.items[i];
@@ -301,7 +408,14 @@ ExprInfo check_call(Sema *s, AstNode *node) {
                      type_to_name(param_type), type_to_name(arg_type));
         }
         check_literal_bounds(s, node->call.args.items[i], param_type);
+        sema_mark_move_if_consuming_arg(s, arg_node, param_type, consumes);
       }
+    }
+
+    if (s->fn_node && (consumes ||
+        (symbol->value && symbol->value->tag == NODE_FUNC_DECL &&
+         symbol->value->func_decl.consumes_string_arg))) {
+      sema_mark_current_function_consumes_string_arg(s);
     }
 
     return (ExprInfo){.type = symbol->type, .category = VAL_RVALUE};

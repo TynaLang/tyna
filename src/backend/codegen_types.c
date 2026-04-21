@@ -233,6 +233,21 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
     return NULL;
   }
 
+  if (t->kind == KIND_STRING_BUFFER) {
+    const char *name = "tyl_string_buf";
+    LLVMTypeRef buf_ty = LLVMGetTypeByName2(cg->context, name);
+    if (!buf_ty) {
+      buf_ty = LLVMStructCreateNamed(cg->context, name);
+      LLVMTypeRef fields[3] = {
+          LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+          LLVMInt64TypeInContext(cg->context),
+          LLVMInt64TypeInContext(cg->context),
+      };
+      LLVMStructSetBody(buf_ty, fields, 3, false);
+    }
+    return buf_ty;
+  }
+
   panic("Unknown type kind: %d", t->kind);
 }
 
@@ -269,6 +284,7 @@ void cg_lower_all_structs(Codegen *cg) {
       continue;
     cg_get_llvm_type(cg, t);
   }
+  cg_get_llvm_type(cg, type_get_string_buffer(cg->type_ctx));
 }
 
 LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
@@ -343,9 +359,10 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
     }
 
     if (from_kind == LLVMStructTypeKind && from_t &&
-        from_t->kind == KIND_PRIMITIVE &&
-        from_t->data.primitive == PRIM_STRING) {
-      // Convert a language string value to a raw char pointer for C helpers.
+        ((from_t->kind == KIND_PRIMITIVE &&
+          from_t->data.primitive == PRIM_STRING) ||
+         from_t->kind == KIND_STRING_BUFFER)) {
+      // str / String buffer → C pointer (first field is always char*).
       return LLVMBuildExtractValue(cg->builder, value, 0, "string_data_ptr");
     }
 
@@ -360,6 +377,20 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
       LLVMGetIntTypeWidth(to_ty) == 1) {
     return LLVMBuildICmp(cg->builder, LLVMIntNE, value, LLVMConstNull(from_ty),
                          "ptrnonnull");
+  }
+
+  if (from_kind == LLVMStructTypeKind && from_t &&
+      from_t->kind == KIND_STRING_BUFFER) {
+    LLVMTypeRef str_ty =
+        cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+    if (to_ty == str_ty) {
+      LLVMValueRef undef = LLVMGetUndef(str_ty);
+      LLVMValueRef p = LLVMBuildExtractValue(cg->builder, value, 0, "sbuf_ptr");
+      LLVMValueRef l = LLVMBuildExtractValue(cg->builder, value, 1, "sbuf_len");
+      LLVMValueRef s0 =
+          LLVMBuildInsertValue(cg->builder, undef, p, 0, "sbuf_slice0");
+      return LLVMBuildInsertValue(cg->builder, s0, l, 1, "sbuf_slice");
+    }
   }
 
   if (from_kind == LLVMStructTypeKind && to_kind == LLVMStructTypeKind) {

@@ -97,13 +97,25 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
   }
 
   CGFunction *old_func_ref = cg->current_function_ref;
+  bool old_uses_arena = cg->current_function_uses_arena;
   cg->current_function_ref = f;
   cg->current_function = f->value;
+
+  cg->current_function_uses_arena = node->func_decl.requires_arena;
 
   LLVMBasicBlockRef entry =
       LLVMAppendBasicBlockInContext(cg->context, f->value, "entry");
   LLVMPositionBuilderAtEnd(cg->builder, entry);
   cg_push_scope(cg);
+
+  if (cg->current_function_uses_arena) {
+    CGFunction *arena_push =
+        cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_push"));
+    if (arena_push) {
+      LLVMBuildCall2(cg->builder, arena_push->type, arena_push->value, NULL, 0,
+                     "");
+    }
+  }
 
   for (size_t i = 0; i < node->func_decl.params.len; i++) {
     AstNode *param_node = node->func_decl.params.items[i];
@@ -116,20 +128,34 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
 
     LLVMValueRef param_val = LLVMGetParam(f->value, (unsigned)i);
 
-    LLVMTypeRef llvm_param_type = cg_get_llvm_type(cg, param_type);
+    if (node->func_decl.body && !param_node->param.requires_storage) {
+      CGSymbolTable_add_direct(cg->current_scope, param_name, param_type,
+                               param_val);
+    } else {
+      LLVMTypeRef llvm_param_type = cg_get_llvm_type(cg, param_type);
 
-    char buf[256];
-    snprintf(buf, sizeof(buf), SV_FMT ".addr", SV_ARG(param_name));
-    LLVMValueRef alloca = LLVMBuildAlloca(cg->builder, llvm_param_type, buf);
-    LLVMBuildStore(cg->builder, param_val, alloca);
+      char buf[256];
+      snprintf(buf, sizeof(buf), SV_FMT ".addr", SV_ARG(param_name));
+      LLVMValueRef alloca = LLVMBuildAlloca(cg->builder, llvm_param_type, buf);
+      LLVMBuildStore(cg->builder, param_val, alloca);
 
-    CGSymbolTable_add(cg->current_scope, param_name, param_type, alloca);
+      CGSymbolTable_add(cg->current_scope, param_name, param_type, alloca);
+    }
   }
 
   cg_statement(cg, node->func_decl.body);
 
   LLVMBasicBlockRef current_bb = LLVMGetInsertBlock(cg->builder);
   if (!LLVMGetBasicBlockTerminator(current_bb)) {
+    if (cg->current_function_uses_arena) {
+      CGFunction *arena_pop =
+          cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_pop"));
+      if (arena_pop) {
+        LLVMBuildCall2(cg->builder, arena_pop->type, arena_pop->value, NULL, 0,
+                       "");
+      }
+    }
+
     if (LLVMGetTypeKind(LLVMGetReturnType(f->type)) == LLVMVoidTypeKind) {
       cg_pop_scope(cg);
       LLVMBuildRetVoid(cg->builder);
@@ -142,6 +168,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
     cg_pop_scope(cg);
   }
 
+  cg->current_function_uses_arena = old_uses_arena;
   cg->current_function_ref = old_func_ref;
 }
 

@@ -26,12 +26,52 @@ LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name) {
     align = 1;
   LLVMSetAlignment(alloca, (unsigned)align);
 
-  // Initialize with zero/null for safety
-  LLVMBuildStore(tmp_builder, LLVMConstNull(llvm_type), alloca);
+  free(c_name);
+  LLVMDisposeBuilder(tmp_builder);
+  return alloca;
+}
+
+LLVMValueRef cg_alloca_in_entry_uninitialized(Codegen *cg, Type *type,
+                                              StringView name) {
+  LLVMBuilderRef tmp_builder = LLVMCreateBuilderInContext(cg->context);
+  LLVMBasicBlockRef entry_block = LLVMGetEntryBasicBlock(cg->current_function);
+
+  LLVMValueRef first_instr = LLVMGetFirstInstruction(entry_block);
+  if (first_instr) {
+    LLVMPositionBuilderBefore(tmp_builder, first_instr);
+  } else {
+    LLVMPositionBuilderAtEnd(tmp_builder, entry_block);
+  }
+
+  LLVMTypeRef llvm_type = cg_get_llvm_type(cg, type);
+  char *c_name = sv_to_cstr(name);
+  LLVMValueRef alloca = LLVMBuildAlloca(tmp_builder, llvm_type, c_name);
+
+  size_t align = type->alignment ? type->alignment : type->size;
+  if (align == 0)
+    align = 1;
+  LLVMSetAlignment(alloca, (unsigned)align);
 
   free(c_name);
   LLVMDisposeBuilder(tmp_builder);
   return alloca;
+}
+
+LLVMValueRef cg_coerce_string_buffer_to_str(Codegen *cg, LLVMValueRef value,
+                                            Type *type) {
+  if (!type || type->kind != KIND_STRING_BUFFER)
+    return value;
+
+  LLVMTypeRef string_ty =
+      cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+  LLVMValueRef ptr_val =
+      LLVMBuildExtractValue(cg->builder, value, 0, "strbuf_ptr");
+  LLVMValueRef len_val =
+      LLVMBuildExtractValue(cg->builder, value, 1, "strbuf_len");
+  LLVMValueRef result = LLVMGetUndef(string_ty);
+  result = LLVMBuildInsertValue(cg->builder, result, ptr_val, 0, "str_ptr");
+  result = LLVMBuildInsertValue(cg->builder, result, len_val, 1, "str_len");
+  return result;
 }
 
 LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
@@ -66,6 +106,15 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
         return LLVMBuildBitCast(cg->builder, payload_field, target_ptr_ty,
                                 "result_payload_ptr");
       }
+    }
+
+    if (sym->is_direct_value) {
+      LLVMValueRef direct_alloca = cg_alloca_in_entry_uninitialized(cg, sym->type,
+                                                                    sym->name);
+      LLVMBuildStore(cg->builder, sym->value, direct_alloca);
+      sym->value = direct_alloca;
+      sym->is_direct_value = false;
+      return direct_alloca;
     }
 
     return sym->value;

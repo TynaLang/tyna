@@ -33,6 +33,7 @@ ExprInfo check_field(Sema *s, AstNode *node) {
 
   if (obj_type->kind != KIND_STRUCT && obj_type->kind != KIND_UNION &&
       obj_type->kind != KIND_TEMPLATE && obj_type->kind != KIND_ERROR &&
+      obj_type->kind != KIND_STRING_BUFFER &&
       !(obj_type->kind == KIND_PRIMITIVE &&
         obj_type->data.primitive == PRIM_STRING)) {
     sema_error(s, node->field.object,
@@ -64,7 +65,7 @@ ExprInfo check_field(Sema *s, AstNode *node) {
     StringView lookup_name =
         method->original_name.len ? method->original_name : method->name;
     if (sv_eq(lookup_name, node->field.field)) {
-      if (method->kind == SYM_METHOD) {
+      if (method->kind == SYM_METHOD || method->kind == SYM_STATIC_METHOD) {
         node->resolved_type = method->type;
         return (ExprInfo){.type = method->type, .category = VAL_RVALUE};
       }
@@ -104,6 +105,7 @@ ExprInfo check_static_member(Sema *s, AstNode *node) {
   }
 
   if (!type || (type->kind != KIND_STRUCT && type->kind != KIND_TEMPLATE &&
+                type->kind != KIND_STRING_BUFFER &&
                 !(type->kind == KIND_PRIMITIVE &&
                   type->data.primitive == PRIM_STRING))) {
     sema_error(s, node, "Undefined type '" SV_FMT "'",

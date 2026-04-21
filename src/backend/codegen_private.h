@@ -13,6 +13,8 @@ typedef struct CGSymbol {
   StringView name;
   Type *type;
   LLVMValueRef value;
+  int is_moved;
+  bool is_direct_value;
 } CGSymbol;
 
 typedef struct CGSymbolTable {
@@ -56,6 +58,7 @@ struct Codegen {
 
   List break_stack;    // List<LLVMBasicBlockRef>
   List continue_stack; // List<LLVMBasicBlockRef>
+  bool current_function_uses_arena;
 };
 
 // ===== symbol table =====
@@ -63,10 +66,14 @@ struct Codegen {
 void CGSymbolTable_init(CGSymbolTable *t, CGSymbolTable *parent);
 void CGSymbolTable_add(CGSymbolTable *t, StringView name, Type *type,
                        LLVMValueRef value);
+void CGSymbolTable_add_direct(CGSymbolTable *t, StringView name, Type *type,
+                              LLVMValueRef value);
 CGSymbol *CGSymbolTable_find(CGSymbolTable *t, StringView name);
+void cg_mark_symbol_moved(CGSymbolTable *t, StringView name);
 
 CGSymbolTable *cg_push_scope(Codegen *cg);
 void cg_pop_scope(Codegen *cg);
+void cg_cleanup_string_vars_in_scope(Codegen *cg, CGSymbolTable *scope);
 
 // ===== types =====
 
@@ -99,6 +106,10 @@ size_t cg_string_pool_insert(Codegen *cg, StringView str);
 
 LLVMValueRef cg_get_address(Codegen *cg, AstNode *node);
 LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name);
+LLVMValueRef cg_alloca_in_entry_uninitialized(Codegen *cg, Type *type,
+                                              StringView name);
+LLVMValueRef cg_coerce_string_buffer_to_str(Codegen *cg, LLVMValueRef value,
+                                            Type *type);
 
 bool type_is_array_struct(Type *type);
 

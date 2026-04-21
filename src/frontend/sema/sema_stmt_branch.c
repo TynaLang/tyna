@@ -51,8 +51,9 @@ void sema_check_switch_stmt(Sema *s, AstNode *node) {
   SemaJump jump_ctx;
   sema_jump_push(s, &jump_ctx, sv_from_cstr(""), node, false, true);
 
-  if (expr_type->kind == KIND_PRIMITIVE &&
-      expr_type->data.primitive == PRIM_STRING) {
+  if ((expr_type->kind == KIND_PRIMITIVE &&
+       expr_type->data.primitive == PRIM_STRING) ||
+      expr_type->kind == KIND_STRING_BUFFER) {
     for (size_t i = 0; i < node->switch_stmt.cases.len; i++) {
       AstNode *case_node = node->switch_stmt.cases.items[i];
       if (!case_node || case_node->tag != NODE_CASE) {

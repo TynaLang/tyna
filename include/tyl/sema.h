@@ -46,6 +46,9 @@ struct Symbol {
   int is_const;
   int is_export;
   int is_external;
+  int is_moved;
+  int requires_storage;
+  int requires_arena;
 
   AstNode *value;
   struct SemaScope *scope;

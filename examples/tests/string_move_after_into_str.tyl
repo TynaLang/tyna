@@ -1,0 +1,9 @@
+// This example should fail to compile because `s` is moved by into_str().
+fn main(): i32 {
+    let s = String.new();
+    s.push("hello");
+    let slice: str = s.into_str();
+    // Because s was consumed by into_str(), using it again should be invalid.
+    s.push("!");
+    return 0;
+}

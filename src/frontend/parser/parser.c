@@ -304,9 +304,16 @@ AstNode *Parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
   AstNode *ast_root = AstNode_new_program(p.current_token.loc);
 
   while (p.current_token.type != TOKEN_EOF) {
+    TokenType start_token = p.current_token.type;
     AstNode *stmt = Parser_parse_statement(&p);
-    if (!stmt)
+    if (!stmt) {
+      Parser_sync(&p);
+      if (p.current_token.type == start_token &&
+          p.current_token.type != TOKEN_EOF) {
+        Parser_token_advance(&p);
+      }
       continue;
+    }
     List_push(&ast_root->ast_root.children, stmt);
   }
 
