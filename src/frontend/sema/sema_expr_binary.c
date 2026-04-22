@@ -44,6 +44,42 @@ ExprInfo check_binary_logical(Sema *s, AstNode *node) {
   Type *left = sema_check_expr(s, node->binary_logical.left).type;
   Type *right = sema_check_expr(s, node->binary_logical.right).type;
 
+  if (node->tag == NODE_BINARY_EQUALITY) {
+    Type *str_type = type_get_string_buffer(s->types);
+    bool left_is_string = left && left->kind == KIND_PRIMITIVE &&
+                          left->data.primitive == PRIM_STRING;
+    bool right_is_string = right && right->kind == KIND_PRIMITIVE &&
+                           right->data.primitive == PRIM_STRING;
+    bool left_is_str = left && left->kind == KIND_STRING_BUFFER;
+    bool right_is_str = right && right->kind == KIND_STRING_BUFFER;
+
+    if ((left_is_string && right_is_str) || (right_is_string && left_is_str)) {
+      if (left_is_string) {
+        node->binary_logical.left =
+            AstNode_new_cast_expr(node->binary_logical.left, str_type,
+                                  node->binary_logical.left->loc);
+        left = sema_check_expr(s, node->binary_logical.left).type;
+      } else if (!left_is_str) {
+        node->binary_logical.left =
+            AstNode_new_cast_expr(node->binary_logical.left, str_type,
+                                  node->binary_logical.left->loc);
+        left = sema_check_expr(s, node->binary_logical.left).type;
+      }
+
+      if (right_is_string) {
+        node->binary_logical.right =
+            AstNode_new_cast_expr(node->binary_logical.right, str_type,
+                                  node->binary_logical.right->loc);
+        right = sema_check_expr(s, node->binary_logical.right).type;
+      } else if (!right_is_str) {
+        node->binary_logical.right =
+            AstNode_new_cast_expr(node->binary_logical.right, str_type,
+                                  node->binary_logical.right->loc);
+        right = sema_check_expr(s, node->binary_logical.right).type;
+      }
+    }
+  }
+
   Type *result = type_get_primitive(s->types, PRIM_BOOL);
   if (node->tag == NODE_BINARY_LOGICAL) {
     if (!type_is_bool(left) || !type_is_bool(right)) {

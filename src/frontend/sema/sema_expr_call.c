@@ -1,21 +1,5 @@
 #include "sema_internal.h"
 
-static void sema_mark_moved_symbol(Symbol *sym) {
-  if (!sym || sym->kind != SYM_VAR)
-    return;
-  sym->is_moved = 1;
-}
-
-static AstNode *sema_find_underlying_var(AstNode *node) {
-  if (!node)
-    return NULL;
-  if (node->tag == NODE_VAR)
-    return node;
-  if (node->tag == NODE_UNARY && node->unary.op == OP_ADDR_OF)
-    return sema_find_underlying_var(node->unary.expr);
-  return NULL;
-}
-
 static bool sema_is_consuming_method(Symbol *method) {
   if (!method)
     return false;
@@ -402,6 +386,17 @@ ExprInfo check_call(Sema *s, AstNode *node) {
         Type *arg_type = sema_check_expr(s, arg_node).type;
         AstNode *param_node = fn_decl->func_decl.params.items[i];
         Type *param_type = param_node->param.type;
+
+        if (param_type && param_type->kind == KIND_STRING_BUFFER && arg_type &&
+            arg_type->kind == KIND_PRIMITIVE &&
+            arg_type->data.primitive == PRIM_STRING) {
+          AstNode *cast_arg =
+              AstNode_new_cast_expr(arg_node, param_type, arg_node->loc);
+          node->call.args.items[i] = cast_arg;
+          arg_node = cast_arg;
+          arg_type = sema_check_expr(s, arg_node).type;
+        }
+
         if (!type_can_implicitly_cast(param_type, arg_type)) {
           sema_error(s, node->call.args.items[i],
                      "Type mismatch: expected %s, got %s",
@@ -412,14 +407,27 @@ ExprInfo check_call(Sema *s, AstNode *node) {
       }
     }
 
-    if (s->fn_node && (consumes ||
-        (symbol->value && symbol->value->tag == NODE_FUNC_DECL &&
-         symbol->value->func_decl.consumes_string_arg))) {
+    if (s->fn_node &&
+        (consumes || (symbol->value && symbol->value->tag == NODE_FUNC_DECL &&
+                      symbol->value->func_decl.consumes_string_arg))) {
       sema_mark_current_function_consumes_string_arg(s);
+    }
+
+    if (symbol->type && symbol->type->kind == KIND_PRIMITIVE &&
+        symbol->type->data.primitive == PRIM_STRING) {
+      if (s->scope) {
+        s->scope->has_computed_str = true;
+      }
     }
 
     return (ExprInfo){.type = symbol->type, .category = VAL_RVALUE};
   } else {
+    if (func_type && func_type->kind == KIND_PRIMITIVE &&
+        func_type->data.primitive == PRIM_STRING) {
+      if (s->scope) {
+        s->scope->has_computed_str = true;
+      }
+    }
     return (ExprInfo){.type = func_type, .category = VAL_RVALUE};
   }
 }

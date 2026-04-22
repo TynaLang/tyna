@@ -603,59 +603,6 @@ static LLVMValueRef cg_compare_expr(Codegen *cg, LLVMValueRef lhs,
   }
 }
 
-static bool cg_type_is_str_like(Type *t) {
-  while (t && t->kind == KIND_POINTER)
-    t = t->data.pointer_to;
-  return t && (t->kind == KIND_STRING_BUFFER ||
-               (t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING));
-}
-
-static LLVMValueRef cg_coerce_rvalue_to_str_slice(Codegen *cg, LLVMValueRef v,
-                                                  Type *ty) {
-  while (ty && ty->kind == KIND_POINTER)
-    ty = ty->data.pointer_to;
-  if (!ty || ty->kind != KIND_STRING_BUFFER)
-    return v;
-  LLVMTypeRef str_ty =
-      cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
-  LLVMValueRef undef = LLVMGetUndef(str_ty);
-  LLVMValueRef p = LLVMBuildExtractValue(cg->builder, v, 0, "buf2s_ptr");
-  LLVMValueRef l = LLVMBuildExtractValue(cg->builder, v, 1, "buf2s_len");
-  LLVMValueRef s0 = LLVMBuildInsertValue(cg->builder, undef, p, 0, "buf2s0");
-  return LLVMBuildInsertValue(cg->builder, s0, l, 1, "buf2s");
-}
-
-static LLVMValueRef cg_equality_expr(Codegen *cg, LLVMValueRef lhs,
-                                     LLVMValueRef rhs, EqualityOp op,
-                                     Type *left_ty, Type *right_ty) {
-  if (left_ty && right_ty && cg_type_is_str_like(left_ty) &&
-      cg_type_is_str_like(right_ty)) {
-    CGFunction *eq_fn =
-        cg_find_system_function(cg, sv_from_cstr("__tyl_str_equals"));
-    if (!eq_fn)
-      panic("Missing __tyl_str_equals runtime helper");
-    LLVMValueRef args[] = {lhs, rhs};
-    LLVMValueRef res = LLVMBuildCall2(cg->builder, eq_fn->type, eq_fn->value,
-                                      args, 2, "str_eq");
-    LLVMValueRef one =
-        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 1, false);
-    LLVMIntPredicate pred = (op == OP_EQ) ? LLVMIntEQ : LLVMIntNE;
-    return LLVMBuildICmp(cg->builder, pred, res, one, "str_is_eq");
-  }
-
-  LLVMTypeRef type = LLVMTypeOf(lhs);
-  LLVMTypeKind kind = LLVMGetTypeKind(type);
-  bool is_float = (kind == LLVMDoubleTypeKind || kind == LLVMFloatTypeKind);
-
-  if (is_float) {
-    LLVMRealPredicate pred = (op == OP_EQ) ? LLVMRealOEQ : LLVMRealONE;
-    return LLVMBuildFCmp(cg->builder, pred, lhs, rhs, "feqtmp");
-  } else {
-    LLVMIntPredicate pred = (op == OP_EQ) ? LLVMIntEQ : LLVMIntNE;
-    return LLVMBuildICmp(cg->builder, pred, lhs, rhs, "ieqtmp");
-  }
-}
-
 static LLVMValueRef cg_logical_expr(Codegen *cg, AstNode *node,
                                     LLVMValueRef lhs) {
   LLVMBasicBlockRef original_block = LLVMGetInsertBlock(cg->builder);
@@ -977,25 +924,6 @@ static LLVMValueRef cg_ternary_expr(Codegen *cg, AstNode *node) {
   return phi;
 }
 
-static bool cg_type_is_move_only(Type *type) {
-  return type && type->kind == KIND_STRING_BUFFER;
-}
-
-static AstNode *cg_find_underlying_var(AstNode *node);
-
-static bool cg_call_consumes_arg(CGFunction *fn) {
-  if (!fn)
-    return false;
-
-  if (fn->decl && fn->decl->tag == NODE_FUNC_DECL &&
-      fn->decl->func_decl.consumes_string_arg) {
-    return true;
-  }
-
-  return sv_eq(fn->name, sv_from_cstr("__tyl_string_into_str")) ||
-         sv_eq(fn->name, sv_from_cstr("__tyl_string_free"));
-}
-
 static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   LLVMValueRef ptr = cg_get_address(cg, node->assign_expr.target);
   if (!ptr)
@@ -1064,16 +992,6 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   } else {
     val = cg_cast_value(cg, val, node->assign_expr.value->resolved_type,
                         target_ty);
-  }
-
-  if (cg_type_is_move_only(target_type)) {
-    AstNode *rhs_var = cg_find_underlying_var(node->assign_expr.value);
-    if (rhs_var && rhs_var->tag == NODE_VAR) {
-      if (!(node->assign_expr.target->tag == NODE_VAR &&
-            sv_eq(node->assign_expr.target->var.value, rhs_var->var.value))) {
-        cg_mark_symbol_moved(cg->current_scope, rhs_var->var.value);
-      }
-    }
   }
 
   if (node->assign_expr.target->tag == NODE_INDEX) {
@@ -1149,16 +1067,6 @@ static LLVMValueRef cg_cast_expr(Codegen *cg, AstNode *node) {
   return cg_cast_value(cg, val, expr_type, target_ty);
 }
 
-static AstNode *cg_find_underlying_var(AstNode *node) {
-  if (!node)
-    return NULL;
-  if (node->tag == NODE_VAR)
-    return node;
-  if (node->tag == NODE_UNARY && node->unary.op == OP_ADDR_OF)
-    return cg_find_underlying_var(node->unary.expr);
-  return NULL;
-}
-
 static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
   if (node->call.func->tag != NODE_VAR)
     panic("Function calls must be by name");
@@ -1187,33 +1095,9 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
   if (param_count > 0)
     LLVMGetParamTypes(fn->type, param_types);
 
-  AstNode *fn_decl = fn->decl;
-
   for (unsigned i = 0; i < arg_count; i++) {
     AstNode *arg_node = node->call.args.items[i];
     LLVMValueRef arg_val = cg_expression(cg, arg_node);
-
-    bool consumes_arg = false;
-    if (fn_decl && fn_decl->tag == NODE_FUNC_DECL &&
-        i < fn_decl->func_decl.params.len) {
-      AstNode *param_node = fn_decl->func_decl.params.items[i];
-      Type *param_type = param_node->param.type;
-      if (cg_type_is_move_only(param_type)) {
-        consumes_arg = true;
-      }
-    }
-    if (!consumes_arg) {
-      if (cg_call_consumes_arg(fn)) {
-        consumes_arg = true;
-      }
-    }
-
-    if (consumes_arg) {
-      AstNode *var_node = cg_find_underlying_var(arg_node);
-      if (var_node && var_node->tag == NODE_VAR) {
-        cg_mark_symbol_moved(cg->current_scope, var_node->var.value);
-      }
-    }
 
     if (i < param_count) {
       args[i] =

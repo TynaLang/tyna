@@ -150,7 +150,7 @@ static ExprInfo expr_info_for_cached_node(Sema *s, AstNode *node, Type *type) {
   }
 }
 
-static bool sema_fn_decl_can_use_arena(AstNode *fn_decl) {
+bool sema_fn_decl_can_use_arena(AstNode *fn_decl) {
   if (!fn_decl || fn_decl->tag != NODE_FUNC_DECL)
     return false;
 
@@ -185,18 +185,17 @@ static void sema_mark_current_function_requires_arena(Sema *s, AstNode *node,
                                                       Type *type) {
   if (!s || !s->fn_node || !type)
     return;
+  if (node->tag != NODE_CALL)
+    return;
   if (!sema_fn_decl_can_use_arena(s->fn_node))
     return;
-  if (type->kind != KIND_PRIMITIVE ||
-      type->data.primitive != PRIM_STRING) {
+  if (type->kind != KIND_PRIMITIVE || type->data.primitive != PRIM_STRING) {
     return;
   }
-  if (node->tag == NODE_STRING)
-    return;
-  s->fn_node->func_decl.requires_arena = true;
+  s->scope->has_computed_str = true;
 }
 
-Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
+AstNode *sema_coerce(Sema *s, AstNode *expr, Type *target) {
   ExprInfo expr_info = sema_check_expr(s, expr);
   Type *expr_type = expr_info.type;
   bool target_is_tagged_union =
@@ -211,8 +210,16 @@ Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
       if (!target_is_tagged_union) {
         expr->resolved_type = target;
       }
-      return target;
+      return expr;
     }
+  }
+
+  // Cast String to str explicitly when assigning to a string slice.
+  if (target && target->kind == KIND_STRING_BUFFER && expr_type &&
+      expr_type->kind == KIND_PRIMITIVE &&
+      expr_type->data.primitive == PRIM_STRING) {
+    expr = AstNode_new_cast_expr(expr, target, expr->loc);
+    expr_type = target;
   }
 
   // Exact match or implicit cast
@@ -220,20 +227,20 @@ Type *sema_coerce(Sema *s, AstNode *expr, Type *target) {
     if (!target_is_tagged_union) {
       expr->resolved_type = target;
     }
-    return target;
+    return expr;
   }
 
   // Inference support
   if (target->kind == KIND_PRIMITIVE &&
       target->data.primitive == PRIM_UNKNOWN) {
     expr->resolved_type = expr_type;
-    return expr_type;
+    return expr;
   }
 
   sema_error(s, expr, "Type mismatch: expected %s, got %s",
              type_to_name(target), type_to_name(expr_type));
   expr->resolved_type = expr_type;
-  return expr_type;
+  return expr;
 }
 
 ExprInfo sema_check_expr(Sema *s, AstNode *node) {

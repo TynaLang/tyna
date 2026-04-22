@@ -4,6 +4,7 @@ void sema_scope_push(Sema *s) {
   SemaScope *new_scope = xmalloc(sizeof(SemaScope));
   new_scope->parent = s->scope;
   List_init(&new_scope->symbols);
+  new_scope->has_computed_str = false;
   s->scope = new_scope;
 }
 
@@ -12,6 +13,10 @@ void sema_scope_pop(Sema *s) {
     return;
 
   SemaScope *old = s->scope;
+  if (old->has_computed_str && old->parent) {
+    old->parent->has_computed_str = true;
+  }
+
   s->scope = old->parent;
 
   for (size_t i = 0; i < old->symbols.len; i++) {

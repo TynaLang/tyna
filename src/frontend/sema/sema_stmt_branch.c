@@ -28,6 +28,21 @@ void sema_check_if_stmt(Sema *s, AstNode *node) {
   }
 
   Type *narrow_type = get_if_is_narrow_type(s, node->if_stmt.condition);
+  if (node->if_stmt.then_branch &&
+      node->if_stmt.then_branch->tag != NODE_BLOCK) {
+    AstNode *block = AstNode_new_block(node->if_stmt.then_branch->loc);
+    List_init(&block->block.statements);
+    List_push(&block->block.statements, node->if_stmt.then_branch);
+    node->if_stmt.then_branch = block;
+  }
+  if (node->if_stmt.else_branch &&
+      node->if_stmt.else_branch->tag != NODE_BLOCK) {
+    AstNode *block = AstNode_new_block(node->if_stmt.else_branch->loc);
+    List_init(&block->block.statements);
+    List_push(&block->block.statements, node->if_stmt.else_branch);
+    node->if_stmt.else_branch = block;
+  }
+
   if (narrow_type) {
     AstNode *left = node->if_stmt.condition->binary_is.left;
     sema_scope_push(s);

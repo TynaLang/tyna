@@ -70,6 +70,7 @@ typedef struct Module {
 struct SemaScope {
   SemaScope *parent;
   List symbols; // List<Symbol*>
+  bool has_computed_str;
 };
 
 struct SemaJump {

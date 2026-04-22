@@ -30,7 +30,8 @@ ExprInfo check_new_expr(Sema *s, AstNode *node) {
                    type_to_name(target_type), field_name.data);
         continue;
       }
-      sema_coerce(s, assign->assign_expr.value, member->type);
+      assign->assign_expr.value =
+          sema_coerce(s, assign->assign_expr.value, member->type);
     }
 
     if (s->fn_node && s->ret_type && s->ret_type->kind == KIND_RESULT &&
@@ -121,12 +122,14 @@ ExprInfo check_new_expr(Sema *s, AstNode *node) {
     for (size_t i = 0; i < provided_args; i++) {
       AstNode *arg_node = node->new_expr.args.items[i];
       AstNode *param_node = fn_decl->func_decl.params.items[i + 1];
-      sema_coerce(s, arg_node, param_node->param.type);
+      node->new_expr.args.items[i] =
+          sema_coerce(s, arg_node, param_node->param.type);
     }
     for (size_t i = provided_args; i < param_count; i++) {
       AstNode *param_node = fn_decl->func_decl.params.items[i];
       if (param_node->param.default_value)
-        sema_coerce(s, param_node->param.default_value, param_node->param.type);
+        param_node->param.default_value = sema_coerce(
+            s, param_node->param.default_value, param_node->param.type);
     }
   } else {
     for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
@@ -143,7 +146,8 @@ ExprInfo check_new_expr(Sema *s, AstNode *node) {
                    type_to_name(target_type), field_name.data);
         continue;
       }
-      sema_coerce(s, assign->assign_expr.value, member->type);
+      assign->assign_expr.value =
+          sema_coerce(s, assign->assign_expr.value, member->type);
     }
   }
 

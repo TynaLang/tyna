@@ -60,11 +60,8 @@ void cg_var_decl(Codegen *cg, AstNode *node) {
 
   if (node->var_decl.value && node->var_decl.declared_type &&
       node->var_decl.declared_type->kind == KIND_STRING_BUFFER) {
-    AstNode *rhs_var = cg_find_underlying_var_in_decl(node->var_decl.value);
-    if (rhs_var && rhs_var->tag == NODE_VAR &&
-        !sv_eq(rhs_var->var.value, node->var_decl.name->var.value)) {
-      cg_mark_symbol_moved(cg->current_scope, rhs_var->var.value);
-    }
+    /* Move semantics are enforced by semantic analysis; backend no longer
+       tracks moved variables for cleanup. */
   }
 
   if (node->var_decl.value) {
@@ -114,7 +111,6 @@ static void cg_execute_defer_list(Codegen *cg, List *defer_list) {
 static void cg_cleanup_scope_data(Codegen *cg, CGSymbolTable *scope,
                                   List *defer_list) {
   cg_execute_defer_list(cg, defer_list);
-  cg_cleanup_string_vars_in_scope(cg, scope);
 }
 
 static void cg_cleanup_active_scopes(Codegen *cg) {
@@ -127,13 +123,6 @@ static void cg_cleanup_active_scopes(Codegen *cg) {
     cg_cleanup_scope_data(cg, scope, defer_list);
     scope = scope->parent;
   }
-}
-
-static LLVMValueRef cg_get_string_constant_ptr(Codegen *cg, StringView str) {
-  size_t idx = cg_string_pool_insert(cg, str);
-  LLVMValueRef global = cg->string_globals.items[idx];
-  LLVMTypeRef i8_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
-  return LLVMBuildBitCast(cg->builder, global, i8_ptr_ty, "str_ptr");
 }
 
 static void cg_print_stmt(Codegen *cg, AstNode *node) {
@@ -157,10 +146,10 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
         switch (resolved_type->data.primitive) {
         case PRIM_BOOL: {
           fmt_str = "%s";
-          LLVMValueRef true_str = cg_get_string_constant_ptr(
-              cg, sv_from_cstr("true"));
-          LLVMValueRef false_str = cg_get_string_constant_ptr(
-              cg, sv_from_cstr("false"));
+          LLVMValueRef true_str =
+              cg_get_string_constant_ptr(cg, sv_from_cstr("true"));
+          LLVMValueRef false_str =
+              cg_get_string_constant_ptr(cg, sv_from_cstr("false"));
           LLVMValueRef is_true =
               LLVMBuildICmp(cg->builder, LLVMIntEQ, val,
                             LLVMConstInt(val_ty, 1, 0), "is_true");
@@ -321,27 +310,6 @@ static LLVMValueRef cg_build_result_value(Codegen *cg, AstNode *expr,
                                   "result_payload");
   }
   return result;
-}
-
-static LLVMValueRef cg_string_hash(Codegen *cg, LLVMValueRef str_val) {
-  CGFunction *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_hash"));
-  if (!fn)
-    panic("Missing __tyl_str_hash runtime helper");
-  return LLVMBuildCall2(cg->builder, fn->type, fn->value, &str_val, 1,
-                        "str_hash");
-}
-
-static LLVMValueRef cg_string_equals(Codegen *cg, LLVMValueRef a,
-                                     LLVMValueRef b) {
-  CGFunction *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_equals"));
-  if (!fn)
-    panic("Missing __tyl_str_equals runtime helper");
-  LLVMValueRef args[] = {a, b};
-  LLVMValueRef result =
-      LLVMBuildCall2(cg->builder, fn->type, fn->value, args, 2, "str_eq_int");
-  return LLVMBuildICmp(cg->builder, LLVMIntEQ, result,
-                       LLVMConstInt(LLVMInt32TypeInContext(cg->context), 1, 0),
-                       "str_eq");
 }
 
 static LLVMValueRef cg_extract_tagged_union_payload(Codegen *cg,
@@ -671,10 +639,6 @@ void cg_statement(Codegen *cg, AstNode *node) {
     LLVMValueRef val = NULL;
     bool has_value = node->return_stmt.expr != NULL;
     if (has_value) {
-      if (node->return_stmt.expr->tag == NODE_VAR) {
-        cg_mark_symbol_moved(cg->current_scope,
-                             node->return_stmt.expr->var.value);
-      }
       if (cg->current_function_ref && cg->current_function_ref->decl &&
           cg->current_function_ref->decl->func_decl.return_type &&
           cg->current_function_ref->decl->func_decl.return_type->kind ==

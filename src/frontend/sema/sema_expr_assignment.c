@@ -4,41 +4,6 @@ static bool sema_type_is_move_only(Type *type) {
   return type && type->kind == KIND_STRING_BUFFER;
 }
 
-static AstNode *sema_find_underlying_var(AstNode *node) {
-  if (!node)
-    return NULL;
-  if (node->tag == NODE_VAR)
-    return node;
-  if (node->tag == NODE_UNARY && node->unary.op == OP_ADDR_OF)
-    return sema_find_underlying_var(node->unary.expr);
-  return NULL;
-}
-
-static void sema_mark_symbol_requires_storage(Symbol *sym) {
-  if (!sym || sym->kind != SYM_VAR)
-    return;
-
-  sym->requires_storage = 1;
-  if (sym->value && sym->value->tag == NODE_PARAM) {
-    sym->value->param.requires_storage = true;
-  }
-}
-
-static void sema_mark_node_requires_storage(Sema *s, AstNode *node) {
-  AstNode *var_node = sema_find_underlying_var(node);
-  if (!var_node)
-    return;
-
-  Symbol *sym = sema_resolve(s, var_node->var.value);
-  sema_mark_symbol_requires_storage(sym);
-}
-
-static void sema_mark_moved_symbol(Symbol *sym) {
-  if (!sym || sym->kind != SYM_VAR)
-    return;
-  sym->is_moved = 1;
-}
-
 ExprInfo check_assignment(Sema *s, AstNode *node) {
   AstNode *target = node->assign_expr.target;
   ExprInfo lhs_info = sema_check_expr(s, target);
@@ -54,7 +19,10 @@ ExprInfo check_assignment(Sema *s, AstNode *node) {
                       .category = VAL_RVALUE};
   }
 
-  Type *rhs = sema_coerce(s, node->assign_expr.value, lhs);
+  node->assign_expr.value = sema_coerce(s, node->assign_expr.value, lhs);
+  Type *rhs = node->assign_expr.value
+                  ? node->assign_expr.value->resolved_type
+                  : type_get_primitive(s->types, PRIM_UNKNOWN);
   if (!type_can_implicitly_cast(lhs, rhs)) {
     sema_error(s, node, "Type mismatch in assignment: expected %s, got %s",
                type_to_name(lhs), type_to_name(rhs));

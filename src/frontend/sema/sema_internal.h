@@ -25,7 +25,7 @@ typedef struct ExprInfo {
   ValueCategory category;
 } ExprInfo;
 
-Type *sema_coerce(Sema *s, AstNode *expr, Type *target);
+AstNode *sema_coerce(Sema *s, AstNode *expr, Type *target);
 ExprInfo sema_check_expr(Sema *s, AstNode *node);
 bool sema_is_writable_address(Sema *s, AstNode *node);
 bool type_is_array_struct(Type *type);
@@ -47,6 +47,7 @@ ExprInfo check_ternary(Sema *s, AstNode *node);
 ExprInfo check_new_expr(Sema *s, AstNode *node);
 ExprInfo check_binary_is(Sema *s, AstNode *node);
 ExprInfo check_binary_else(Sema *s, AstNode *node);
+bool sema_fn_decl_can_use_arena(AstNode *fn_decl);
 
 // Sema Stmt
 void sema_scope_push(Sema *s);
@@ -85,6 +86,12 @@ bool literal_fits_in_type(AstNode *node, Type *target);
 void check_literal_bounds(Sema *s, AstNode *node, Type *target);
 ExprInfo check_literal(Sema *s, AstNode *node);
 ExprInfo check_var(Sema *s, AstNode *node);
+
+AstNode *sema_find_underlying_var(AstNode *node);
+void sema_mark_symbol_requires_storage(Symbol *sym);
+void sema_mark_moved_symbol(Symbol *sym);
+void sema_mark_node_requires_storage(Sema *s, AstNode *node);
+void sema_inject_drop_calls(Sema *s, AstNode *block, List *symbols_to_drop);
 
 // Module helpers
 Module *module_find_by_path(Sema *s, const char *abs_path);
