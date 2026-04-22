@@ -3,7 +3,7 @@
 #include <llvm-c/Core.h>
 #include <stdlib.h>
 
-#include "codegen_private.h"
+#include "cg_internal.h"
 #include "tyl/ast.h"
 #include "tyl/sema.h"
 #include "tyl/utils.h"

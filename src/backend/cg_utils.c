@@ -2,7 +2,7 @@
 #include <llvm-c/Target.h>
 #include <llvm-c/Types.h>
 
-#include "codegen_private.h"
+#include "cg_internal.h"
 #include "tyl/codegen.h"
 
 LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name) {
@@ -109,8 +109,8 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     }
 
     if (sym->is_direct_value) {
-      LLVMValueRef direct_alloca = cg_alloca_in_entry_uninitialized(cg, sym->type,
-                                                                    sym->name);
+      LLVMValueRef direct_alloca =
+          cg_alloca_in_entry_uninitialized(cg, sym->type, sym->name);
       LLVMBuildStore(cg->builder, sym->value, direct_alloca);
       sym->value = direct_alloca;
       sym->is_direct_value = false;

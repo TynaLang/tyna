@@ -1,4 +1,4 @@
-#include "codegen_private.h"
+#include "cg_internal.h"
 #include "tyl/ast.h"
 #include "tyl/codegen.h"
 #include <stdint.h>

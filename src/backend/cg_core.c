@@ -1,7 +1,7 @@
 #include <llvm-c/Core.h>
 #include <stdio.h>
 
-#include "codegen_private.h"
+#include "cg_internal.h"
 #include "tyl/ast.h"
 #include "tyl/codegen.h"
 #include "tyl/utils.h"

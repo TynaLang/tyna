@@ -1,5 +1,4 @@
-
-#include "codegen_private.h"
+#include "cg_internal.h"
 
 void CGSymbolTable_init(CGSymbolTable *t, CGSymbolTable *parent) {
   t->parent = parent;

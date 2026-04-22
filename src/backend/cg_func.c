@@ -5,7 +5,7 @@
 #include <llvm-c/Core.h>
 #include <llvm-c/Types.h>
 
-#include "codegen_private.h"
+#include "cg_internal.h"
 #include "tyl/ast.h"
 #include "tyl/codegen.h"
 #include "tyl/errors.h"
