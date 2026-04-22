@@ -15,8 +15,9 @@ struct Parser {
   Token current_token;
   ErrorHandler *eh;
   TypeContext *type_ctx;
-  List type_placeholders;      // active generic placeholder types
-  List placeholder_scope_stack; // stack of placeholder list lengths for nested scopes
+  List type_placeholders;       // active generic placeholder types
+  List placeholder_scope_stack; // stack of placeholder list lengths for nested
+                                // scopes
   bool placeholder_mode;
 };
 

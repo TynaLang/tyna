@@ -14,13 +14,13 @@ typedef enum PrimitiveKind PrimitiveKind;
 
 enum TypeKind {
   KIND_PRIMITIVE,
-  KIND_POINTER,  // New: ptr<T>
-  KIND_STRUCT,   // Concrete Instance (Sized)
-  KIND_UNION,    // Concrete Union (Sized)
-  KIND_ERROR,    // Error payload type
-  KIND_ERROR_SET, // Named or anonymous error set
-  KIND_RESULT,   // Result type T ! ErrorSet
-  KIND_TEMPLATE, // Generic Blueprint (Unsized)
+  KIND_POINTER,       // New: ptr<T>
+  KIND_STRUCT,        // Concrete Instance (Sized)
+  KIND_UNION,         // Concrete Union (Sized)
+  KIND_ERROR,         // Error payload type
+  KIND_ERROR_SET,     // Named or anonymous error set
+  KIND_RESULT,        // Result type T ! ErrorSet
+  KIND_TEMPLATE,      // Generic Blueprint (Unsized)
   KIND_STRING_BUFFER, // Mutable heap buffer { ptr, len, cap } ("String")
 };
 
@@ -83,7 +83,7 @@ struct Type {
 
 struct TypeContext {
   Type *primitives[PRIM_UNKNOWN + 1];
-  Type *string_buffer; // Singleton KIND_STRING_BUFFER ("String")
+  Type *string_buffer;         // Singleton KIND_STRING_BUFFER ("String")
   List structs;                // Generic structs
   List templates;              // List<Type*>
   List instances;              // List<Type*>

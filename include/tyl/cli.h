@@ -2,6 +2,7 @@
 #define TYL_CLI_H
 
 #include <stdbool.h>
+#include <stdio.h>
 
 typedef enum {
   MODE_COMPILE,
