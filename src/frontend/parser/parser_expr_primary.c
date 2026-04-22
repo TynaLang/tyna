@@ -5,8 +5,8 @@ static int parser_is(AstNode *node, AstKind kind) {
 }
 
 static int is_type_token(TokenType t) {
-  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_VOID) ||
-         t == TOKEN_LBRACKET || t == TOKEN_STAR || t == TOKEN_CONST;
+  return (t >= TOKEN_TYPE_INT && t <= TOKEN_TYPE_VOID) || t == TOKEN_LBRACKET ||
+         t == TOKEN_STAR || t == TOKEN_CONST;
 }
 
 static AstNode *parser_parse_new_expr(Parser *p) {

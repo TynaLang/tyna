@@ -3,8 +3,12 @@
 Type *parser_parse_type_full(Parser *p) {
   Type *res = NULL;
   int pointer_depth = 0;
+  bool saw_const = false;
+  Location const_loc = p->current_token.loc;
 
   while (p->current_token.type == TOKEN_CONST) {
+    saw_const = true;
+    const_loc = p->current_token.loc;
     parser_token_advance(p);
   }
 
@@ -12,6 +16,8 @@ Type *parser_parse_type_full(Parser *p) {
     pointer_depth++;
     parser_token_advance(p);
     while (p->current_token.type == TOKEN_CONST) {
+      saw_const = true;
+      const_loc = p->current_token.loc;
       parser_token_advance(p);
     }
   }
@@ -133,6 +139,12 @@ Type *parser_parse_type_full(Parser *p) {
   if (!res) {
     ErrorHandler_report(p->eh, p->current_token.loc, "Expected type");
     return NULL;
+  }
+
+  if (saw_const) {
+    ErrorHandler_report_level(
+        p->eh, const_loc, LEVEL_WARNING,
+        "const qualifier is currently parsed but has no semantic effect");
   }
 
   while (pointer_depth-- > 0) {

@@ -47,7 +47,12 @@ ExprInfo sema_check_assignment(Sema *s, AstNode *node) {
 }
 
 ExprInfo sema_check_cast(Sema *s, AstNode *node) {
-  sema_check_expr(s, node->cast_expr.expr);
+  Type *expr_type = sema_check_expr(s, node->cast_expr.expr).type;
+  if (expr_type && node->cast_expr.target_type &&
+      type_equals(expr_type, node->cast_expr.target_type)) {
+    sema_warning(s, node, "Redundant cast to %s",
+                 type_to_name(node->cast_expr.target_type));
+  }
   return (ExprInfo){
       .type = node->cast_expr.target_type,
       .category = VAL_RVALUE,

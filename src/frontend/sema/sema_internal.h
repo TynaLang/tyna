@@ -33,6 +33,14 @@ bool error_set_contains(Type *set, Type *error);
 Type *sema_find_type_by_name(Sema *s, StringView name);
 Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
                                        AstNode *field_node);
+bool sema_is_consuming_method(Symbol *method);
+void sema_mark_current_function_consumes_string_arg(Sema *s);
+void sema_mark_move_if_consuming_arg(Sema *s, AstNode *arg, Type *param_type,
+                                     bool force_move);
+Type *sema_check_builtin_call(Sema *s, AstNode *node);
+bool sema_is_string_literal(AstNode *node);
+void sema_fold_string_concat_literals(Sema *s, AstNode *node);
+bool sema_try_resolve_method_call(Sema *s, AstNode *node);
 ExprInfo sema_check_field(Sema *s, AstNode *node);
 ExprInfo sema_check_static_member(Sema *s, AstNode *node);
 ExprInfo sema_check_call(Sema *s, AstNode *node);
@@ -45,8 +53,11 @@ ExprInfo sema_check_assignment(Sema *s, AstNode *node);
 ExprInfo sema_check_cast(Sema *s, AstNode *node);
 ExprInfo sema_check_ternary(Sema *s, AstNode *node);
 ExprInfo sema_check_new_expr(Sema *s, AstNode *node);
+ExprInfo sema_check_new_error_expr(Sema *s, AstNode *node);
+ExprInfo sema_check_new_struct_expr(Sema *s, AstNode *node);
 ExprInfo sema_check_binary_is(Sema *s, AstNode *node);
 ExprInfo sema_check_binary_else(Sema *s, AstNode *node);
+ExprInfo sema_check_expr_cache(Sema *s, AstNode *node);
 bool sema_fn_decl_can_use_arena(AstNode *fn_decl);
 
 // Sema Stmt
@@ -57,6 +68,8 @@ void sema_jump_push(Sema *s, SemaJump *ctx, StringView label, AstNode *node,
 void sema_jump_pop(Sema *s);
 SemaJump *sema_find_break_jump(Sema *s);
 SemaJump *sema_find_loop_jump(Sema *s);
+
+// Sema Type
 bool type_needs_inference(Type *t);
 bool type_is_condition(Type *t);
 bool type_can_be_polymorphic(Type *t);
@@ -65,10 +78,10 @@ void sema_check_stmt(Sema *s, AstNode *node);
 
 // Statement helpers
 void sema_check_import(Sema *s, AstNode *node);
-void sema_check_var_decl(Sema *s, AstNode *node);
-void sema_check_func_decl(Sema *s, AstNode *node);
 void sema_check_block(Sema *s, AstNode *node);
 void sema_check_return_stmt(Sema *s, AstNode *node);
+void sema_check_var_decl(Sema *s, AstNode *node);
+void sema_check_func_decl(Sema *s, AstNode *node);
 void sema_check_if_stmt(Sema *s, AstNode *node);
 void sema_check_switch_stmt(Sema *s, AstNode *node);
 void sema_check_loop_stmt(Sema *s, AstNode *node);
@@ -85,6 +98,8 @@ void sema_check_impl_decl(Sema *s, AstNode *node);
 bool literal_fits_in_type(AstNode *node, Type *target);
 void sema_check_literal_bounds(Sema *s, AstNode *node, Type *target);
 ExprInfo sema_check_literal(Sema *s, AstNode *node);
+
+// Variable helpers
 ExprInfo sema_check_var(Sema *s, AstNode *node);
 
 AstNode *sema_find_underlying_var(AstNode *node);
