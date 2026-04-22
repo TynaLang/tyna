@@ -97,9 +97,7 @@ static void register_array_template(TypeContext *ctx) {
   List_push(&ctx->templates, array_tmpl);
 }
 
-Type *type_get_string_buffer(TypeContext *ctx) {
-  return ctx->string_buffer;
-}
+Type *type_get_string_buffer(TypeContext *ctx) { return ctx->string_buffer; }
 
 TypeContext *type_context_create() {
   TypeContext *ctx = xmalloc(sizeof(TypeContext));

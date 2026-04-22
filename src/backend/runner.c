@@ -11,9 +11,10 @@
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
 
-#include "cg_internal.h"
 #include "tyl/codegen.h"
 #include "tyl/runner.h"
+
+#include "cg_internal.h"
 
 void Runner_verify(Codegen *cg) {
   char *error = NULL;

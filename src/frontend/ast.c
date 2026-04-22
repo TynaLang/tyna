@@ -1055,7 +1055,8 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
     printf("NULL\n");
     break;
   case NODE_ERROR_DECL:
-    printf("ERROR_DECL: " SV_FMT "\n", SV_ARG(node->error_decl.name->var.value));
+    printf("ERROR_DECL: " SV_FMT "\n",
+           SV_ARG(node->error_decl.name->var.value));
     for (size_t i = 0; i < node->error_decl.members.len; i++) {
       Ast_print(node->error_decl.members.items[i], indent + 1);
     }

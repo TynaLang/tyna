@@ -27,7 +27,6 @@ target_compile_definitions(tyl
         ${LLVM_DEFINITIONS}
 )
 
-
 if(TARGET LLVM::LLVM)
     target_link_libraries(tyl PRIVATE LLVM::LLVM)
 else()

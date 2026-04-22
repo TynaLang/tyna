@@ -124,9 +124,10 @@ void sema_check_struct_decl(Sema *s, AstNode *node) {
     List visited;
     List_init(&visited);
     if (type_has_nonpointer_recursive(t, mem_type, &visited)) {
-      sema_error(s, mem,
-                 "Recursive value field type '%s' in struct '%s' is not allowed",
-                 type_to_name(mem_type), type_to_name(t));
+      sema_error(
+          s, mem,
+          "Recursive value field type '%s' in struct '%s' is not allowed",
+          type_to_name(mem_type), type_to_name(t));
       List_free(&visited, 0);
       free(c_mem_name);
       continue;
