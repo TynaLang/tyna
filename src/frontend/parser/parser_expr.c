@@ -1,6 +1,35 @@
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "parser_internal.h"
 
-static bool parser_is_generic_call_start(Parser *p) {
+static int is_binary_operator(TokenType t) {
+  switch (t) {
+  case TOKEN_ASSIGN:
+  case TOKEN_PLUS:
+  case TOKEN_MINUS:
+  case TOKEN_STAR:
+  case TOKEN_SLASH:
+  case TOKEN_POWER:
+  case TOKEN_MOD:
+  case TOKEN_LT:
+  case TOKEN_GT:
+  case TOKEN_LE:
+  case TOKEN_GE:
+  case TOKEN_EQ:
+  case TOKEN_NE:
+  case TOKEN_AND:
+  case TOKEN_OR:
+  case TOKEN_QUESTION:
+  case TOKEN_IS:
+  case TOKEN_ELSE:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+bool parser_is_generic_call_start(Parser *p) {
   if (p->current_token.type != TOKEN_LT)
     return false;
 
@@ -23,390 +52,121 @@ static bool parser_is_generic_call_start(Parser *p) {
   return next.type == TOKEN_LPAREN;
 }
 
-static List Parser_parse_generic_type_args(Parser *p) {
-  List generic_args;
-  List_init(&generic_args);
-
-  if (!parser_expect(p, TOKEN_LT, "Expected '<' to start generic arguments"))
-    return generic_args;
-
-  while (true) {
-    Type *arg_type = parser_parse_type_full(p);
-    if (!arg_type) {
-      List_free(&generic_args, 0);
-      return generic_args;
-    }
-    List_push(&generic_args, arg_type);
-
-    if (p->current_token.type == TOKEN_COMMA) {
-      parser_token_advance(p);
-      continue;
-    }
-    break;
-  }
-
-  if (!parser_expect(p, TOKEN_GT, "Expected '>' after generic arguments")) {
-    List_free(&generic_args, 0);
-    return generic_args;
-  }
-
-  return generic_args;
-}
-
-AstNode *parser_parse_call(Parser *p, AstNode *expr, List generic_args) {
-  Location loc = p->current_token.loc;
-  parser_token_advance(p);
-  List args;
-  List_init(&args);
-
-  if (p->current_token.type != TOKEN_RPAREN) {
-    while (1) {
-      AstNode *arg = parser_parse_expression(p, 0);
-      if (!arg)
-        return NULL;
-      List_push(&args, arg);
-      if (p->current_token.type == TOKEN_COMMA)
-        parser_token_advance(p);
-      else
-        break;
-    }
-  }
-
-  if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after arguments"))
-    return NULL;
-
-  AstNode *node = AstNode_new_call(expr, args, loc);
-  node->call.generic_args = generic_args;
-  return node;
-}
-
-AstNode *parser_parse_index(Parser *p, AstNode *expr) {
-  Location loc = p->current_token.loc;
-  parser_token_advance(p);
-  AstNode *index = parser_parse_expression(p, 0);
-  if (!index)
-    return NULL;
-  if (!parser_expect(p, TOKEN_RBRACKET, "Expected ']' after index"))
-    return NULL;
-
-  return AstNode_new_index(expr, index, loc);
-}
-
-AstNode *parser_parse_field(Parser *p, AstNode *expr) {
-  Location loc = p->current_token.loc;
-  parser_token_advance(p); // consume '.'
-
-  if (p->current_token.type != TOKEN_IDENT &&
-      p->current_token.type != TOKEN_NEW) {
-    ErrorHandler_report(p->eh, p->current_token.loc,
-                        "Expected identifier after '.'");
-    return NULL;
-  }
-
-  StringView field_name = p->current_token.text;
-  parser_token_advance(p);
-
-  return AstNode_new_field(expr, field_name, loc);
-}
-
-AstNode *parser_parse_postfix_inc(Parser *p, AstNode *expr) {
-  Token op = p->current_token;
-  parser_token_advance(p);
-  UnaryOp unary_op = (op.type == TOKEN_PLUS_PLUS) ? OP_POST_INC : OP_POST_DEC;
-  if (!Parser_is(expr, NODE_VAR)) {
-    ErrorHandler_report(p->eh, op.loc, "Operator '%s' requires an identifier",
-                        unary_op == OP_POST_INC ? "++" : "--");
-    return NULL;
-  }
-  return AstNode_new_unary(unary_op, expr, op.loc);
-}
-
-AstNode *parser_make_postfix(Parser *p, AstNode *expr) {
-  switch (p->current_token.type) {
-  case TOKEN_LPAREN:
-    return parser_parse_call(p, expr, (List){0});
-  case TOKEN_LT:
-    if (parser_is_generic_call_start(p)) {
-      List generic_args = Parser_parse_generic_type_args(p);
-      return parser_parse_call(p, expr, generic_args);
-    }
-    return expr;
-  case TOKEN_LBRACKET:
-    return parser_parse_index(p, expr);
-  case TOKEN_DOT:
-    return parser_parse_field(p, expr);
-  case TOKEN_PLUS_PLUS:
-  case TOKEN_MINUS_MINUS:
-    return parser_parse_postfix_inc(p, expr);
-  default:
-    return expr;
-  }
-}
-
-static AstNode *Parser_parse_new_expr(Parser *p) {
-  Location loc = p->current_token.loc;
-
-  Type *target_type = parser_parse_type_full(p);
-  if (!target_type)
-    return NULL;
-
-  List args;
-  List_init(&args);
-  List field_inits;
-  List_init(&field_inits);
-
-  if (p->current_token.type == TOKEN_LPAREN) {
-    parser_token_advance(p);
-    if (p->current_token.type != TOKEN_RPAREN) {
-      while (1) {
-        AstNode *arg = parser_parse_expression(p, 0);
-        if (!arg)
-          return NULL;
-        List_push(&args, arg);
-        if (p->current_token.type == TOKEN_COMMA)
-          parser_token_advance(p);
-        else
-          break;
-      }
-    }
-    if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after constructor args"))
-      return NULL;
-  } else if (p->current_token.type == TOKEN_LBRACE) {
-    parser_token_advance(p);
-    while (p->current_token.type != TOKEN_RBRACE &&
-           p->current_token.type != TOKEN_EOF) {
-      if (p->current_token.type != TOKEN_IDENT) {
-        ErrorHandler_report(p->eh, p->current_token.loc,
-                            "Expected field name in struct literal");
-        return NULL;
-      }
-      StringView field_name = p->current_token.text;
-      Location field_loc = p->current_token.loc;
-      parser_token_advance(p);
-      if (!parser_expect(p, TOKEN_COLON,
-                         "Expected ':' after struct field name"))
-        return NULL;
-      AstNode *value = parser_parse_expression(p, 0);
-      if (!value)
-        return NULL;
-      AstNode *field_target = AstNode_new_var(field_name, field_loc);
-      AstNode *assign = AstNode_new_assign_expr(field_target, value, field_loc);
-      List_push(&field_inits, assign);
-      if (p->current_token.type == TOKEN_COMMA)
-        parser_token_advance(p);
-      else
-        break;
-    }
-    if (!parser_expect(p, TOKEN_RBRACE,
-                       "Expected '}' at end of struct literal"))
-      return NULL;
-  } else {
-    ErrorHandler_report(p->eh, p->current_token.loc,
-                        "Expected '(' or '{' after 'new' type");
-    return NULL;
-  }
-
-  return AstNode_new_new_expr(target_type, args, field_inits, loc);
-}
-
-AstNode *parser_parse_primary(Parser *p) {
+static int parser_is_postfix(Parser *p) {
   Token t = p->current_token;
-  parser_token_advance(p);
+  if (t.type == TOKEN_LPAREN || t.type == TOKEN_LBRACKET ||
+      t.type == TOKEN_DOT || t.type == TOKEN_PLUS_PLUS ||
+      t.type == TOKEN_MINUS_MINUS)
+    return 1;
+  if (t.type == TOKEN_LT)
+    return parser_is_generic_call_start(p);
+  return 0;
+}
 
-  switch (t.type) {
-  case TOKEN_NUMBER:
-    return AstNode_new_number(t.number, t.text, t.loc);
-  case TOKEN_CHAR:
-    return AstNode_new_char(t.text.data[0], t.loc);
-  case TOKEN_IDENT:
-    if (p->current_token.type == TOKEN_COLON_COLON) {
-      parser_token_advance(p);
-      Token member = p->current_token;
-      if (!parser_expect(p, TOKEN_IDENT, "Expected member name after '::'"))
-        return NULL;
-      return AstNode_new_static_member(t.text, member.text, t.loc);
-    }
-
-    if (p->current_token.type == TOKEN_LBRACE) {
-      Type *target_type = type_get_named(p->type_ctx, t.text);
-      if (!target_type)
-        target_type = type_get_struct(p->type_ctx, t.text);
-      if (!target_type)
-        target_type = type_get_union(p->type_ctx, t.text);
-
-      if (!target_type) {
-        ErrorHandler_report(p->eh, t.loc, "Unknown type '%.*s' in constructor",
-                            (int)t.text.len, t.text.data);
-        return NULL;
-      }
-
-      List args;
-      List_init(&args);
-      List field_inits;
-      List_init(&field_inits);
-
-      parser_token_advance(p);
-      while (p->current_token.type != TOKEN_RBRACE &&
-             p->current_token.type != TOKEN_EOF) {
-        if (p->current_token.type != TOKEN_IDENT) {
-          ErrorHandler_report(p->eh, p->current_token.loc,
-                              "Expected field name in struct literal");
-          return NULL;
-        }
-        StringView field_name = p->current_token.text;
-        Location field_loc = p->current_token.loc;
-        parser_token_advance(p);
-        if (!parser_expect(p, TOKEN_COLON,
-                           "Expected ':' after struct field name"))
-          return NULL;
-        AstNode *value = parser_parse_expression(p, 0);
-        if (!value)
-          return NULL;
-        AstNode *field_target = AstNode_new_var(field_name, field_loc);
-        AstNode *assign =
-            AstNode_new_assign_expr(field_target, value, field_loc);
-        List_push(&field_inits, assign);
-        if (p->current_token.type == TOKEN_COMMA)
-          parser_token_advance(p);
-        else
-          break;
-      }
-      if (!parser_expect(p, TOKEN_RBRACE,
-                         "Expected '}' at end of struct literal"))
-        return NULL;
-
-      return AstNode_new_new_expr(target_type, args, field_inits, t.loc);
-    }
-
-    return AstNode_new_var(t.text, t.loc);
-  case TOKEN_STRING:
-    return AstNode_new_string(t.text, t.loc);
-  case TOKEN_TRUE:
-    return AstNode_new_bool(1, t.loc);
-  case TOKEN_FALSE:
-    return AstNode_new_bool(0, t.loc);
-  case TOKEN_NULL:
-    return AstNode_new_null(t.loc);
-  case TOKEN_NEW:
-    return Parser_parse_new_expr(p);
-
-  case TOKEN_LPAREN: {
-    Token peek = p->current_token;
-    if (is_type_token(peek.type)) {
-      PrimitiveKind target_kind = parser_parse_type(p);
-      parser_expect(p, TOKEN_RPAREN, "Expected ')' after cast");
-      AstNode *expr = parser_parse_expression(p, 100);
-      return AstNode_new_cast_expr(
-          expr, type_get_primitive(p->type_ctx, target_kind), t.loc);
-    } else {
-      AstNode *expr = parser_parse_expression(p, 0);
-      parser_expect(p, TOKEN_RPAREN, "Expected ')'");
-      return expr;
-    }
+static ArithmOp token_to_arithm_op(TokenType type) {
+  switch (type) {
+  case TOKEN_PLUS:
+    return OP_ADD;
+  case TOKEN_MINUS:
+    return OP_SUB;
+  case TOKEN_STAR:
+    return OP_MUL;
+  case TOKEN_SLASH:
+    return OP_DIV;
+  case TOKEN_POWER:
+    return OP_POW;
+  case TOKEN_MOD:
+    return OP_MOD;
+  default:
+    fprintf(stderr, "Unexpected operator in token_to_arithm_op\n");
+    exit(1);
   }
+}
 
-  case TOKEN_LBRACKET: {
-    List items;
-    List_init(&items);
-    if (p->current_token.type != TOKEN_RBRACKET) {
-      AstNode *first = parser_parse_expression(p, 0);
-      if (!first)
-        return NULL;
-
-      if (p->current_token.type == TOKEN_SEMI) {
-        // [value; count1, count2, ...] shorthand
-        parser_token_advance(p);
-        AstNode *count_node = parser_parse_expression(p, 0);
-        if (!count_node) {
-          ErrorHandler_report(
-              p->eh, p->current_token.loc,
-              "Expected count expression after ';' in array literal");
-          return NULL;
-        }
-
-        AstNode *res = first;
-
-        List counts;
-        List_init(&counts);
-        List_push(&counts, count_node);
-
-        while (p->current_token.type == TOKEN_COMMA) {
-          parser_token_advance(p);
-          AstNode *next_count = parser_parse_expression(p, 0);
-          if (!next_count) {
-            ErrorHandler_report(p->eh, p->current_token.loc,
-                                "Expected count expression after ','");
-            return NULL;
-          }
-          List_push(&counts, next_count);
-        }
-
-        for (int i = (int)counts.len - 1; i >= 0; i--) {
-          res = AstNode_new_array_repeat(res, counts.items[i], t.loc);
-        }
-
-        List_free(&counts, 0);
-
-        List_free(&items, 0);
-        parser_expect(p, TOKEN_RBRACKET, "Expected ']' at end of array repeat");
-        return res;
-      } else {
-        List_push(&items, first);
-        while (p->current_token.type == TOKEN_COMMA) {
-          parser_token_advance(p);
-          if (p->current_token.type == TOKEN_RBRACKET)
-            break;
-          AstNode *item = parser_parse_expression(p, 0);
-          if (!item)
-            return NULL;
-          List_push(&items, item);
-        }
-      }
-    }
-    parser_expect(p, TOKEN_RBRACKET, "Expected ']' at end of array literal");
-    return AstNode_new_array_literal(items, t.loc);
+static CompareOp token_to_compare_op(TokenType type) {
+  switch (type) {
+  case TOKEN_LT:
+    return OP_LT;
+  case TOKEN_GT:
+    return OP_GT;
+  case TOKEN_LE:
+    return OP_LE;
+  case TOKEN_GE:
+    return OP_GE;
+  default:
+    fprintf(stderr, "Unexpected operator in token_to_compare_op\n");
+    exit(1);
   }
+}
 
-  case TOKEN_MINUS: {
-    AstNode *expr = parser_parse_expression(p, 100);
-    return AstNode_new_unary(OP_NEG, expr, t.loc);
+static EqualityOp token_to_equality_op(TokenType type) {
+  switch (type) {
+  case TOKEN_EQ:
+    return OP_EQ;
+  case TOKEN_NE:
+    return OP_NE;
+  default:
+    fprintf(stderr, "Unexpected operator in token_to_equality_op\n");
+    exit(1);
   }
+}
 
-  case TOKEN_NOT: {
-    AstNode *expr = parser_parse_expression(p, 100);
-    return AstNode_new_unary(OP_NOT, expr, t.loc);
+static LogicalOp token_to_logical_op(TokenType type) {
+  switch (type) {
+  case TOKEN_AND:
+    return OP_AND;
+  case TOKEN_OR:
+    return OP_OR;
+  default:
+    fprintf(stderr, "Unexpected operator in token_to_logical_op\n");
+    exit(1);
   }
+}
 
-  case TOKEN_PLUS_PLUS:
-  case TOKEN_MINUS_MINUS: {
-    AstNode *expr = parser_parse_expression(p, 100);
-    UnaryOp op = (t.type == TOKEN_PLUS_PLUS) ? OP_PRE_INC : OP_PRE_DEC;
-    if (!Parser_is(expr, NODE_VAR)) {
-      ErrorHandler_report(p->eh, t.loc, "Operator requires identifier");
-      return NULL;
-    }
-    return AstNode_new_unary(op, expr, t.loc);
-  }
+static BindingPower infix_binding_power(TokenType t) {
+  switch (t) {
+  case TOKEN_ASSIGN:
+    return (struct BindingPower){2, 1};
+  case TOKEN_QUESTION:
+    return (struct BindingPower){4, 3};
 
-  case TOKEN_BIT_AND: {
-    AstNode *expr = parser_parse_expression(p, 100);
-    if (!Parser_is(expr, NODE_VAR)) {
-      ErrorHandler_report(p->eh, t.loc,
-                          "Address-of operator requires identifier");
-      return NULL;
-    }
-    return AstNode_new_unary(OP_ADDR_OF, expr, t.loc);
-  }
+  case TOKEN_OR:
+    return (struct BindingPower){5, 6};
+  case TOKEN_AND:
+    return (struct BindingPower){7, 8};
 
-  case TOKEN_STAR: {
-    AstNode *expr = parser_parse_expression(p, 100);
-    return AstNode_new_unary(OP_DEREF, expr, t.loc);
-  }
+  case TOKEN_EQ:
+  case TOKEN_NE:
+  case TOKEN_IS:
+    return (struct BindingPower){9, 10};
+  case TOKEN_LT:
+  case TOKEN_GT:
+  case TOKEN_LE:
+  case TOKEN_GE:
+    return (struct BindingPower){11, 12};
+
+  case TOKEN_ELSE:
+    return (struct BindingPower){3, 4};
+
+  case TOKEN_PLUS:
+  case TOKEN_MINUS:
+    return (struct BindingPower){13, 14};
+  case TOKEN_STAR:
+  case TOKEN_SLASH:
+  case TOKEN_MOD:
+    return (struct BindingPower){15, 16};
+  case TOKEN_POWER:
+    return (struct BindingPower){20, 19};
 
   default:
-    ErrorHandler_report(p->eh, t.loc, "Unexpected token in expression");
-    return NULL;
+    return (struct BindingPower){0, 0};
   }
+}
+
+static int is_lvalue(AstNode *node) {
+  return node->tag == NODE_VAR || node->tag == NODE_FIELD ||
+         node->tag == NODE_INDEX ||
+         (node->tag == NODE_UNARY && node->unary.op == OP_DEREF);
 }
 
 AstNode *parser_parse_expression(Parser *p, int min_bp) {

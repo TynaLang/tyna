@@ -27,7 +27,7 @@ static bool parser_is_import_path_segment(TokenType type) {
          type == TOKEN_ERRORS;
 }
 
-static AstNode *Parser_parse_import(Parser *p) {
+static AstNode *parser_parse_import(Parser *p) {
   Location loc = p->current_token.loc;
   parser_token_advance(p); // consume 'import'
 
@@ -121,7 +121,7 @@ AstNode *parser_parse_statement(Parser *p) {
   case TOKEN_EOF:
     return NULL;
   case TOKEN_IMPORT:
-    return Parser_parse_import(p);
+    return parser_parse_import(p);
   case TOKEN_LET:
   case TOKEN_CONST:
     return parser_parse_var_decl(p, is_export);
@@ -139,11 +139,21 @@ AstNode *parser_parse_statement(Parser *p) {
     return parser_parse_for_stmt(p);
   case TOKEN_DEFER: {
     parser_token_advance(p);
-    return AstNode_new_defer(parser_parse_statement(p), loc);
+    AstNode *stmt = parser_parse_statement(p);
+    if (!stmt) {
+      parser_sync(p);
+      return NULL;
+    }
+    return AstNode_new_defer(stmt, loc);
   }
   case TOKEN_LOOP: {
     parser_token_advance(p);
-    return AstNode_new_loop(parser_parse_statement(p), loc);
+    AstNode *stmt = parser_parse_statement(p);
+    if (!stmt) {
+      parser_sync(p);
+      return NULL;
+    }
+    return AstNode_new_loop(stmt, loc);
   }
   case TOKEN_RETURN: {
     parser_token_advance(p);
@@ -151,6 +161,10 @@ AstNode *parser_parse_statement(Parser *p) {
     AstNode *expr = NULL;
     if (p->current_token.type != TOKEN_SEMI) {
       expr = parser_parse_expression(p, 0);
+      if (!expr) {
+        parser_sync(p);
+        return NULL;
+      }
     }
 
     if (parser_expect(p, TOKEN_SEMI, "Expected ';' after return statement"))
@@ -210,6 +224,10 @@ AstNode *parser_parse_statement(Parser *p) {
   }
   default: {
     AstNode *expr = parser_parse_expression(p, 0);
+    if (!expr) {
+      parser_sync(p);
+      return NULL;
+    }
     if (parser_expect(p, TOKEN_SEMI, "Expected ';' after expression"))
       return AstNode_new_expr_stmt(expr, loc);
 

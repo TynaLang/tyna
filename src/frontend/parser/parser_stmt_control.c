@@ -1,6 +1,6 @@
 #include "parser_internal.h"
 
-static AstNode *Parser_parse_case_stmt(Parser *p) {
+static AstNode *parser_parse_case_stmt(Parser *p) {
   Location loc = p->current_token.loc;
   parser_token_advance(p); // consume 'case'
 
@@ -38,6 +38,8 @@ static AstNode *Parser_parse_case_stmt(Parser *p) {
   AstNode *body = NULL;
   if (p->current_token.type == TOKEN_LBRACE) {
     body = parser_parse_block(p);
+    if (!body)
+      return NULL;
   } else {
     List stmts;
     List_init(&stmts);
@@ -46,7 +48,7 @@ static AstNode *Parser_parse_case_stmt(Parser *p) {
            p->current_token.type != TOKEN_EOF) {
       AstNode *stmt = parser_parse_statement(p);
       if (!stmt)
-        break;
+        return NULL;
       List_push(&stmts, stmt);
     }
     if (stmts.len == 1) {
@@ -82,7 +84,7 @@ AstNode *parser_parse_switch_stmt(Parser *p) {
       continue;
     }
 
-    AstNode *case_node = Parser_parse_case_stmt(p);
+    AstNode *case_node = parser_parse_case_stmt(p);
     if (case_node) {
       List_push(&cases, case_node);
     } else {
@@ -118,6 +120,8 @@ AstNode *parser_parse_if_stmt(Parser *p) {
   if (p->current_token.type == TOKEN_ELSE) {
     parser_token_advance(p); // Consume 'else'
     else_branch = parser_parse_statement(p);
+    if (!else_branch)
+      return NULL;
   }
 
   return AstNode_new_if_stmt(condition, then_branch, else_branch, loc);
@@ -175,8 +179,12 @@ AstNode *parser_parse_for_stmt(Parser *p) {
   if (p->current_token.type != TOKEN_SEMI) {
     if (p->current_token.type == TOKEN_LET) {
       init = parser_parse_var_decl(p, false);
+      if (!init)
+        return NULL;
     } else {
       init = parser_parse_expression(p, 0);
+      if (!init)
+        return NULL;
       if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after for init"))
         return NULL;
     }
@@ -187,6 +195,8 @@ AstNode *parser_parse_for_stmt(Parser *p) {
   AstNode *cond = NULL;
   if (p->current_token.type != TOKEN_SEMI) {
     cond = parser_parse_expression(p, 0);
+    if (!cond)
+      return NULL;
   }
   if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after for condition"))
     return NULL;
@@ -194,6 +204,8 @@ AstNode *parser_parse_for_stmt(Parser *p) {
   AstNode *inc = NULL;
   if (p->current_token.type != TOKEN_RPAREN) {
     inc = parser_parse_expression(p, 0);
+    if (!inc)
+      return NULL;
   }
 
   if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after for loop header"))

@@ -32,7 +32,8 @@ Type *parser_parse_type_full(Parser *p) {
           sv_contains(len_expr->number.raw_text, '.') ||
           sv_ends_with(len_expr->number.raw_text, "f") ||
           sv_ends_with(len_expr->number.raw_text, "F")) {
-        ErrorHandler_report(p->eh, p->current_token.loc,
+        ErrorHandler_report(p->eh,
+                            len_expr ? len_expr->loc : p->current_token.loc,
                             "Array length must be an integer literal");
         return NULL;
       }
@@ -48,9 +49,7 @@ Type *parser_parse_type_full(Parser *p) {
       return NULL;
     }
 
-    Type *array_template =
-        type_get_template(p->type_ctx, sv_from_cstr("Array"));
-    if (!array_template) {
+    if (!type_get_template(p->type_ctx, sv_from_cstr("Array"))) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Internal error: 'Array' template not registered");
       return NULL;
@@ -180,10 +179,6 @@ Type *parser_parse_type_full(Parser *p) {
 
     res = type_get_union_anonymous(p->type_ctx, union_members);
     List_free(&union_members, 0);
-  }
-
-  while (pointer_depth-- > 0) {
-    res = type_get_pointer(p->type_ctx, res);
   }
 
   return res;

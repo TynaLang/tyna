@@ -1,5 +1,17 @@
 #include "parser_internal.h"
 
+static void parser_sync_param(Parser *p) {
+  while (p->current_token.type != TOKEN_RPAREN &&
+         p->current_token.type != TOKEN_EOF)
+    parser_token_advance(p);
+}
+
+static void skip_to_next_param(Parser *p) {
+  parser_sync_param(p);
+  if (p->current_token.type == TOKEN_COMMA)
+    parser_token_advance(p);
+}
+
 AstNode *parser_parse_var_decl(Parser *p, bool is_export) {
   int is_const = (p->current_token.type == TOKEN_CONST);
   parser_token_advance(p);
@@ -122,6 +134,8 @@ AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
   AstNode *body = NULL;
   if (p->current_token.type == TOKEN_LBRACE) {
     body = parser_parse_block(p);
+    if (!body)
+      return NULL;
   } else if (p->current_token.type == TOKEN_SEMI) {
     parser_token_advance(p);
   } else {
@@ -162,7 +176,10 @@ AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
       if (p->current_token.type == TOKEN_COMMA)
         parser_token_advance(p);
     }
-    parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+    if (!parser_expect(p, TOKEN_GT, "Expected '>' after placeholders")) {
+      List_free(&placeholders, 1);
+      return NULL;
+    }
   }
 
   if (placeholders.len > 0) {
@@ -174,7 +191,7 @@ AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
   }
 
   if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after struct name"))
-    return NULL;
+    goto struct_decl_error;
 
   List members;
   List_init(&members);
@@ -226,7 +243,8 @@ AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
     List_push(&members, mem_decl);
   }
 
-  parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct members");
+  if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct members"))
+    goto struct_decl_error;
 
   if (placeholders.len > 0) {
     parser_placeholder_scope_pop(p);
@@ -234,6 +252,13 @@ AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
 
   return AstNode_new_struct_decl(name_node, members, placeholders, is_frozen,
                                  false, loc);
+
+struct_decl_error:
+  if (placeholders.len > 0) {
+    parser_placeholder_scope_pop(p);
+  }
+  List_free(&placeholders, 1);
+  return NULL;
 }
 
 AstNode *parser_parse_error_decl(Parser *p, bool is_export) {
@@ -326,7 +351,10 @@ AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
       if (p->current_token.type == TOKEN_COMMA)
         parser_token_advance(p);
     }
-    parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+    if (!parser_expect(p, TOKEN_GT, "Expected '>' after placeholders")) {
+      List_free(&placeholders, 1);
+      return NULL;
+    }
   }
 
   if (placeholders.len > 0) {
@@ -338,7 +366,7 @@ AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
   }
 
   if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after union name"))
-    return NULL;
+    goto union_decl_error;
 
   List members;
   List_init(&members);
@@ -390,7 +418,8 @@ AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
     List_push(&members, mem_decl);
   }
 
-  parser_expect(p, TOKEN_RBRACE, "Expected '}' after union members");
+  if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after union members"))
+    goto union_decl_error;
 
   if (placeholders.len > 0) {
     parser_placeholder_scope_pop(p);
@@ -398,6 +427,13 @@ AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
 
   return AstNode_new_union_decl(name_node, members, placeholders, is_frozen,
                                 false, loc);
+
+union_decl_error:
+  if (placeholders.len > 0) {
+    parser_placeholder_scope_pop(p);
+  }
+  List_free(&placeholders, 1);
+  return NULL;
 }
 
 AstNode *parser_parse_error_set_decl(Parser *p, bool is_export) {
@@ -473,7 +509,10 @@ AstNode *parser_parse_impl_decl(Parser *p) {
         if (p->current_token.type == TOKEN_COMMA)
           parser_token_advance(p);
       }
-      parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+      if (!parser_expect(p, TOKEN_GT, "Expected '>' after placeholders")) {
+        List_free(&placeholders, 1);
+        return NULL;
+      }
     }
 
     if (placeholders.len > 0) {
@@ -539,6 +578,7 @@ AstNode *parser_parse_impl_decl(Parser *p) {
   if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after impl type name")) {
     if (placeholders.len > 0)
       parser_placeholder_scope_pop(p);
+    List_free(&placeholders, 1);
     return NULL;
   }
 
@@ -568,7 +608,12 @@ AstNode *parser_parse_impl_decl(Parser *p) {
     parser_sync(p);
   }
 
-  parser_expect(p, TOKEN_RBRACE, "Expected '}' after impl members");
+  if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after impl members")) {
+    if (placeholders.len > 0)
+      parser_placeholder_scope_pop(p);
+    List_free(&placeholders, 1);
+    return NULL;
+  }
 
   if (placeholders.len > 0) {
     parser_placeholder_scope_pop(p);
