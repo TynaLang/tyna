@@ -1,13 +1,13 @@
 #include "cg_internal.h"
 
-void CGSymbolTable_init(CGSymbolTable *t, CGSymbolTable *parent) {
+void CGSymbolTable_init(CgSymtab *t, CgSymtab *parent) {
   t->parent = parent;
   List_init(&t->symbols);
 }
 
-void CGSymbolTable_add(CGSymbolTable *t, StringView name, Type *type,
+void CGSymbolTable_add(CgSymtab *t, StringView name, Type *type,
                        LLVMValueRef value) {
-  CGSymbol *s = malloc(sizeof(CGSymbol));
+  CgSym *s = malloc(sizeof(CgSym));
   s->name = name;
   s->type = type;
   s->value = value;
@@ -15,9 +15,9 @@ void CGSymbolTable_add(CGSymbolTable *t, StringView name, Type *type,
   List_push(&t->symbols, s);
 }
 
-void CGSymbolTable_add_direct(CGSymbolTable *t, StringView name, Type *type,
+void CGSymbolTable_add_direct(CgSymtab *t, StringView name, Type *type,
                               LLVMValueRef value) {
-  CGSymbol *s = malloc(sizeof(CGSymbol));
+  CgSym *s = malloc(sizeof(CgSym));
   s->name = name;
   s->type = type;
   s->value = value;
@@ -25,10 +25,10 @@ void CGSymbolTable_add_direct(CGSymbolTable *t, StringView name, Type *type,
   List_push(&t->symbols, s);
 }
 
-CGSymbol *CGSymbolTable_find(CGSymbolTable *t, StringView name) {
+CgSym *CGSymbolTable_find(CgSymtab *t, StringView name) {
   while (t) {
     for (size_t i = 0; i < t->symbols.len; i++) {
-      CGSymbol *s = t->symbols.items[i];
+      CgSym *s = t->symbols.items[i];
       if (sv_eq(s->name, name))
         return s;
     }
@@ -37,15 +37,15 @@ CGSymbol *CGSymbolTable_find(CGSymbolTable *t, StringView name) {
   return NULL;
 }
 
-static void cg_free_symbol_table(CGSymbolTable *t) {
+static void cg_free_symbol_table(CgSymtab *t) {
   for (size_t i = 0; i < t->symbols.len; i++) {
     free(t->symbols.items[i]);
   }
   free(t->symbols.items);
 }
 
-CGSymbolTable *cg_push_scope(Codegen *cg) {
-  CGSymbolTable *new_scope = malloc(sizeof(CGSymbolTable));
+CgSymtab *cg_push_scope(Codegen *cg) {
+  CgSymtab *new_scope = malloc(sizeof(CgSymtab));
   CGSymbolTable_init(new_scope, cg->current_scope);
   cg->current_scope = new_scope;
 
@@ -72,7 +72,7 @@ void cg_pop_scope(Codegen *cg) {
   List_free(defer_list, 0);
   free(defer_list);
 
-  CGSymbolTable *old = cg->current_scope;
+  CgSymtab *old = cg->current_scope;
   cg->current_scope = old->parent;
   cg_free_symbol_table(old);
   free(old);

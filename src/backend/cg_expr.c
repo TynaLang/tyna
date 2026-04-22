@@ -9,7 +9,7 @@
 #include "tyl/utils.h"
 #include "llvm-c/Types.h"
 
-static LLVMValueRef cg_make_param_addressable(Codegen *cg, CGSymbol *sym) {
+static LLVMValueRef cg_make_param_addressable(Codegen *cg, CgSym *sym) {
   LLVMValueRef alloca =
       cg_alloca_in_entry_uninitialized(cg, sym->type, sym->name);
   LLVMBuildStore(cg->builder, sym->value, alloca);
@@ -22,7 +22,7 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
   switch (node->tag) {
   case NODE_VAR: {
     // Find the alloca or direct parameter value in our symbol table
-    CGSymbol *sym = CGSymbolTable_find(cg->current_scope, node->var.value);
+    CgSym *sym = CGSymbolTable_find(cg->current_scope, node->var.value);
     if (!sym)
       panic("Undefined variable in codegen: " SV_FMT, SV_ARG(node->var.value));
     if (sym->is_direct_value)
@@ -39,7 +39,7 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
       if (!obj_type->data.pointer_to) {
         panic("Pointer object has no target type");
       }
-      LLVMTypeRef load_ty = cg_get_llvm_type(cg, obj_type);
+      LLVMTypeRef load_ty = cg_type_get_llvm(cg, obj_type);
       obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
       obj_type = obj_type->data.pointer_to;
     }
@@ -59,7 +59,7 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
             node->field.field.data, type_to_name(obj_type));
     }
 
-    return LLVMBuildStructGEP2(cg->builder, cg_get_llvm_type(cg, obj_type),
+    return LLVMBuildStructGEP2(cg->builder, cg_type_get_llvm(cg, obj_type),
                                obj_ptr, index, "field_addr");
   }
 
@@ -80,7 +80,7 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
     }
     LLVMValueRef array_struct_ptr = cg_expression_addr(cg, node->index.array);
     LLVMTypeRef array_struct_ty =
-        cg_get_llvm_type(cg, node->index.array->resolved_type);
+        cg_type_get_llvm(cg, node->index.array->resolved_type);
 
     // 1. Load rank
     LLVMValueRef rank_ptr = LLVMBuildStructGEP2(
@@ -123,7 +123,7 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
     // Fail block
     LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
     // Call panic("Panic: Array Index Out of Bounds")
-    CGFunction *panic_fn =
+    CgFunc *panic_fn =
         cg_find_system_function(cg, sv_from_parts("panic", 5));
     if (!panic_fn) {
       panic("Internal error: system panic helper missing");
@@ -139,13 +139,13 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
 
     LLVMValueRef data_ptr_gep = LLVMBuildStructGEP2(
         cg->builder, array_struct_ty, array_struct_ptr, 0, "data_field_ptr");
-    LLVMTypeRef elem_ptr_ty = cg_get_llvm_type(
+    LLVMTypeRef elem_ptr_ty = cg_type_get_llvm(
         cg, type_get_pointer(cg->type_ctx, node->resolved_type));
     LLVMValueRef actual_data_ptr =
         LLVMBuildLoad2(cg->builder, elem_ptr_ty, data_ptr_gep, "load_data_ptr");
 
     LLVMValueRef element_addr = LLVMBuildGEP2(
-        cg->builder, cg_get_llvm_type(cg, node->resolved_type), actual_data_ptr,
+        cg->builder, cg_type_get_llvm(cg, node->resolved_type), actual_data_ptr,
         (LLVMValueRef[]){index_i64}, 1, "element_ptr");
 
     // If the element is itself an array struct, return its address directly.
@@ -176,7 +176,7 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
 
 static LLVMTypeRef cg_const_target_type(Codegen *cg, AstNode *node) {
   if (node->resolved_type)
-    return cg_get_llvm_type(cg, node->resolved_type);
+    return cg_type_get_llvm(cg, node->resolved_type);
 
   switch (node->tag) {
   case NODE_NUMBER: {
@@ -192,7 +192,7 @@ static LLVMTypeRef cg_const_target_type(Codegen *cg, AstNode *node) {
   case NODE_CHAR:
     return LLVMInt8TypeInContext(cg->context);
   case NODE_STRING:
-    return cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+    return cg_type_get_llvm(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
   case NODE_NULL:
     return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
   default:
@@ -211,7 +211,7 @@ static LLVMValueRef cg_typeof_string(Codegen *cg, Type *type) {
   LLVMValueRef ptr = LLVMConstInBoundsGEP2(LLVMInt8TypeInContext(cg->context),
                                            const_str_global, indices, 2);
   LLVMTypeRef string_ty =
-      cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+      cg_type_get_llvm(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
   LLVMValueRef len =
       LLVMConstInt(LLVMInt64TypeInContext(cg->context), name_sv.len, false);
   LLVMValueRef fields[] = {ptr, len};
@@ -279,7 +279,7 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
       panic("Cannot mix constructor arguments and error literal fields");
     }
 
-    LLVMTypeRef struct_ty = cg_get_llvm_type(cg, target_type);
+    LLVMTypeRef struct_ty = cg_type_get_llvm(cg, target_type);
     LLVMValueRef tmp = LLVMBuildAlloca(cg->builder, struct_ty, "error_tmp");
     LLVMBuildStore(cg->builder, LLVMConstNull(struct_ty), tmp);
     for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
@@ -296,7 +296,7 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
       LLVMValueRef field_ptr = LLVMBuildStructGEP2(cg->builder, struct_ty, tmp,
                                                    member->index, "field_ptr");
       LLVMValueRef value = cg_expression(cg, assign->assign_expr.value);
-      LLVMTypeRef field_ty = cg_get_llvm_type(cg, member->type);
+      LLVMTypeRef field_ty = cg_type_get_llvm(cg, member->type);
       LLVMValueRef casted = cg_cast_value(
           cg, value, assign->assign_expr.value->resolved_type, field_ty);
       LLVMBuildStore(cg->builder, casted, field_ptr);
@@ -305,8 +305,8 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
   }
 
   LLVMTypeRef ptr_ty =
-      cg_get_llvm_type(cg, type_get_pointer(cg->type_ctx, target_type));
-  CGFunction *malloc_fn = cg_find_function(cg, sv_from_cstr("malloc"));
+      cg_type_get_llvm(cg, type_get_pointer(cg->type_ctx, target_type));
+  CgFunc *malloc_fn = cg_find_function(cg, sv_from_cstr("malloc"));
   if (!malloc_fn)
     panic("malloc not found for new expression");
 
@@ -323,7 +323,7 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
     if (!constructor || !constructor->name.data)
       panic("Missing constructor 'init' for type %s",
             type_to_name(target_type));
-    CGFunction *fn = cg_find_function(cg, constructor->name);
+    CgFunc *fn = cg_find_function(cg, constructor->name);
     if (!fn)
       panic("Constructor function not found for %s", type_to_name(target_type));
 
@@ -352,7 +352,7 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
   }
 
   if (node->new_expr.field_inits.len > 0) {
-    LLVMTypeRef struct_ty = cg_get_llvm_type(cg, target_type);
+    LLVMTypeRef struct_ty = cg_type_get_llvm(cg, target_type);
     for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
       AstNode *assign = node->new_expr.field_inits.items[i];
       if (assign->tag != NODE_ASSIGN_EXPR ||
@@ -367,7 +367,7 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
       LLVMValueRef field_ptr = LLVMBuildStructGEP2(
           cg->builder, struct_ty, obj_ptr, member->index, "field_ptr");
       LLVMValueRef value = cg_expression(cg, assign->assign_expr.value);
-      LLVMTypeRef field_ty = cg_get_llvm_type(cg, member->type);
+      LLVMTypeRef field_ty = cg_type_get_llvm(cg, member->type);
       LLVMValueRef casted = cg_cast_value(
           cg, value, assign->assign_expr.value->resolved_type, field_ty);
       LLVMBuildStore(cg->builder, casted, field_ptr);
@@ -378,7 +378,7 @@ static LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
 }
 
 static LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node) {
-  CGSymbol *cgsym = CGSymbolTable_find(cg->current_scope, node->var.value);
+  CgSym *cgsym = CGSymbolTable_find(cg->current_scope, node->var.value);
   if (!node->resolved_type) {
     if (cgsym) {
       node->resolved_type = cgsym->type;
@@ -387,7 +387,7 @@ static LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node) {
 
   if (!cgsym && node->resolved_type &&
       node->resolved_type->kind == KIND_ERROR) {
-    LLVMTypeRef ty = cg_get_llvm_type(cg, node->resolved_type);
+    LLVMTypeRef ty = cg_type_get_llvm(cg, node->resolved_type);
     return LLVMConstNull(ty);
   }
 
@@ -404,7 +404,7 @@ static LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node) {
     panic("Undefined variable type during codegen: " SV_FMT,
           SV_ARG(node->var.value));
   }
-  LLVMTypeRef type = cg_get_llvm_type(cg, node->resolved_type);
+  LLVMTypeRef type = cg_type_get_llvm(cg, node->resolved_type);
   return LLVMBuildLoad2(cg->builder, type, ptr, "var_load");
 }
 
@@ -427,7 +427,7 @@ static int cg_tagged_union_variant_index_llvm(Codegen *cg, Type *union_type,
     return -1;
   for (size_t i = 0; i < union_type->members.len; i++) {
     Member *m = union_type->members.items[i];
-    if (cg_get_llvm_type(cg, m->type) == llvm_ty)
+    if (cg_type_get_llvm(cg, m->type) == llvm_ty)
       return (int)i;
   }
   return -1;
@@ -439,7 +439,7 @@ LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef val, Type *from_t,
   if (variant_index < 0)
     return val;
 
-  LLVMTypeRef union_ty = cg_get_llvm_type(cg, union_t);
+  LLVMTypeRef union_ty = cg_type_get_llvm(cg, union_t);
   LLVMValueRef tmp = LLVMBuildAlloca(cg->builder, union_ty, "tagged_union_tmp");
   LLVMValueRef tag_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp, 0,
                                              "tagged_union_tag_ptr");
@@ -450,7 +450,7 @@ LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef val, Type *from_t,
 
   LLVMValueRef payload_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp, 1,
                                                  "tagged_union_payload_ptr");
-  LLVMTypeRef from_ty = cg_get_llvm_type(cg, from_t);
+  LLVMTypeRef from_ty = cg_type_get_llvm(cg, from_t);
   LLVMValueRef store_ptr =
       LLVMBuildBitCast(cg->builder, payload_ptr, LLVMPointerType(from_ty, 0),
                        "tagged_union_payload_cast");
@@ -466,7 +466,7 @@ static LLVMValueRef cg_extract_tagged_union(Codegen *cg, LLVMValueRef union_val,
   if (variant_index < 0)
     return union_val;
 
-  LLVMTypeRef union_ty = cg_get_llvm_type(cg, union_t);
+  LLVMTypeRef union_ty = cg_type_get_llvm(cg, union_t);
   LLVMValueRef tag =
       LLVMBuildExtractValue(cg->builder, union_val, 0, "tagged_union_tag");
   LLVMValueRef expected_tag =
@@ -497,7 +497,7 @@ static LLVMValueRef cg_extract_tagged_union(Codegen *cg, LLVMValueRef union_val,
   LLVMBasicBlockRef ok_bb_end = LLVMGetInsertBlock(cg->builder);
 
   LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
-  CGFunction *panic_fn = cg_find_system_function(cg, sv_from_parts("panic", 5));
+  CgFunc *panic_fn = cg_find_system_function(cg, sv_from_parts("panic", 5));
   if (!panic_fn) {
     panic("Internal error: system panic helper missing");
   }
@@ -543,7 +543,7 @@ static LLVMValueRef cg_arith_expr(Codegen *cg, LLVMValueRef lhs,
     return is_float ? LLVMBuildFRem(cg->builder, lhs, rhs, "fremtmp")
                     : LLVMBuildSRem(cg->builder, lhs, rhs, "sremtmp");
   case OP_POW: {
-    CGFunction *pow_fn = cg_find_function(cg, sv_from_parts("pow", 3));
+    CgFunc *pow_fn = cg_find_function(cg, sv_from_parts("pow", 3));
     LLVMTypeRef double_ty = LLVMDoubleTypeInContext(cg->context);
     lhs = cg_cast_value(cg, lhs, NULL, double_ty);
     rhs = cg_cast_value(cg, rhs, NULL, double_ty);
@@ -679,7 +679,7 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
     return NULL;
 
   if (node->tag == NODE_BINARY_ARITH) {
-    LLVMTypeRef target_ty = cg_get_llvm_type(cg, node->resolved_type);
+    LLVMTypeRef target_ty = cg_type_get_llvm(cg, node->resolved_type);
 
     LLVMTypeKind lhs_kind = LLVMGetTypeKind(LLVMTypeOf(lhs));
     LLVMTypeKind rhs_kind = LLVMGetTypeKind(LLVMTypeOf(rhs));
@@ -697,7 +697,7 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
         elem_sem_type = ptr_sem_type->data.pointer_to;
       }
       LLVMTypeRef elem_ty = elem_sem_type
-                                ? cg_get_llvm_type(cg, elem_sem_type)
+                                ? cg_type_get_llvm(cg, elem_sem_type)
                                 : LLVMGetElementType(LLVMTypeOf(ptr_val));
 
       LLVMValueRef index = cg_cast_value(cg, int_val,
@@ -815,7 +815,7 @@ static LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
       LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
   LLVMValueRef success_val =
       cg_cast_value(cg, success_raw, left_type->data.result.success,
-                    cg_get_llvm_type(cg, node->resolved_type));
+                    cg_type_get_llvm(cg, node->resolved_type));
 
   return LLVMBuildSelect(cg->builder, is_error, right, success_val, "else_val");
 }
@@ -828,7 +828,7 @@ static LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
     if (!node->resolved_type) {
       panic("Unary expression has no resolved type");
     }
-    res_ty = cg_get_llvm_type(cg, node->resolved_type);
+    res_ty = cg_type_get_llvm(cg, node->resolved_type);
   }
 
   if (op == OP_NEG) {
@@ -898,7 +898,7 @@ static LLVMValueRef cg_ternary_expr(Codegen *cg, AstNode *node) {
       cg->context, cg->current_function, "ternary_cont");
 
   LLVMBuildCondBr(cg->builder, cond, then_bb, else_bb);
-  LLVMTypeRef res_type = cg_get_llvm_type(cg, node->resolved_type);
+  LLVMTypeRef res_type = cg_type_get_llvm(cg, node->resolved_type);
 
   LLVMPositionBuilderAtEnd(cg->builder, then_bb);
   LLVMValueRef then_val = cg_expression(cg, node->ternary.true_expr);
@@ -932,13 +932,13 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   if (!target_type) {
     AstNode *target = node->assign_expr.target;
     if (target->tag == NODE_VAR) {
-      CGSymbol *sym = CGSymbolTable_find(cg->current_scope, target->var.value);
+      CgSym *sym = CGSymbolTable_find(cg->current_scope, target->var.value);
       if (sym)
         target_type = sym->type;
     } else if (target->tag == NODE_FIELD) {
       Type *obj_type = target->field.object->resolved_type;
       if (!obj_type && target->field.object->tag == NODE_VAR) {
-        CGSymbol *sym = CGSymbolTable_find(cg->current_scope,
+        CgSym *sym = CGSymbolTable_find(cg->current_scope,
                                            target->field.object->var.value);
         if (sym)
           obj_type = sym->type;
@@ -976,7 +976,7 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   if (!node->assign_expr.value->resolved_type) {
     panic("Assignment RHS has no resolved type");
   }
-  LLVMTypeRef target_ty = cg_get_llvm_type(cg, target_type);
+  LLVMTypeRef target_ty = cg_type_get_llvm(cg, target_type);
   if (target_type->kind == KIND_UNION && target_type->is_tagged_union) {
     int variant_index = cg_tagged_union_variant_index(
         target_type, node->assign_expr.value->resolved_type);
@@ -1000,7 +1000,7 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
       if (!array_struct_ptr)
         panic("Invalid array assignment target");
 
-      LLVMTypeRef array_ty = cg_get_llvm_type(cg, array_type);
+      LLVMTypeRef array_ty = cg_type_get_llvm(cg, array_type);
       LLVMValueRef len_ptr = LLVMBuildStructGEP2(
           cg->builder, array_ty, array_struct_ptr, 1, "array_len_ptr");
       LLVMValueRef curr_len =
@@ -1044,7 +1044,7 @@ static LLVMValueRef cg_cast_expr(Codegen *cg, AstNode *node) {
   LLVMValueRef val = cg_expression(cg, node->cast_expr.expr);
   Type *expr_type = node->cast_expr.expr->resolved_type;
   Type *target_type = node->cast_expr.target_type;
-  LLVMTypeRef target_ty = cg_get_llvm_type(cg, target_type);
+  LLVMTypeRef target_ty = cg_type_get_llvm(cg, target_type);
 
   if (expr_type && expr_type->kind == KIND_UNION &&
       expr_type->is_tagged_union) {
@@ -1080,7 +1080,7 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
     return cg_typeof_string(cg, arg_type);
   }
 
-  CGFunction *fn = cg_find_function(cg, fn_name);
+  CgFunc *fn = cg_find_function(cg, fn_name);
   if (!fn)
     panic("Call to undefined function '" SV_FMT "'", SV_ARG(fn_name));
 
@@ -1117,7 +1117,7 @@ static LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
     free(param_types);
 
   if (node->resolved_type) {
-    LLVMTypeRef expected_ty = cg_get_llvm_type(cg, node->resolved_type);
+    LLVMTypeRef expected_ty = cg_type_get_llvm(cg, node->resolved_type);
     if (expected_ty != ret_ty) {
       result = cg_cast_value(cg, result, NULL, expected_ty);
     }
@@ -1149,23 +1149,23 @@ static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
   LLVMValueRef obj_ptr = cg_get_address(cg, obj_node);
   if (!obj_ptr) {
     LLVMValueRef obj_val = cg_expression(cg, obj_node);
-    obj_ptr = LLVMBuildAlloca(cg->builder, cg_get_llvm_type(cg, obj_type),
+    obj_ptr = LLVMBuildAlloca(cg->builder, cg_type_get_llvm(cg, obj_type),
                               "tmp_obj_field");
     LLVMBuildStore(cg->builder, obj_val, obj_ptr);
   } else {
     Type *resolved = obj_node->resolved_type;
     while (resolved && resolved->kind == KIND_POINTER) {
-      LLVMTypeRef load_ty = cg_get_llvm_type(cg, resolved);
+      LLVMTypeRef load_ty = cg_type_get_llvm(cg, resolved);
       obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
       resolved = resolved->data.pointer_to;
     }
   }
 
   if (obj_type->kind == KIND_UNION) {
-    LLVMTypeRef owner_ty = cg_get_llvm_type(cg, owner);
+    LLVMTypeRef owner_ty = cg_type_get_llvm(cg, owner);
     LLVMValueRef owner_ptr = LLVMBuildBitCast(
         cg->builder, obj_ptr, LLVMPointerType(owner_ty, 0), "union_owner_ptr");
-    LLVMTypeRef field_type_llvm = cg_get_llvm_type(cg, m->type);
+    LLVMTypeRef field_type_llvm = cg_type_get_llvm(cg, m->type);
     if (owner == obj_type || owner->kind == KIND_UNION) {
       LLVMValueRef field_ptr = LLVMBuildBitCast(
           cg->builder, owner_ptr, LLVMPointerType(field_type_llvm, 0),
@@ -1179,8 +1179,8 @@ static LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
                           "field_load");
   }
 
-  LLVMTypeRef obj_type_llvm = cg_get_llvm_type(cg, obj_type);
-  LLVMTypeRef field_type_llvm = cg_get_llvm_type(cg, m->type);
+  LLVMTypeRef obj_type_llvm = cg_type_get_llvm(cg, obj_type);
+  LLVMTypeRef field_type_llvm = cg_type_get_llvm(cg, m->type);
   LLVMValueRef field_ptr = LLVMBuildStructGEP2(cg->builder, obj_type_llvm,
                                                obj_ptr, m->index, "field_gep");
   LLVMValueRef field_val =
@@ -1223,7 +1223,7 @@ static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
   Type *ptr_type = data_mem->type;
   Type *elem_type = ptr_type->data.pointer_to;
 
-  LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
+  LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
   LLVMTypeRef array_ty = LLVMArrayType(llvm_elem_ty, count);
 
   // 1. Allocate space for the elements on the stack
@@ -1260,12 +1260,12 @@ static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
   free(const_values);
 
   // 3. Create the Array struct { data, len, cap }
-  LLVMTypeRef struct_ty = cg_get_llvm_type(cg, inst_type);
+  LLVMTypeRef struct_ty = cg_type_get_llvm(cg, inst_type);
   LLVMValueRef array_struct = LLVMGetUndef(struct_ty);
 
   // Cast raw_data_ptr from [N x T]* to T* for the struct field
   LLVMValueRef data_ptr_cast = LLVMBuildBitCast(
-      cg->builder, raw_data_ptr, cg_get_llvm_type(cg, ptr_type), "data_ptr");
+      cg->builder, raw_data_ptr, cg_type_get_llvm(cg, ptr_type), "data_ptr");
 
   // Insert fields
   array_struct = LLVMBuildInsertValue(cg->builder, array_struct, data_ptr_cast,
@@ -1286,7 +1286,7 @@ static LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
 
   if (type_is_array_struct(elem_type)) {
     // Nested arrays: inherit the inner rank and prefix it with this count.
-    LLVMTypeRef inner_ty = cg_get_llvm_type(cg, elem_type);
+    LLVMTypeRef inner_ty = cg_type_get_llvm(cg, elem_type);
     LLVMTypeRef array_ty = LLVMArrayType(inner_ty, count);
     LLVMValueRef first_elem_ptr = LLVMBuildGEP2(
         cg->builder, array_ty, raw_data_ptr,
@@ -1419,7 +1419,7 @@ static LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
   Type *ptr_type = data_mem->type;
   Type *elem_type = ptr_type->data.pointer_to;
 
-  LLVMTypeRef llvm_elem_ty = cg_get_llvm_type(cg, elem_type);
+  LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
   LLVMValueRef raw_data_ptr = LLVMBuildArrayAlloca(
       cg->builder, llvm_elem_ty, count_val, "array_rep_storage");
 
@@ -1463,7 +1463,7 @@ static LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
 
   LLVMPositionBuilderAtEnd(cg->builder, loop_end);
 
-  LLVMTypeRef struct_ty = cg_get_llvm_type(cg, inst_type);
+  LLVMTypeRef struct_ty = cg_type_get_llvm(cg, inst_type);
   LLVMValueRef array_struct = LLVMGetUndef(struct_ty);
 
   // Link allocated storage and length
@@ -1603,7 +1603,7 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
     }
     LLVMValueRef element_ptr = cg_expression_addr(cg, node);
     return LLVMBuildLoad2(cg->builder,
-                          cg_get_llvm_type(cg, node->resolved_type),
+                          cg_type_get_llvm(cg, node->resolved_type),
                           element_ptr, "load_element");
   }
   case NODE_BINARY_ARITH:

@@ -30,17 +30,17 @@ static void cg_get_struct_name(Type *t, char *buf, size_t buf_size) {
   }
 }
 
-LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
+LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
   if (!t) {
     void *bt[16];
     int bt_size = backtrace(bt, 16);
     char **bt_syms = backtrace_symbols(bt, bt_size);
-    fprintf(stderr, "[DEBUG cg_get_llvm_type] NULL type call stack:\n");
+    fprintf(stderr, "[DEBUG cg_type_get_llvm] NULL type call stack:\n");
     for (int i = 0; i < bt_size; i++) {
       fprintf(stderr, "  %s\n", bt_syms[i]);
     }
     free(bt_syms);
-    panic("cg_get_llvm_type received NULL type");
+    panic("cg_type_get_llvm received NULL type");
   }
 
   if (t->kind == KIND_PRIMITIVE) {
@@ -88,9 +88,9 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
 
   if (t->kind == KIND_POINTER) {
     if (!t->data.pointer_to) {
-      panic("cg_get_llvm_type received pointer type with NULL target");
+      panic("cg_type_get_llvm received pointer type with NULL target");
     }
-    LLVMTypeRef pointee = cg_get_llvm_type(cg, t->data.pointer_to);
+    LLVMTypeRef pointee = cg_type_get_llvm(cg, t->data.pointer_to);
     if (!pointee || LLVMGetTypeKind(pointee) == LLVMVoidTypeKind) {
       // Lower void* and generic placeholder pointers as i8*
       pointee = LLVMInt8TypeInContext(cg->context);
@@ -163,7 +163,7 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
           xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
       for (size_t i = 0; i < count; i++) {
         Member *m = t->members.items[i];
-        fields[i] = cg_get_llvm_type(cg, m->type);
+        fields[i] = cg_type_get_llvm(cg, m->type);
       }
       LLVMStructSetBody(struct_ty, fields, count, false);
       free(fields);
@@ -212,7 +212,7 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
       panic("Expected LLVM struct type for '%s'", buf);
     }
     if (LLVMIsOpaqueStruct(result_ty)) {
-      LLVMTypeRef success_ty = cg_get_llvm_type(cg, t->data.result.success);
+      LLVMTypeRef success_ty = cg_type_get_llvm(cg, t->data.result.success);
       if (LLVMGetTypeKind(success_ty) == LLVMVoidTypeKind) {
         success_ty = LLVMArrayType(LLVMInt8TypeInContext(cg->context), 0);
       }
@@ -249,7 +249,7 @@ LLVMTypeRef cg_get_llvm_type(Codegen *cg, Type *t) {
   panic("Unknown type kind: %d", t->kind);
 }
 
-void cg_lower_all_structs(Codegen *cg) {
+void cg_type_lower_structs(Codegen *cg) {
   // First pass: Create all named types to support recursion
   for (size_t i = 0; i < cg->type_ctx->structs.len; i++) {
     Type *t = cg->type_ctx->structs.items[i];
@@ -274,15 +274,15 @@ void cg_lower_all_structs(Codegen *cg) {
 
   // Second pass: Populate bodies
   for (size_t i = 0; i < cg->type_ctx->structs.len; i++) {
-    cg_get_llvm_type(cg, cg->type_ctx->structs.items[i]);
+    cg_type_get_llvm(cg, cg->type_ctx->structs.items[i]);
   }
   for (size_t i = 0; i < cg->type_ctx->instances.len; i++) {
     Type *t = cg->type_ctx->instances.items[i];
     if (!type_is_concrete(t))
       continue;
-    cg_get_llvm_type(cg, t);
+    cg_type_get_llvm(cg, t);
   }
-  cg_get_llvm_type(cg, type_get_string_buffer(cg->type_ctx));
+  cg_type_get_llvm(cg, type_get_string_buffer(cg->type_ctx));
 }
 
 LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
@@ -380,7 +380,7 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
   if (from_kind == LLVMStructTypeKind && from_t &&
       from_t->kind == KIND_STRING_BUFFER) {
     LLVMTypeRef str_ty =
-        cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+        cg_type_get_llvm(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
     if (to_ty == str_ty) {
       LLVMValueRef undef = LLVMGetUndef(str_ty);
       LLVMValueRef p = LLVMBuildExtractValue(cg->builder, value, 0, "sbuf_ptr");

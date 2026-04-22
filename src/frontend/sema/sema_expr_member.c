@@ -11,7 +11,7 @@ bool type_is_array_struct(Type *type) {
   return false;
 }
 
-ExprInfo check_field(Sema *s, AstNode *node) {
+ExprInfo sema_check_field(Sema *s, AstNode *node) {
   ExprInfo object_info = sema_check_expr(s, node->field.object);
   Type *obj_type = object_info.type;
   if (!obj_type) {
@@ -95,7 +95,7 @@ ExprInfo check_field(Sema *s, AstNode *node) {
   };
 }
 
-ExprInfo check_static_member(Sema *s, AstNode *node) {
+ExprInfo sema_check_static_member(Sema *s, AstNode *node) {
   Symbol *parent = sema_resolve(s, node->static_member.parent);
   Type *type = NULL;
   if (parent) {

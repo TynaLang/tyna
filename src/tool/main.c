@@ -112,7 +112,7 @@ int main(int argc, char **argv) {
     ErrorHandler_init(&std_eh, std_src, std_path, std_path, "stdlib");
     std_eh_init = true;
     Lexer std_lexer = make_lexer(std_src, &std_eh);
-    std_ast = Parser_process(&std_lexer, &std_eh, type_ctx);
+    std_ast = parser_process(&std_lexer, &std_eh, type_ctx);
     if (std_eh.has_errors) {
       ErrorHandler_show_all(&std_eh);
       ErrorHandler_free(&std_eh);
@@ -125,7 +125,7 @@ int main(int argc, char **argv) {
   ErrorHandler eh;
   ErrorHandler_init(&eh, src, file_path, entry_dir, NULL);
   Lexer user_lexer = make_lexer(src, &eh);
-  AstNode *user_ast = Parser_process(&user_lexer, &eh, type_ctx);
+  AstNode *user_ast = parser_process(&user_lexer, &eh, type_ctx);
 
   Sema sema;
   sema_init(&sema, &eh, type_ctx);

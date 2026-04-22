@@ -6,13 +6,13 @@
 
 // ---------- UTILITIES ---------- //
 
-Token *Parser_token_advance(Parser *p) {
+Token *parser_token_advance(Parser *p) {
   Token *prev_token = &p->current_token;
   p->current_token = Token_advance(p->lexer);
   return prev_token;
 }
 
-Token Parser_token_peek(Lexer *lexer, int n) {
+Token parser_token_peek(Lexer *lexer, int n) {
   size_t saved_cursor = lexer->cursor;
   Location saved_loc = lexer->loc;
   Token t = {0};
@@ -28,21 +28,21 @@ Token Parser_token_peek(Lexer *lexer, int n) {
   return t;
 }
 
-int Parser_expect(Parser *p, TokenType type, const char *msg) {
+int parser_expect(Parser *p, TokenType type, const char *msg) {
   if (p->current_token.type != type) {
     ErrorHandler_report(p->eh, p->current_token.loc, "%s", msg);
     return 0;
   }
-  Parser_token_advance(p);
+  parser_token_advance(p);
   return 1;
 }
 
 int Parser_is(AstNode *node, AstKind kind) { return node && node->tag == kind; }
 
-void Parser_sync(Parser *p) {
+void parser_sync(Parser *p) {
   while (p->current_token.type != TOKEN_EOF) {
     if (p->current_token.type == TOKEN_SEMI) {
-      Parser_token_advance(p);
+      parser_token_advance(p);
       return;
     }
     switch (p->current_token.type) {
@@ -58,21 +58,21 @@ void Parser_sync(Parser *p) {
     case TOKEN_IMPL:
       return;
     default:
-      Parser_token_advance(p);
+      parser_token_advance(p);
     }
   }
 }
 
-void Parser_sync_param(Parser *p) {
+void parser_sync_param(Parser *p) {
   while (p->current_token.type != TOKEN_RPAREN &&
          p->current_token.type != TOKEN_EOF)
-    Parser_token_advance(p);
+    parser_token_advance(p);
 }
 
 void skip_to_next_param(Parser *p) {
-  Parser_sync_param(p);
+  parser_sync_param(p);
   if (p->current_token.type == TOKEN_COMMA)
-    Parser_token_advance(p);
+    parser_token_advance(p);
 }
 
 int is_type_token(TokenType t) {
@@ -80,14 +80,14 @@ int is_type_token(TokenType t) {
          t == TOKEN_STAR;
 }
 
-static bool Parser_is_generic_call_start(Parser *p) {
+static bool parser_is_generic_call_start(Parser *p) {
   if (p->current_token.type != TOKEN_LT)
     return false;
 
   int depth = 0;
   int lookahead = 1;
   while (true) {
-    Token t = Parser_token_peek(p->lexer, lookahead++);
+    Token t = parser_token_peek(p->lexer, lookahead++);
     if (t.type == TOKEN_EOF)
       return false;
     if (t.type == TOKEN_LT) {
@@ -99,7 +99,7 @@ static bool Parser_is_generic_call_start(Parser *p) {
     }
   }
 
-  Token next = Parser_token_peek(p->lexer, lookahead);
+  Token next = parser_token_peek(p->lexer, lookahead);
   return next.type == TOKEN_LPAREN;
 }
 
@@ -129,14 +129,14 @@ int is_binary_operator(TokenType t) {
   }
 }
 
-int Parser_is_postfix(Parser *p) {
+int parser_is_postfix(Parser *p) {
   Token t = p->current_token;
   if (t.type == TOKEN_LPAREN || t.type == TOKEN_LBRACKET ||
       t.type == TOKEN_DOT || t.type == TOKEN_PLUS_PLUS ||
       t.type == TOKEN_MINUS_MINUS)
     return 1;
   if (t.type == TOKEN_LT)
-    return Parser_is_generic_call_start(p);
+    return parser_is_generic_call_start(p);
   return 0;
 }
 
@@ -246,7 +246,7 @@ int is_lvalue(AstNode *node) {
          (node->tag == NODE_UNARY && node->unary.op == OP_DEREF);
 }
 
-Type *Parser_find_placeholder(Parser *p, StringView name) {
+Type *parser_find_placeholder(Parser *p, StringView name) {
   for (size_t i = 0; i < p->type_placeholders.len; i++) {
     Type *t = p->type_placeholders.items[i];
     if (sv_eq(t->name, name))
@@ -255,13 +255,13 @@ Type *Parser_find_placeholder(Parser *p, StringView name) {
   return NULL;
 }
 
-void Parser_placeholder_scope_push(Parser *p) {
+void parser_placeholder_scope_push(Parser *p) {
   size_t *marker = xmalloc(sizeof(size_t));
   *marker = p->type_placeholders.len;
   List_push(&p->placeholder_scope_stack, marker);
 }
 
-void Parser_placeholder_scope_pop(Parser *p) {
+void parser_placeholder_scope_pop(Parser *p) {
   if (p->placeholder_scope_stack.len == 0)
     return;
   size_t *marker =
@@ -273,8 +273,8 @@ void Parser_placeholder_scope_pop(Parser *p) {
     List_pop(&p->type_placeholders);
 }
 
-Type *Parser_add_placeholder(Parser *p, StringView name) {
-  Type *existing = Parser_find_placeholder(p, name);
+Type *parser_add_placeholder(Parser *p, StringView name) {
+  Type *existing = parser_find_placeholder(p, name);
   if (existing)
     return existing;
 
@@ -291,7 +291,7 @@ Type *Parser_add_placeholder(Parser *p, StringView name) {
   return placeholder;
 }
 
-AstNode *Parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
+AstNode *parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
   Parser p;
   p.lexer = lexer;
   p.eh = eh;
@@ -305,12 +305,12 @@ AstNode *Parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
 
   while (p.current_token.type != TOKEN_EOF) {
     TokenType start_token = p.current_token.type;
-    AstNode *stmt = Parser_parse_statement(&p);
+    AstNode *stmt = parser_parse_statement(&p);
     if (!stmt) {
-      Parser_sync(&p);
+      parser_sync(&p);
       if (p.current_token.type == start_token &&
           p.current_token.type != TOKEN_EOF) {
-        Parser_token_advance(&p);
+        parser_token_advance(&p);
       }
       continue;
     }

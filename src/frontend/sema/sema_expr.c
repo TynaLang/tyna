@@ -203,7 +203,7 @@ AstNode *sema_coerce(Sema *s, AstNode *expr, Type *target) {
 
   // Literal Bounds Check
   if (expr->tag == NODE_NUMBER || expr->tag == NODE_CHAR) {
-    check_literal_bounds(s, expr, target);
+    sema_check_literal_bounds(s, expr, target);
 
     if (type_can_implicitly_cast(target, expr_type) ||
         (expr->tag == NODE_NUMBER && literal_fits_in_type(expr, target))) {
@@ -258,61 +258,61 @@ ExprInfo sema_check_expr(Sema *s, AstNode *node) {
   case NODE_STRING:
   case NODE_BOOL:
   case NODE_NULL:
-    info = check_literal(s, node);
+    info = sema_check_literal(s, node);
     break;
 
   case NODE_VAR:
-    info = check_var(s, node);
+    info = sema_check_var(s, node);
     break;
   case NODE_FIELD:
-    info = check_field(s, node);
+    info = sema_check_field(s, node);
     break;
   case NODE_INDEX:
-    info = check_index(s, node);
+    info = sema_check_index(s, node);
     break;
 
   case NODE_STATIC_MEMBER:
-    info = check_static_member(s, node);
+    info = sema_check_static_member(s, node);
     break;
 
   case NODE_UNARY:
-    info = check_unary(s, node);
+    info = sema_check_unary(s, node);
     break;
   case NODE_BINARY_ARITH:
-    info = check_binary_arith(s, node);
+    info = sema_check_binary_arith(s, node);
     break;
   case NODE_BINARY_COMPARE:
   case NODE_BINARY_EQUALITY:
   case NODE_BINARY_LOGICAL:
-    info = check_binary_logical(s, node);
+    info = sema_check_binary_logical(s, node);
     break;
   case NODE_BINARY_IS:
-    info = check_binary_is(s, node);
+    info = sema_check_binary_is(s, node);
     break;
   case NODE_BINARY_ELSE:
-    info = check_binary_else(s, node);
+    info = sema_check_binary_else(s, node);
     break;
 
   case NODE_CALL:
-    info = check_call(s, node);
+    info = sema_check_call(s, node);
     break;
   case NODE_NEW_EXPR:
-    info = check_new_expr(s, node);
+    info = sema_check_new_expr(s, node);
     break;
   case NODE_ARRAY_LITERAL:
-    info = check_array_expr(s, node);
+    info = sema_check_array_expr(s, node);
     break;
   case NODE_ARRAY_REPEAT:
-    info = check_array_expr(s, node);
+    info = sema_check_array_expr(s, node);
     break;
   case NODE_ASSIGN_EXPR:
-    info = check_assignment(s, node);
+    info = sema_check_assignment(s, node);
     break;
   case NODE_CAST_EXPR:
-    info = check_cast(s, node);
+    info = sema_check_cast(s, node);
     break;
   case NODE_TERNARY:
-    info = check_ternary(s, node);
+    info = sema_check_ternary(s, node);
     break;
 
   default:

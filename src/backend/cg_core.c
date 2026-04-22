@@ -12,7 +12,7 @@ static void cg_register_system_function(Codegen *cg, StringView name,
   LLVMValueRef func = LLVMAddFunction(cg->module, c_name, type);
   free(c_name);
 
-  CGFunction *f = xmalloc(sizeof(CGFunction));
+  CgFunc *f = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f, name, func, type, true, NULL);
   List_push(&cg->system_functions, f);
 }
@@ -39,7 +39,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
   LLVMTypeRef printf_type = LLVMFunctionType(
       LLVMInt32TypeInContext(cg->context), printf_args, 1, true);
   LLVMValueRef printf_val = LLVMAddFunction(cg->module, "printf", printf_type);
-  CGFunction *f_print = xmalloc(sizeof(CGFunction));
+  CgFunc *f_print = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_print, sv_from_parts("print", 5), printf_val,
                      printf_type, true, NULL);
   List_push(&cg->system_functions, f_print);
@@ -48,7 +48,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
   LLVMTypeRef pow_args[] = {double_ty, double_ty};
   LLVMTypeRef pow_type = LLVMFunctionType(double_ty, pow_args, 2, false);
   LLVMValueRef pow_val = LLVMAddFunction(cg->module, "pow", pow_type);
-  CGFunction *f_pow = xmalloc(sizeof(CGFunction));
+  CgFunc *f_pow = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_pow, sv_from_parts("pow", 3), pow_val, pow_type, true,
                      NULL);
   List_push(&cg->system_functions, f_pow);
@@ -58,7 +58,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
   LLVMTypeRef free_type =
       LLVMFunctionType(LLVMVoidTypeInContext(cg->context), free_args, 1, false);
   LLVMValueRef free_val = LLVMAddFunction(cg->module, "free", free_type);
-  CGFunction *f_free = xmalloc(sizeof(CGFunction));
+  CgFunc *f_free = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_free, sv_from_parts("free", 4), free_val, free_type,
                      true, NULL);
   List_push(&cg->system_functions, f_free);
@@ -74,7 +74,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMFunctionType(LLVMInt32TypeInContext(cg->context), cmp_args, 3, false);
   LLVMValueRef cmp_val =
       LLVMAddFunction(cg->module, "__tyl_compare_arrays", cmp_type);
-  CGFunction *f_cmp = xmalloc(sizeof(CGFunction));
+  CgFunc *f_cmp = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_cmp, sv_from_parts("__tyl_compare_arrays", 20), cmp_val,
                      cmp_type, true, NULL);
   List_push(&cg->system_functions, f_cmp);
@@ -85,7 +85,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
                                              to_arr_args, 2, false);
   LLVMValueRef to_arr_val =
       LLVMAddFunction(cg->module, "__tyl_str_to_array", to_arr_type);
-  CGFunction *f_to_arr = xmalloc(sizeof(CGFunction));
+  CgFunc *f_to_arr = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_to_arr, sv_from_parts("__tyl_str_to_array", 18),
                      to_arr_val, to_arr_type, true, NULL);
   List_push(&cg->system_functions, f_to_arr);
@@ -96,7 +96,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
                                              to_str_args, 2, false);
   LLVMValueRef to_str_val =
       LLVMAddFunction(cg->module, "__tyl_array_to_str", to_str_type);
-  CGFunction *f_to_str = xmalloc(sizeof(CGFunction));
+  CgFunc *f_to_str = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_to_str, sv_from_parts("__tyl_array_to_str", 18),
                      to_str_val, to_str_type, true, NULL);
   List_push(&cg->system_functions, f_to_str);
@@ -110,7 +110,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
                        str_data_args, 1, false);
   LLVMValueRef str_data_val =
       LLVMAddFunction(cg->module, "__tyl_str_data", str_data_type);
-  CGFunction *f_str_data = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_data = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_data, sv_from_parts("__tyl_str_data", 14),
                      str_data_val, str_data_type, true, NULL);
   List_push(&cg->system_functions, f_str_data);
@@ -120,7 +120,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
   LLVMTypeRef str_len_type = LLVMFunctionType(i64_ty, str_len_args, 1, false);
   LLVMValueRef str_len_val =
       LLVMAddFunction(cg->module, "__tyl_str_len", str_len_type);
-  CGFunction *f_str_len = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_len = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_len, sv_from_parts("__tyl_str_len", 13), str_len_val,
                      str_len_type, true, NULL);
   List_push(&cg->system_functions, f_str_len);
@@ -130,7 +130,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
   LLVMTypeRef str_hash_type = LLVMFunctionType(i64_ty, str_hash_args, 1, false);
   LLVMValueRef str_hash_val =
       LLVMAddFunction(cg->module, "__tyl_str_hash", str_hash_type);
-  CGFunction *f_str_hash = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_hash = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_hash, sv_from_cstr("__tyl_str_hash"), str_hash_val,
                      str_hash_type, true, NULL);
   List_push(&cg->system_functions, f_str_hash);
@@ -141,13 +141,13 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMInt32TypeInContext(cg->context), str_eq_args, 2, false);
   LLVMValueRef str_eq_val =
       LLVMAddFunction(cg->module, "__tyl_str_equals", str_eq_type);
-  CGFunction *f_str_eq = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_eq = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_eq, sv_from_cstr("__tyl_str_equals"), str_eq_val,
                      str_eq_type, true, NULL);
   List_push(&cg->system_functions, f_str_eq);
 
   LLVMTypeRef buf_ty =
-      cg_get_llvm_type(cg, type_get_string_buffer(cg->type_ctx));
+      cg_type_get_llvm(cg, type_get_string_buffer(cg->type_ctx));
   LLVMTypeRef buf_ptr_ty = LLVMPointerType(buf_ty, 0);
 
   // void __tyl_string_new(tyl_string_buf *out)
@@ -156,7 +156,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMVoidTypeInContext(cg->context), str_new_args, 1, false);
   LLVMValueRef str_new_val =
       LLVMAddFunction(cg->module, "__tyl_string_new", str_new_type);
-  CGFunction *f_str_new = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_new = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_new, sv_from_cstr("__tyl_string_new"), str_new_val,
                      str_new_type, true, NULL);
   List_push(&cg->system_functions, f_str_new);
@@ -167,7 +167,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMVoidTypeInContext(cg->context), str_push_args, 2, false);
   LLVMValueRef str_push_val =
       LLVMAddFunction(cg->module, "__tyl_string_push", str_push_type);
-  CGFunction *f_str_push = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_push = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_push, sv_from_cstr("__tyl_string_push"),
                      str_push_val, str_push_type, true, NULL);
   List_push(&cg->system_functions, f_str_push);
@@ -178,7 +178,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMVoidTypeInContext(cg->context), str_free_buf_args, 1, false);
   LLVMValueRef str_free_buf_val =
       LLVMAddFunction(cg->module, "__tyl_string_free", str_free_buf_type);
-  CGFunction *f_str_free_buf = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_free_buf = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_free_buf, sv_from_cstr("__tyl_string_free"),
                      str_free_buf_val, str_free_buf_type, true, NULL);
   List_push(&cg->system_functions, f_str_free_buf);
@@ -189,7 +189,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMFunctionType(string_ty, str_into_args, 1, false);
   LLVMValueRef str_into_val =
       LLVMAddFunction(cg->module, "__tyl_string_into_str", str_into_type);
-  CGFunction *f_str_into = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_into = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_into, sv_from_cstr("__tyl_string_into_str"),
                      str_into_val, str_into_type, true, NULL);
   List_push(&cg->system_functions, f_str_into);
@@ -200,7 +200,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMFunctionType(string_ty, str_clone_args, 1, false);
   LLVMValueRef str_clone_val =
       LLVMAddFunction(cg->module, "__tyl_string_clone_str", str_clone_type);
-  CGFunction *f_str_clone = xmalloc(sizeof(CGFunction));
+  CgFunc *f_str_clone = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_str_clone, sv_from_cstr("__tyl_string_clone_str"),
                      str_clone_val, str_clone_type, true, NULL);
   List_push(&cg->system_functions, f_str_clone);
@@ -210,7 +210,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMFunctionType(LLVMVoidTypeInContext(cg->context), NULL, 0, false);
   LLVMValueRef arena_push_val =
       LLVMAddFunction(cg->module, "__tyl_string_arena_push", arena_push_type);
-  CGFunction *f_arena_push = xmalloc(sizeof(CGFunction));
+  CgFunc *f_arena_push = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_arena_push, sv_from_cstr("__tyl_string_arena_push"),
                      arena_push_val, arena_push_type, true, NULL);
   List_push(&cg->system_functions, f_arena_push);
@@ -220,7 +220,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMFunctionType(LLVMVoidTypeInContext(cg->context), NULL, 0, false);
   LLVMValueRef arena_pop_val =
       LLVMAddFunction(cg->module, "__tyl_string_arena_pop", arena_pop_type);
-  CGFunction *f_arena_pop = xmalloc(sizeof(CGFunction));
+  CgFunc *f_arena_pop = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_arena_pop, sv_from_cstr("__tyl_string_arena_pop"),
                      arena_pop_val, arena_pop_type, true, NULL);
   List_push(&cg->system_functions, f_arena_pop);
@@ -232,7 +232,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
                        as_cptr_args, 1, false);
   LLVMValueRef as_cptr_val =
       LLVMAddFunction(cg->module, "__tyl_as_c_ptr", as_cptr_type);
-  CGFunction *f_as_cptr = xmalloc(sizeof(CGFunction));
+  CgFunc *f_as_cptr = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_as_cptr, sv_from_cstr("__tyl_as_c_ptr"), as_cptr_val,
                      as_cptr_type, true, NULL);
   List_push(&cg->system_functions, f_as_cptr);
@@ -245,7 +245,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMInt32TypeInContext(cg->context), ptr_eq_args, 2, false);
   LLVMValueRef ptr_eq_val =
       LLVMAddFunction(cg->module, "__tyl_ptr_eq", ptr_eq_type);
-  CGFunction *f_ptr_eq = xmalloc(sizeof(CGFunction));
+  CgFunc *f_ptr_eq = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_ptr_eq, sv_from_cstr("__tyl_ptr_eq"), ptr_eq_val,
                      ptr_eq_type, true, NULL);
   List_push(&cg->system_functions, f_ptr_eq);
@@ -255,7 +255,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMFunctionType(LLVMInt64TypeInContext(cg->context), NULL, 0, false);
   LLVMValueRef alloc_count_val =
       LLVMAddFunction(cg->module, "__tyl_test_string_alloc_count", count_type);
-  CGFunction *f_alloc_count = xmalloc(sizeof(CGFunction));
+  CgFunc *f_alloc_count = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_alloc_count,
                      sv_from_cstr("__tyl_test_string_alloc_count"),
                      alloc_count_val, count_type, true, NULL);
@@ -264,7 +264,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
   // int64 __tyl_test_string_free_count(void)
   LLVMValueRef free_count_val =
       LLVMAddFunction(cg->module, "__tyl_test_string_free_count", count_type);
-  CGFunction *f_free_count = xmalloc(sizeof(CGFunction));
+  CgFunc *f_free_count = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_free_count, sv_from_cstr("__tyl_test_string_free_count"),
                      free_count_val, count_type, true, NULL);
   List_push(&cg->system_functions, f_free_count);
@@ -272,7 +272,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
   // int64 __tyl_test_string_heap_alloc_count(void)
   LLVMValueRef heap_count_val = LLVMAddFunction(
       cg->module, "__tyl_test_string_heap_alloc_count", count_type);
-  CGFunction *f_heap_count = xmalloc(sizeof(CGFunction));
+  CgFunc *f_heap_count = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_heap_count,
                      sv_from_cstr("__tyl_test_string_heap_alloc_count"),
                      heap_count_val, count_type, true, NULL);
@@ -283,7 +283,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMFunctionType(LLVMVoidTypeInContext(cg->context), NULL, 0, false);
   LLVMValueRef reset_val =
       LLVMAddFunction(cg->module, "__tyl_test_string_reset_counts", reset_type);
-  CGFunction *f_reset = xmalloc(sizeof(CGFunction));
+  CgFunc *f_reset = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_reset, sv_from_cstr("__tyl_test_string_reset_counts"),
                      reset_val, reset_type, true, NULL);
   List_push(&cg->system_functions, f_reset);
@@ -294,7 +294,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMVoidTypeInContext(cg->context), init_fixed_args, 3, false);
   LLVMValueRef init_fixed_val =
       LLVMAddFunction(cg->module, "__tyl_array_init_fixed", init_fixed_type);
-  CGFunction *f_init_fixed = xmalloc(sizeof(CGFunction));
+  CgFunc *f_init_fixed = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_init_fixed, sv_from_cstr("__tyl_array_init_fixed"),
                      init_fixed_val, init_fixed_type, true, NULL);
   List_push(&cg->system_functions, f_init_fixed);
@@ -305,7 +305,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
       LLVMFunctionType(LLVMPointerType(i64_ty, 0), clone_dims_args, 2, false);
   LLVMValueRef clone_dims_val =
       LLVMAddFunction(cg->module, "__tyl_array_clone_dims", clone_dims_type);
-  CGFunction *f_clone_dims = xmalloc(sizeof(CGFunction));
+  CgFunc *f_clone_dims = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_clone_dims, sv_from_cstr("__tyl_array_clone_dims"),
                      clone_dims_val, clone_dims_type, true, NULL);
   List_push(&cg->system_functions, f_clone_dims);
@@ -315,7 +315,7 @@ static void cg_initiate_system_functions(Codegen *cg) {
   LLVMTypeRef panic_type =
       LLVMFunctionType(LLVMVoidTypeInContext(cg->context), panic_args, 1, true);
   LLVMValueRef panic_val = LLVMAddFunction(cg->module, "panic", panic_type);
-  CGFunction *f_panic = xmalloc(sizeof(CGFunction));
+  CgFunc *f_panic = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(f_panic, sv_from_parts("panic", 5), panic_val, panic_type,
                      true, NULL);
   List_push(&cg->system_functions, f_panic);
@@ -353,7 +353,7 @@ static void cg_finalize_entry(Codegen *cg, LLVMValueRef entry_func,
 
   if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
     if (has_main) {
-      CGFunction *mf = cg_find_function(cg, sv_from_parts("main", 4));
+      CgFunc *mf = cg_find_function(cg, sv_from_parts("main", 4));
       LLVMBuildCall2(cg->builder, mf->type, mf->value, NULL, 0, "");
       LLVMBuildRetVoid(cg->builder);
     } else {
@@ -448,7 +448,7 @@ Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx,
   cg->type_ctx = type_ctx;
   cg->eh = eh;
   List_init(&cg->defers);
-  cg->current_scope = xmalloc(sizeof(CGSymbolTable));
+  cg->current_scope = xmalloc(sizeof(CgSymtab));
   CGSymbolTable_init(cg->current_scope, NULL);
   cg->current_function_ref = NULL;
 
@@ -472,7 +472,7 @@ Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx,
       LLVMAppendBasicBlockInContext(cg->context, entry_func, "entry");
   LLVMPositionBuilderAtEnd(cg->builder, entry_bb);
 
-  CGFunction *entry_fn = xmalloc(sizeof(CGFunction));
+  CgFunc *entry_fn = xmalloc(sizeof(CgFunc));
   cg_init_CGFunction(entry_fn, sv_from_cstr("__system__main__"), entry_func,
                      entry_ty, true, NULL);
 
@@ -485,17 +485,17 @@ void Codegen_global(Codegen *cg, AstNode *ast_root) {
   if (ast_root->tag != NODE_AST_ROOT)
     panic("Expected AST root node");
 
-  CGFunction *entry_fn = cg_find_function(cg, sv_from_cstr("__system__main__"));
+  CgFunc *entry_fn = cg_find_function(cg, sv_from_cstr("__system__main__"));
 
   if (!entry_fn) {
     panic("[Codegen_global] Internal error: entry function not found");
   }
 
-  cg_lower_all_structs(cg);
+  cg_type_lower_structs(cg);
 
   cg_declare_functions(cg, ast_root);
 
-  CGFunction *prev_func_ref = cg->current_function_ref;
+  CgFunc *prev_func_ref = cg->current_function_ref;
   LLVMValueRef prev_func = cg->current_function;
 
   cg->current_function = entry_fn->value;
@@ -516,7 +516,7 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
   if (ast_root->tag != NODE_AST_ROOT)
     panic("Expected AST root node");
 
-  CGFunction *entry_fn = cg_find_function(cg, sv_from_cstr("__system__main__"));
+  CgFunc *entry_fn = cg_find_function(cg, sv_from_cstr("__system__main__"));
   if (!entry_fn)
     panic("[Codegen_program] Internal error: entry function not found");
 
@@ -536,7 +536,7 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
   LLVMTypeRef i32_ty = LLVMInt32TypeInContext(cg->context);
   LLVMValueRef exit_code = LLVMConstInt(i32_ty, 0, 0);
 
-  CGFunction *user_main = cg_find_function(cg, sv_from_cstr("main"));
+  CgFunc *user_main = cg_find_function(cg, sv_from_cstr("main"));
 
   if (user_main) {
     LLVMTypeRef return_ty = LLVMGetReturnType(user_main->type);

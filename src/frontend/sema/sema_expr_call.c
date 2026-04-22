@@ -32,7 +32,7 @@ static void sema_mark_move_if_consuming_arg(Sema *s, AstNode *arg,
   }
 }
 
-static Type *check_builtin_call(Sema *s, AstNode *node) {
+static Type *sema_check_builtin_call(Sema *s, AstNode *node) {
   if (!node || !node->call.func || node->call.func->tag != NODE_VAR) {
     return NULL;
   }
@@ -114,7 +114,7 @@ static void sema_fold_string_concat_literals(Sema *s, AstNode *node) {
   node->resolved_type = type_get_primitive(s->types, PRIM_STRING);
 }
 
-ExprInfo check_call(Sema *s, AstNode *node) {
+ExprInfo sema_check_call(Sema *s, AstNode *node) {
   if (!node || !node->call.func) {
     sema_error(s, node, "Invalid function call expression");
     return (ExprInfo){
@@ -130,7 +130,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
                       .category = VAL_RVALUE};
   }
 
-  Type *builtin_type = check_builtin_call(s, node);
+  Type *builtin_type = sema_check_builtin_call(s, node);
   if (builtin_type) {
     return (ExprInfo){.type = builtin_type, .category = VAL_RVALUE};
   }
@@ -217,7 +217,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
               AstNode_new_var(concrete_method->name, field_node->loc);
           node->call.args = new_args;
 
-          return check_call(s, node);
+          return sema_check_call(s, node);
         }
       }
 
@@ -281,7 +281,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
                 AstNode_new_var(concrete_method->name, field_node->loc);
             node->call.args = new_args;
 
-            return check_call(s, node);
+            return sema_check_call(s, node);
           }
         }
       }
@@ -319,7 +319,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
             }
           }
           node->call.func = AstNode_new_var(method->name, sm->loc);
-          return check_call(s, node);
+          return sema_check_call(s, node);
         }
       }
     }
@@ -402,7 +402,7 @@ ExprInfo check_call(Sema *s, AstNode *node) {
                      "Type mismatch: expected %s, got %s",
                      type_to_name(param_type), type_to_name(arg_type));
         }
-        check_literal_bounds(s, node->call.args.items[i], param_type);
+        sema_check_literal_bounds(s, node->call.args.items[i], param_type);
         sema_mark_move_if_consuming_arg(s, arg_node, param_type, consumes);
       }
     }

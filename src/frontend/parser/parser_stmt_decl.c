@@ -1,11 +1,11 @@
 #include "parser_internal.h"
 
-AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
+AstNode *parser_parse_var_decl(Parser *p, bool is_export) {
   int is_const = (p->current_token.type == TOKEN_CONST);
-  Parser_token_advance(p);
+  parser_token_advance(p);
 
   Token ident = p->current_token;
-  if (!Parser_expect(p, TOKEN_IDENT,
+  if (!parser_expect(p, TOKEN_IDENT,
                      "Expected identifier after 'let' or 'const'"))
     return NULL;
 
@@ -13,8 +13,8 @@ AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
 
   Type *declared_type = NULL;
   if (p->current_token.type == TOKEN_COLON) {
-    Parser_token_advance(p);
-    declared_type = Parser_parse_type_full(p);
+    parser_token_advance(p);
+    declared_type = parser_parse_type_full(p);
     if (!declared_type)
       return NULL;
   } else {
@@ -22,11 +22,11 @@ AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
   }
 
   if (p->current_token.type == TOKEN_ASSIGN) {
-    Parser_token_advance(p);
-    AstNode *value = Parser_parse_expression(p, 0);
+    parser_token_advance(p);
+    AstNode *value = parser_parse_expression(p, 0);
     if (!value)
       return NULL;
-    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
+    if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after value"))
       return NULL;
 
     return AstNode_new_var_decl(name, value, declared_type, is_const, is_export,
@@ -39,7 +39,7 @@ AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
       return NULL;
     }
 
-    if (!Parser_expect(p, TOKEN_SEMI,
+    if (!parser_expect(p, TOKEN_SEMI,
                        "Expected ';' or '=' after identifier/type"))
       return NULL;
 
@@ -48,9 +48,9 @@ AstNode *Parser_parse_var_decl(Parser *p, bool is_export) {
   }
 }
 
-AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
+AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
                               bool is_external) {
-  Parser_token_advance(p); // consume 'fn'
+  parser_token_advance(p); // consume 'fn'
 
   Token ident = p->current_token;
   Location loc = ident.loc;
@@ -60,9 +60,9 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
     ErrorHandler_report(p->eh, p->current_token.loc, "Expected function name");
     return NULL;
   }
-  Parser_token_advance(p);
+  parser_token_advance(p);
 
-  if (!Parser_expect(p, TOKEN_LPAREN, "Expected '(' after function name"))
+  if (!parser_expect(p, TOKEN_LPAREN, "Expected '(' after function name"))
     return NULL;
 
   List params;
@@ -74,17 +74,17 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
 
     StringView param_name = p->current_token.text;
     AstNode *param_name_node = AstNode_new_var(param_name, p_loc);
-    if (!Parser_expect(p, TOKEN_IDENT, "Expected parameter name")) {
+    if (!parser_expect(p, TOKEN_IDENT, "Expected parameter name")) {
       skip_to_next_param(p);
       continue;
     }
 
-    if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after parameter name")) {
+    if (!parser_expect(p, TOKEN_COLON, "Expected ':' after parameter name")) {
       skip_to_next_param(p);
       continue;
     }
 
-    Type *param_type = Parser_parse_type_full(p);
+    Type *param_type = parser_parse_type_full(p);
     if (!param_type) {
       skip_to_next_param(p);
       continue;
@@ -92,8 +92,8 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
 
     AstNode *default_value = NULL;
     if (p->current_token.type == TOKEN_ASSIGN) {
-      Parser_token_advance(p);
-      default_value = Parser_parse_expression(p, 0);
+      parser_token_advance(p);
+      default_value = parser_parse_expression(p, 0);
       if (!default_value)
         return NULL;
     }
@@ -102,16 +102,16 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
     param_node->param.default_value = default_value;
     List_push(&params, param_node);
     if (p->current_token.type == TOKEN_COMMA)
-      Parser_token_advance(p);
+      parser_token_advance(p);
   }
 
-  if (!Parser_expect(p, TOKEN_RPAREN, "Expected ')' after parameters"))
+  if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after parameters"))
     return NULL;
 
   Type *ret_type = type_get_primitive(p->type_ctx, PRIM_VOID);
   if (p->current_token.type == TOKEN_COLON) {
-    Parser_token_advance(p);
-    ret_type = Parser_parse_type_full(p);
+    parser_token_advance(p);
+    ret_type = parser_parse_type_full(p);
     if (!ret_type) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Expected return type after ':'");
@@ -121,13 +121,13 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
 
   AstNode *body = NULL;
   if (p->current_token.type == TOKEN_LBRACE) {
-    body = Parser_parse_block(p);
+    body = parser_parse_block(p);
   } else if (p->current_token.type == TOKEN_SEMI) {
-    Parser_token_advance(p);
+    parser_token_advance(p);
   } else {
     ErrorHandler_report(p->eh, p->current_token.loc,
                         "Expected '{' or ';' after function declaration");
-    Parser_sync(p);
+    parser_sync(p);
   }
 
   return AstNode_new_func_decl(AstNode_new_var(ident.text, ident.loc), params,
@@ -135,19 +135,19 @@ AstNode *Parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
                                is_external, loc);
 }
 
-AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
+AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
   Location loc = p->current_token.loc;
-  Parser_token_advance(p); // consume 'struct'
+  parser_token_advance(p); // consume 'struct'
 
   Token name_token = p->current_token;
-  if (!Parser_expect(p, TOKEN_IDENT, "Expected struct name"))
+  if (!parser_expect(p, TOKEN_IDENT, "Expected struct name"))
     return NULL;
   AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
 
   List placeholders;
   List_init(&placeholders);
   if (p->current_token.type == TOKEN_LT) {
-    Parser_token_advance(p);
+    parser_token_advance(p);
     while (p->current_token.type != TOKEN_GT &&
            p->current_token.type != TOKEN_EOF) {
       if (p->current_token.type != TOKEN_IDENT) {
@@ -158,22 +158,22 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
       StringView *pl = xmalloc(sizeof(StringView));
       *pl = p->current_token.text;
       List_push(&placeholders, pl);
-      Parser_token_advance(p);
+      parser_token_advance(p);
       if (p->current_token.type == TOKEN_COMMA)
-        Parser_token_advance(p);
+        parser_token_advance(p);
     }
-    Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+    parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
   }
 
   if (placeholders.len > 0) {
-    Parser_placeholder_scope_push(p);
+    parser_placeholder_scope_push(p);
     for (size_t i = 0; i < placeholders.len; i++) {
       StringView placeholder_name = *(StringView *)placeholders.items[i];
-      Parser_add_placeholder(p, placeholder_name);
+      parser_add_placeholder(p, placeholder_name);
     }
   }
 
-  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after struct name"))
+  if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after struct name"))
     return NULL;
 
   List members;
@@ -184,39 +184,39 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
     bool is_static = false;
     if (p->current_token.type == TOKEN_STATIC) {
       is_static = true;
-      Parser_token_advance(p);
+      parser_token_advance(p);
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
+      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false);
       if (fn) {
         List_push(&members, fn);
       } else {
-        Parser_sync(p);
+        parser_sync(p);
       }
       continue;
     }
 
     Location mem_loc = p->current_token.loc;
     Token mem_ident = p->current_token;
-    if (!Parser_expect(p, TOKEN_IDENT, "Expected member name")) {
-      Parser_sync(p);
+    if (!parser_expect(p, TOKEN_IDENT, "Expected member name")) {
+      parser_sync(p);
       continue;
     }
 
-    if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after member name")) {
-      Parser_sync(p);
+    if (!parser_expect(p, TOKEN_COLON, "Expected ':' after member name")) {
+      parser_sync(p);
       continue;
     }
 
-    Type *type = Parser_parse_type_full(p);
+    Type *type = parser_parse_type_full(p);
     if (!type) {
-      Parser_sync(p);
+      parser_sync(p);
       continue;
     }
 
-    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after member type")) {
-      Parser_sync(p);
+    if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after member type")) {
+      parser_sync(p);
       continue;
     }
 
@@ -226,22 +226,22 @@ AstNode *Parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
     List_push(&members, mem_decl);
   }
 
-  Parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct members");
+  parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct members");
 
   if (placeholders.len > 0) {
-    Parser_placeholder_scope_pop(p);
+    parser_placeholder_scope_pop(p);
   }
 
   return AstNode_new_struct_decl(name_node, members, placeholders, is_frozen,
                                  false, loc);
 }
 
-AstNode *Parser_parse_error_decl(Parser *p, bool is_export) {
+AstNode *parser_parse_error_decl(Parser *p, bool is_export) {
   Location loc = p->current_token.loc;
-  Parser_token_advance(p); // consume 'error'
+  parser_token_advance(p); // consume 'error'
 
   Token name_token = p->current_token;
-  if (!Parser_expect(p, TOKEN_IDENT, "Expected error name"))
+  if (!parser_expect(p, TOKEN_IDENT, "Expected error name"))
     return NULL;
   AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
 
@@ -249,34 +249,34 @@ AstNode *Parser_parse_error_decl(Parser *p, bool is_export) {
   List_init(&members);
 
   if (p->current_token.type == TOKEN_LBRACE) {
-    Parser_token_advance(p);
+    parser_token_advance(p);
     while (p->current_token.type != TOKEN_RBRACE &&
            p->current_token.type != TOKEN_EOF) {
       Location mem_loc = p->current_token.loc;
       Token mem_ident = p->current_token;
-      if (!Parser_expect(p, TOKEN_IDENT, "Expected payload field name")) {
-        Parser_sync(p);
+      if (!parser_expect(p, TOKEN_IDENT, "Expected payload field name")) {
+        parser_sync(p);
         continue;
       }
 
-      if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after field name")) {
-        Parser_sync(p);
+      if (!parser_expect(p, TOKEN_COLON, "Expected ':' after field name")) {
+        parser_sync(p);
         continue;
       }
 
-      Type *type = Parser_parse_type_full(p);
+      Type *type = parser_parse_type_full(p);
       if (!type) {
-        Parser_sync(p);
+        parser_sync(p);
         continue;
       }
 
       if (p->current_token.type == TOKEN_SEMI ||
           p->current_token.type == TOKEN_COMMA) {
-        Parser_token_advance(p);
+        parser_token_advance(p);
       } else if (p->current_token.type != TOKEN_RBRACE) {
-        if (!Parser_expect(p, TOKEN_SEMI,
+        if (!parser_expect(p, TOKEN_SEMI,
                            "Expected ';' or ',' after field type")) {
-          Parser_sync(p);
+          parser_sync(p);
           continue;
         }
       }
@@ -287,31 +287,31 @@ AstNode *Parser_parse_error_decl(Parser *p, bool is_export) {
       List_push(&members, mem_decl);
     }
 
-    if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after error payload")) {
-      Parser_sync(p);
+    if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after error payload")) {
+      parser_sync(p);
       return NULL;
     }
   } else {
-    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after error declaration"))
+    if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after error declaration"))
       return NULL;
   }
 
   return AstNode_new_error_decl(name_node, members, is_export, loc);
 }
 
-AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
+AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
   Location loc = p->current_token.loc;
-  Parser_token_advance(p); // consume 'union'
+  parser_token_advance(p); // consume 'union'
 
   Token name_token = p->current_token;
-  if (!Parser_expect(p, TOKEN_IDENT, "Expected union name"))
+  if (!parser_expect(p, TOKEN_IDENT, "Expected union name"))
     return NULL;
   AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
 
   List placeholders;
   List_init(&placeholders);
   if (p->current_token.type == TOKEN_LT) {
-    Parser_token_advance(p);
+    parser_token_advance(p);
     while (p->current_token.type != TOKEN_GT &&
            p->current_token.type != TOKEN_EOF) {
       if (p->current_token.type != TOKEN_IDENT) {
@@ -322,22 +322,22 @@ AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
       StringView *pl = xmalloc(sizeof(StringView));
       *pl = p->current_token.text;
       List_push(&placeholders, pl);
-      Parser_token_advance(p);
+      parser_token_advance(p);
       if (p->current_token.type == TOKEN_COMMA)
-        Parser_token_advance(p);
+        parser_token_advance(p);
     }
-    Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+    parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
   }
 
   if (placeholders.len > 0) {
-    Parser_placeholder_scope_push(p);
+    parser_placeholder_scope_push(p);
     for (size_t i = 0; i < placeholders.len; i++) {
       StringView placeholder_name = *(StringView *)placeholders.items[i];
-      Parser_add_placeholder(p, placeholder_name);
+      parser_add_placeholder(p, placeholder_name);
     }
   }
 
-  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after union name"))
+  if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after union name"))
     return NULL;
 
   List members;
@@ -348,39 +348,39 @@ AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
     bool is_static = false;
     if (p->current_token.type == TOKEN_STATIC) {
       is_static = true;
-      Parser_token_advance(p);
+      parser_token_advance(p);
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
+      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false);
       if (fn) {
         List_push(&members, fn);
       } else {
-        Parser_sync(p);
+        parser_sync(p);
       }
       continue;
     }
 
     Location mem_loc = p->current_token.loc;
     Token mem_ident = p->current_token;
-    if (!Parser_expect(p, TOKEN_IDENT, "Expected member name")) {
-      Parser_sync(p);
+    if (!parser_expect(p, TOKEN_IDENT, "Expected member name")) {
+      parser_sync(p);
       continue;
     }
 
-    if (!Parser_expect(p, TOKEN_COLON, "Expected ':' after member name")) {
-      Parser_sync(p);
+    if (!parser_expect(p, TOKEN_COLON, "Expected ':' after member name")) {
+      parser_sync(p);
       continue;
     }
 
-    Type *type = Parser_parse_type_full(p);
+    Type *type = parser_parse_type_full(p);
     if (!type) {
-      Parser_sync(p);
+      parser_sync(p);
       continue;
     }
 
-    if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after member type")) {
-      Parser_sync(p);
+    if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after member type")) {
+      parser_sync(p);
       continue;
     }
 
@@ -390,29 +390,29 @@ AstNode *Parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
     List_push(&members, mem_decl);
   }
 
-  Parser_expect(p, TOKEN_RBRACE, "Expected '}' after union members");
+  parser_expect(p, TOKEN_RBRACE, "Expected '}' after union members");
 
   if (placeholders.len > 0) {
-    Parser_placeholder_scope_pop(p);
+    parser_placeholder_scope_pop(p);
   }
 
   return AstNode_new_union_decl(name_node, members, placeholders, is_frozen,
                                 false, loc);
 }
 
-AstNode *Parser_parse_error_set_decl(Parser *p, bool is_export) {
+AstNode *parser_parse_error_set_decl(Parser *p, bool is_export) {
   Location loc = p->current_token.loc;
-  Parser_token_advance(p); // consume 'errors'
+  parser_token_advance(p); // consume 'errors'
 
   Token name_token = p->current_token;
-  if (!Parser_expect(p, TOKEN_IDENT, "Expected error set name"))
+  if (!parser_expect(p, TOKEN_IDENT, "Expected error set name"))
     return NULL;
   AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
 
-  if (!Parser_expect(p, TOKEN_ASSIGN, "Expected '=' after error set name"))
+  if (!parser_expect(p, TOKEN_ASSIGN, "Expected '=' after error set name"))
     return NULL;
 
-  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after error set name"))
+  if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after error set name"))
     return NULL;
 
   List members;
@@ -423,30 +423,30 @@ AstNode *Parser_parse_error_set_decl(Parser *p, bool is_export) {
     if (p->current_token.type != TOKEN_IDENT) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Expected error type name in error set");
-      Parser_sync(p);
+      parser_sync(p);
       break;
     }
 
     AstNode *member =
         AstNode_new_var(p->current_token.text, p->current_token.loc);
     List_push(&members, member);
-    Parser_token_advance(p);
+    parser_token_advance(p);
 
     if (p->current_token.type == TOKEN_COMMA)
-      Parser_token_advance(p);
+      parser_token_advance(p);
   }
 
-  if (!Parser_expect(p, TOKEN_RBRACE, "Expected '}' after error set"))
+  if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after error set"))
     return NULL;
-  if (!Parser_expect(p, TOKEN_SEMI, "Expected ';' after error set"))
+  if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after error set"))
     return NULL;
 
   return AstNode_new_error_set_decl(name_node, members, is_export, loc);
 }
 
-AstNode *Parser_parse_impl_decl(Parser *p) {
+AstNode *parser_parse_impl_decl(Parser *p) {
   Location loc = p->current_token.loc;
-  Parser_token_advance(p); // consume 'impl'
+  parser_token_advance(p); // consume 'impl'
 
   List placeholders;
   List_init(&placeholders);
@@ -455,10 +455,10 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
 
   if (p->current_token.type == TOKEN_IDENT) {
     owner_name = p->current_token.text;
-    Parser_token_advance(p);
+    parser_token_advance(p);
 
     if (p->current_token.type == TOKEN_LT) {
-      Parser_token_advance(p);
+      parser_token_advance(p);
       while (p->current_token.type != TOKEN_GT &&
              p->current_token.type != TOKEN_EOF) {
         if (p->current_token.type != TOKEN_IDENT) {
@@ -469,18 +469,18 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
         StringView *pl = xmalloc(sizeof(StringView));
         *pl = p->current_token.text;
         List_push(&placeholders, pl);
-        Parser_token_advance(p);
+        parser_token_advance(p);
         if (p->current_token.type == TOKEN_COMMA)
-          Parser_token_advance(p);
+          parser_token_advance(p);
       }
-      Parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
+      parser_expect(p, TOKEN_GT, "Expected '>' after placeholders");
     }
 
     if (placeholders.len > 0) {
-      Parser_placeholder_scope_push(p);
+      parser_placeholder_scope_push(p);
       for (size_t i = 0; i < placeholders.len; i++) {
         StringView placeholder_name = *(StringView *)placeholders.items[i];
-        Parser_add_placeholder(p, placeholder_name);
+        parser_add_placeholder(p, placeholder_name);
       }
     }
 
@@ -494,9 +494,9 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
         ErrorHandler_report(p->eh, p->current_token.loc,
                             "Undefined generic type '%.*s' for impl",
                             (int)owner_name.len, owner_name.data);
-        Parser_sync(p);
+        parser_sync(p);
         if (placeholders.len > 0)
-          Parser_placeholder_scope_pop(p);
+          parser_placeholder_scope_pop(p);
         return NULL;
       }
 
@@ -504,7 +504,7 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
       List_init(&args);
       for (size_t i = 0; i < placeholders.len; i++) {
         StringView placeholder_name = *(StringView *)placeholders.items[i];
-        Type *placeholder = Parser_find_placeholder(p, placeholder_name);
+        Type *placeholder = parser_find_placeholder(p, placeholder_name);
         List_push(&args, placeholder);
       }
       impl_type = type_get_instance(p->type_ctx, template_type, args);
@@ -517,11 +517,11 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
         impl_type = type_get_union(p->type_ctx, owner_name);
     }
   } else {
-    impl_type = Parser_parse_type_full(p);
+    impl_type = parser_parse_type_full(p);
     if (!impl_type) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Expected type name after 'impl'");
-      Parser_sync(p);
+      parser_sync(p);
       return NULL;
     }
   }
@@ -530,15 +530,15 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
     ErrorHandler_report(p->eh, p->current_token.loc,
                         "Undefined type '%.*s' for impl", (int)owner_name.len,
                         owner_name.data);
-    Parser_sync(p);
+    parser_sync(p);
     if (placeholders.len > 0)
-      Parser_placeholder_scope_pop(p);
+      parser_placeholder_scope_pop(p);
     return NULL;
   }
 
-  if (!Parser_expect(p, TOKEN_LBRACE, "Expected '{' after impl type name")) {
+  if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after impl type name")) {
     if (placeholders.len > 0)
-      Parser_placeholder_scope_pop(p);
+      parser_placeholder_scope_pop(p);
     return NULL;
   }
 
@@ -550,28 +550,28 @@ AstNode *Parser_parse_impl_decl(Parser *p) {
     bool is_static = false;
     if (p->current_token.type == TOKEN_STATIC) {
       is_static = true;
-      Parser_token_advance(p);
+      parser_token_advance(p);
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = Parser_parse_fn_decl(p, is_static, false, false);
+      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false);
       if (fn) {
         List_push(&members, fn);
       } else {
-        Parser_sync(p);
+        parser_sync(p);
       }
       continue;
     }
 
     ErrorHandler_report(p->eh, p->current_token.loc,
                         "Expected function declaration inside impl block");
-    Parser_sync(p);
+    parser_sync(p);
   }
 
-  Parser_expect(p, TOKEN_RBRACE, "Expected '}' after impl members");
+  parser_expect(p, TOKEN_RBRACE, "Expected '}' after impl members");
 
   if (placeholders.len > 0) {
-    Parser_placeholder_scope_pop(p);
+    parser_placeholder_scope_pop(p);
   }
 
   return AstNode_new_impl_decl(impl_type, members, loc);

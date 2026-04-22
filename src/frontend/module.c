@@ -185,7 +185,7 @@ Module *module_resolve_or_load(Sema *s, StringView import_path,
   ErrorHandler module_eh;
   ErrorHandler_init(&module_eh, src, path, s->entry_dir, NULL);
   Lexer lexer = make_lexer(src, &module_eh);
-  AstNode *ast = Parser_process(&lexer, &module_eh, s->types);
+  AstNode *ast = parser_process(&lexer, &module_eh, s->types);
   if (module_eh.has_errors) {
     ErrorHandler_show_all(&module_eh);
     free(path);

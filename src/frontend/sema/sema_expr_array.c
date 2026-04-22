@@ -58,7 +58,7 @@ static bool get_array_size(Sema *s, AstNode *node, long long *out) {
   return false;
 }
 
-ExprInfo check_index(Sema *s, AstNode *node) {
+ExprInfo sema_check_index(Sema *s, AstNode *node) {
   AstNode *array_node = node->index.array;
   AstNode *index_node = node->index.index;
 
@@ -118,7 +118,7 @@ ExprInfo check_index(Sema *s, AstNode *node) {
   };
 }
 
-ExprInfo check_array_expr(Sema *s, AstNode *node) {
+ExprInfo sema_check_array_expr(Sema *s, AstNode *node) {
   Type *element_type = NULL;
 
   if (node->tag == NODE_ARRAY_LITERAL) {
@@ -148,7 +148,7 @@ ExprInfo check_array_expr(Sema *s, AstNode *node) {
                    type_to_name(element_type),
                    type_to_name(item->resolved_type));
       }
-      check_literal_bounds(s, item, element_type);
+      sema_check_literal_bounds(s, item, element_type);
     }
   } else if (node->tag == NODE_ARRAY_REPEAT) {
     element_type = sema_check_expr(s, node->array_repeat.value).type;

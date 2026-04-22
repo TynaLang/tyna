@@ -33,20 +33,20 @@ bool error_set_contains(Type *set, Type *error);
 Type *sema_find_type_by_name(Sema *s, StringView name);
 Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
                                        AstNode *field_node);
-ExprInfo check_field(Sema *s, AstNode *node);
-ExprInfo check_static_member(Sema *s, AstNode *node);
-ExprInfo check_call(Sema *s, AstNode *node);
-ExprInfo check_index(Sema *s, AstNode *node);
-ExprInfo check_array_expr(Sema *s, AstNode *node);
-ExprInfo check_unary(Sema *s, AstNode *node);
-ExprInfo check_binary_arith(Sema *s, AstNode *node);
-ExprInfo check_binary_logical(Sema *s, AstNode *node);
-ExprInfo check_assignment(Sema *s, AstNode *node);
-ExprInfo check_cast(Sema *s, AstNode *node);
-ExprInfo check_ternary(Sema *s, AstNode *node);
-ExprInfo check_new_expr(Sema *s, AstNode *node);
-ExprInfo check_binary_is(Sema *s, AstNode *node);
-ExprInfo check_binary_else(Sema *s, AstNode *node);
+ExprInfo sema_check_field(Sema *s, AstNode *node);
+ExprInfo sema_check_static_member(Sema *s, AstNode *node);
+ExprInfo sema_check_call(Sema *s, AstNode *node);
+ExprInfo sema_check_index(Sema *s, AstNode *node);
+ExprInfo sema_check_array_expr(Sema *s, AstNode *node);
+ExprInfo sema_check_unary(Sema *s, AstNode *node);
+ExprInfo sema_check_binary_arith(Sema *s, AstNode *node);
+ExprInfo sema_check_binary_logical(Sema *s, AstNode *node);
+ExprInfo sema_check_assignment(Sema *s, AstNode *node);
+ExprInfo sema_check_cast(Sema *s, AstNode *node);
+ExprInfo sema_check_ternary(Sema *s, AstNode *node);
+ExprInfo sema_check_new_expr(Sema *s, AstNode *node);
+ExprInfo sema_check_binary_is(Sema *s, AstNode *node);
+ExprInfo sema_check_binary_else(Sema *s, AstNode *node);
 bool sema_fn_decl_can_use_arena(AstNode *fn_decl);
 
 // Sema Stmt
@@ -83,9 +83,9 @@ void sema_check_impl_decl(Sema *s, AstNode *node);
 
 // Literal helpers
 bool literal_fits_in_type(AstNode *node, Type *target);
-void check_literal_bounds(Sema *s, AstNode *node, Type *target);
-ExprInfo check_literal(Sema *s, AstNode *node);
-ExprInfo check_var(Sema *s, AstNode *node);
+void sema_check_literal_bounds(Sema *s, AstNode *node, Type *target);
+ExprInfo sema_check_literal(Sema *s, AstNode *node);
+ExprInfo sema_check_var(Sema *s, AstNode *node);
 
 AstNode *sema_find_underlying_var(AstNode *node);
 void sema_mark_symbol_requires_storage(Symbol *sym);

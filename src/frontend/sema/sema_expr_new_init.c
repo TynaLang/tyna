@@ -1,6 +1,6 @@
 #include "sema_internal.h"
 
-ExprInfo check_new_expr(Sema *s, AstNode *node) {
+ExprInfo sema_check_new_expr(Sema *s, AstNode *node) {
   Type *target_type = node->new_expr.target_type;
   if (!target_type) {
     sema_error(s, node, "Missing target type in new expression");

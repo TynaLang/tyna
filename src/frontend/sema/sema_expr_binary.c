@@ -12,7 +12,7 @@ bool error_set_contains(Type *set, Type *error) {
   return false;
 }
 
-ExprInfo check_binary_arith(Sema *s, AstNode *node) {
+ExprInfo sema_check_binary_arith(Sema *s, AstNode *node) {
   Type *left = sema_check_expr(s, node->binary_arith.left).type;
   Type *right = sema_check_expr(s, node->binary_arith.right).type;
 
@@ -34,13 +34,13 @@ ExprInfo check_binary_arith(Sema *s, AstNode *node) {
   }
 
   Type *result_type = type_rank(left) >= type_rank(right) ? left : right;
-  check_literal_bounds(s, node->binary_arith.left, result_type);
-  check_literal_bounds(s, node->binary_arith.right, result_type);
+  sema_check_literal_bounds(s, node->binary_arith.left, result_type);
+  sema_check_literal_bounds(s, node->binary_arith.right, result_type);
 
   return (ExprInfo){.type = result_type, .category = VAL_RVALUE};
 }
 
-ExprInfo check_binary_logical(Sema *s, AstNode *node) {
+ExprInfo sema_check_binary_logical(Sema *s, AstNode *node) {
   Type *left = sema_check_expr(s, node->binary_logical.left).type;
   Type *right = sema_check_expr(s, node->binary_logical.right).type;
 
@@ -108,7 +108,7 @@ ExprInfo check_binary_logical(Sema *s, AstNode *node) {
   return (ExprInfo){.type = result, .category = VAL_RVALUE};
 }
 
-ExprInfo check_binary_is(Sema *s, AstNode *node) {
+ExprInfo sema_check_binary_is(Sema *s, AstNode *node) {
   Type *left = sema_check_expr(s, node->binary_is.left).type;
   Type *right = sema_check_expr(s, node->binary_is.right).type;
   Type *result = type_get_primitive(s->types, PRIM_BOOL);
@@ -164,7 +164,7 @@ ExprInfo check_binary_is(Sema *s, AstNode *node) {
   return (ExprInfo){.type = result, .category = VAL_RVALUE};
 }
 
-ExprInfo check_binary_else(Sema *s, AstNode *node) {
+ExprInfo sema_check_binary_else(Sema *s, AstNode *node) {
   Type *left = sema_check_expr(s, node->binary_else.left).type;
   Type *right = sema_check_expr(s, node->binary_else.right).type;
 

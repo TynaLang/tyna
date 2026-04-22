@@ -4,7 +4,7 @@ static bool sema_type_is_move_only(Type *type) {
   return type && type->kind == KIND_STRING_BUFFER;
 }
 
-ExprInfo check_assignment(Sema *s, AstNode *node) {
+ExprInfo sema_check_assignment(Sema *s, AstNode *node) {
   AstNode *target = node->assign_expr.target;
   ExprInfo lhs_info = sema_check_expr(s, target);
   Type *lhs = lhs_info.type;
@@ -46,7 +46,7 @@ ExprInfo check_assignment(Sema *s, AstNode *node) {
   return (ExprInfo){.type = lhs, .category = VAL_RVALUE};
 }
 
-ExprInfo check_cast(Sema *s, AstNode *node) {
+ExprInfo sema_check_cast(Sema *s, AstNode *node) {
   sema_check_expr(s, node->cast_expr.expr);
   return (ExprInfo){
       .type = node->cast_expr.target_type,
@@ -54,7 +54,7 @@ ExprInfo check_cast(Sema *s, AstNode *node) {
   };
 }
 
-ExprInfo check_ternary(Sema *s, AstNode *node) {
+ExprInfo sema_check_ternary(Sema *s, AstNode *node) {
   Type *cond = sema_check_expr(s, node->ternary.condition).type;
   if (!type_is_bool(cond)) {
     sema_error(s, node->ternary.condition,
@@ -79,13 +79,13 @@ ExprInfo check_ternary(Sema *s, AstNode *node) {
   }
 
   if (type_can_implicitly_cast(t_expr, f_expr)) {
-    check_literal_bounds(s, node->ternary.true_expr, t_expr);
-    check_literal_bounds(s, node->ternary.false_expr, t_expr);
+    sema_check_literal_bounds(s, node->ternary.true_expr, t_expr);
+    sema_check_literal_bounds(s, node->ternary.false_expr, t_expr);
     return (ExprInfo){.type = t_expr, .category = VAL_RVALUE};
   }
   if (type_can_implicitly_cast(f_expr, t_expr)) {
-    check_literal_bounds(s, node->ternary.true_expr, f_expr);
-    check_literal_bounds(s, node->ternary.false_expr, f_expr);
+    sema_check_literal_bounds(s, node->ternary.true_expr, f_expr);
+    sema_check_literal_bounds(s, node->ternary.false_expr, f_expr);
     return (ExprInfo){.type = f_expr, .category = VAL_RVALUE};
   }
   sema_error(s, node,

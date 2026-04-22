@@ -1,6 +1,6 @@
 #include "sema_internal.h"
 
-ExprInfo check_unary(Sema *s, AstNode *node) {
+ExprInfo sema_check_unary(Sema *s, AstNode *node) {
   ExprInfo operand_info = sema_check_expr(s, node->unary.expr);
   Type *operand_type = operand_info.type;
 

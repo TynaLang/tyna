@@ -11,7 +11,7 @@ LLVMValueRef cg_get_string_constant_ptr(Codegen *cg, StringView str) {
 }
 
 LLVMValueRef cg_string_hash(Codegen *cg, LLVMValueRef str_val) {
-  CGFunction *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_hash"));
+  CgFunc *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_hash"));
   if (!fn)
     panic("Missing __tyl_str_hash runtime helper");
   return LLVMBuildCall2(cg->builder, fn->type, fn->value, &str_val, 1,
@@ -19,7 +19,7 @@ LLVMValueRef cg_string_hash(Codegen *cg, LLVMValueRef str_val) {
 }
 
 LLVMValueRef cg_string_equals(Codegen *cg, LLVMValueRef a, LLVMValueRef b) {
-  CGFunction *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_equals"));
+  CgFunc *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_equals"));
   if (!fn)
     panic("Missing __tyl_str_equals runtime helper");
   LLVMValueRef args[] = {a, b};
@@ -47,7 +47,7 @@ LLVMValueRef cg_equality_expr(Codegen *cg, LLVMValueRef lhs, LLVMValueRef rhs,
                                     rt->data.primitive == PRIM_STRING));
 
   if (left_is_str_like && right_is_str_like) {
-    CGFunction *eq_fn =
+    CgFunc *eq_fn =
         cg_find_system_function(cg, sv_from_cstr("__tyl_str_equals"));
     if (!eq_fn)
       panic("Missing __tyl_str_equals runtime helper");

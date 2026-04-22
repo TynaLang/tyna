@@ -42,7 +42,7 @@ bool literal_fits_in_type(AstNode *node, Type *target) {
   }
 }
 
-void check_literal_bounds(Sema *s, AstNode *node, Type *target) {
+void sema_check_literal_bounds(Sema *s, AstNode *node, Type *target) {
   if (node->tag != NODE_NUMBER || !target || target->kind != KIND_PRIMITIVE)
     return;
 
@@ -98,7 +98,7 @@ void check_literal_bounds(Sema *s, AstNode *node, Type *target) {
   }
 }
 
-ExprInfo check_literal(Sema *s, AstNode *node) {
+ExprInfo sema_check_literal(Sema *s, AstNode *node) {
   switch (node->tag) {
   case NODE_NUMBER:
     if (sv_contains(node->number.raw_text, '.') ||
@@ -152,7 +152,7 @@ ExprInfo check_literal(Sema *s, AstNode *node) {
   }
 }
 
-ExprInfo check_var(Sema *s, AstNode *node) {
+ExprInfo sema_check_var(Sema *s, AstNode *node) {
   Symbol *sym = sema_resolve(s, node->var.value);
   if (!sym) {
     if (sv_eq_cstr(node->var.value, "Error")) {

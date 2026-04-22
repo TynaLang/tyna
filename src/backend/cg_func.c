@@ -28,7 +28,7 @@ static LLVMTypeRef *cg_build_param_types(Codegen *cg, AstNode *func_node) {
   for (size_t i = 0; i < count; i++) {
     AstNode *param_node = (AstNode *)params.items[i];
     if (param_node != NULL && param_node->tag == NODE_PARAM) {
-      types[i] = cg_get_llvm_type(cg, param_node->param.type);
+      types[i] = cg_type_get_llvm(cg, param_node->param.type);
     } else {
       panic("Expected NODE_PARAM in function parameters");
     }
@@ -36,7 +36,7 @@ static LLVMTypeRef *cg_build_param_types(Codegen *cg, AstNode *func_node) {
   return types;
 }
 
-void cg_init_CGFunction(CGFunction *f, StringView name, LLVMValueRef value,
+void cg_init_CGFunction(CgFunc *f, StringView name, LLVMValueRef value,
                         LLVMTypeRef type, bool is_system, AstNode *decl) {
   f->name = name;
   f->value = value;
@@ -47,7 +47,7 @@ void cg_init_CGFunction(CGFunction *f, StringView name, LLVMValueRef value,
 
 void cg_define_function(Codegen *cg, AstNode *node) {
   StringView name = node->func_decl.name->var.value;
-  LLVMTypeRef ret_ty = cg_get_llvm_type(cg, node->func_decl.return_type);
+  LLVMTypeRef ret_ty = cg_type_get_llvm(cg, node->func_decl.return_type);
 
   size_t param_count = node->func_decl.params.len;
   LLVMTypeRef *param_types = cg_build_param_types(cg, node);
@@ -76,7 +76,7 @@ void cg_define_function(Codegen *cg, AstNode *node) {
     func = LLVMAddFunction(cg->module, llvm_name, func_type);
   }
 
-  CGFunction *f = malloc(sizeof(CGFunction));
+  CgFunc *f = malloc(sizeof(CgFunc));
   cg_init_CGFunction(f, name, func, func_type, false, node);
   List_push(&cg->functions, f);
 
@@ -89,14 +89,14 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
     return;
   }
 
-  CGFunction *f = cg_find_function(cg, node->func_decl.name->var.value);
+  CgFunc *f = cg_find_function(cg, node->func_decl.name->var.value);
   if (!f) {
     ErrorHandler_report(cg->eh, node->loc, "Function not found: " SV_FMT,
                         SV_ARG(node->func_decl.name->var.value));
     return;
   }
 
-  CGFunction *old_func_ref = cg->current_function_ref;
+  CgFunc *old_func_ref = cg->current_function_ref;
   bool old_uses_arena = cg->current_function_uses_arena;
   cg->current_function_ref = f;
   cg->current_function = f->value;
@@ -109,7 +109,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
   cg_push_scope(cg);
 
   if (cg->current_function_uses_arena) {
-    CGFunction *arena_push =
+    CgFunc *arena_push =
         cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_push"));
     if (arena_push) {
       LLVMBuildCall2(cg->builder, arena_push->type, arena_push->value, NULL, 0,
@@ -132,7 +132,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
       CGSymbolTable_add_direct(cg->current_scope, param_name, param_type,
                                param_val);
     } else {
-      LLVMTypeRef llvm_param_type = cg_get_llvm_type(cg, param_type);
+      LLVMTypeRef llvm_param_type = cg_type_get_llvm(cg, param_type);
 
       char buf[256];
       snprintf(buf, sizeof(buf), SV_FMT ".addr", SV_ARG(param_name));
@@ -148,7 +148,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
   LLVMBasicBlockRef current_bb = LLVMGetInsertBlock(cg->builder);
   if (!LLVMGetBasicBlockTerminator(current_bb)) {
     if (cg->current_function_uses_arena) {
-      CGFunction *arena_pop =
+      CgFunc *arena_pop =
           cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_pop"));
       if (arena_pop) {
         LLVMBuildCall2(cg->builder, arena_pop->type, arena_pop->value, NULL, 0,
@@ -172,23 +172,23 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
   cg->current_function_ref = old_func_ref;
 }
 
-CGFunction *cg_find_function(Codegen *cg, StringView name) {
+CgFunc *cg_find_function(Codegen *cg, StringView name) {
   for (size_t i = 0; i < cg->functions.len; i++) {
-    CGFunction *f = cg->functions.items[i];
+    CgFunc *f = cg->functions.items[i];
     if (sv_eq(f->name, name))
       return f;
   }
   for (size_t i = 0; i < cg->system_functions.len; i++) {
-    CGFunction *f = cg->system_functions.items[i];
+    CgFunc *f = cg->system_functions.items[i];
     if (sv_eq(f->name, name))
       return f;
   }
   return NULL;
 };
 
-CGFunction *cg_find_system_function(Codegen *cg, StringView name) {
+CgFunc *cg_find_system_function(Codegen *cg, StringView name) {
   for (size_t i = 0; i < cg->system_functions.len; i++) {
-    CGFunction *f = cg->system_functions.items[i];
+    CgFunc *f = cg->system_functions.items[i];
     if (sv_eq(f->name, name))
       return f;
   }

@@ -26,6 +26,6 @@ struct BindingPower {
   int right_bp;
 };
 
-AstNode *Parser_process(Lexer *l, ErrorHandler *eh, TypeContext *type_ctx);
+AstNode *parser_process(Lexer *l, ErrorHandler *eh, TypeContext *type_ctx);
 
 #endif // !PARSER_H

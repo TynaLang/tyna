@@ -45,7 +45,7 @@ void sema_prime_types(Sema *s) {
 
     array_tpl->size = 40; // ptr + i64 + i64 + i64 + ptr
 
-    // 4. Register it in the context so check_array_expr can find it
+    // 4. Register it in the context so sema_check_array_expr can find it
     List_push(&s->types->templates, array_tpl);
   }
 

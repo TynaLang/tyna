@@ -1,24 +1,24 @@
 #include "parser_internal.h"
 
-Type *Parser_parse_type_full(Parser *p) {
+Type *parser_parse_type_full(Parser *p) {
   Type *res = NULL;
   int pointer_depth = 0;
 
   while (p->current_token.type == TOKEN_CONST) {
-    Parser_token_advance(p);
+    parser_token_advance(p);
   }
 
   while (p->current_token.type == TOKEN_STAR) {
     pointer_depth++;
-    Parser_token_advance(p);
+    parser_token_advance(p);
     while (p->current_token.type == TOKEN_CONST) {
-      Parser_token_advance(p);
+      parser_token_advance(p);
     }
   }
 
   if (p->current_token.type == TOKEN_LBRACKET) {
-    Parser_token_advance(p);
-    Type *elementType = Parser_parse_type_full(p);
+    parser_token_advance(p);
+    Type *elementType = parser_parse_type_full(p);
     if (!elementType)
       return NULL;
 
@@ -26,8 +26,8 @@ Type *Parser_parse_type_full(Parser *p) {
     bool has_fixed_length = false;
     if (p->current_token.type == TOKEN_SEMI) {
       has_fixed_length = true;
-      Parser_token_advance(p);
-      AstNode *len_expr = Parser_parse_expression(p, 0);
+      parser_token_advance(p);
+      AstNode *len_expr = parser_parse_expression(p, 0);
       if (!len_expr || len_expr->tag != NODE_NUMBER ||
           sv_contains(len_expr->number.raw_text, '.') ||
           sv_ends_with(len_expr->number.raw_text, "f") ||
@@ -39,7 +39,7 @@ Type *Parser_parse_type_full(Parser *p) {
       array_len = (size_t)len_expr->number.value;
     }
 
-    if (!Parser_expect(p, TOKEN_RBRACKET, "Expected ']' for array type"))
+    if (!parser_expect(p, TOKEN_RBRACKET, "Expected ']' for array type"))
       return NULL;
 
     if (has_fixed_length && array_len == 0) {
@@ -61,24 +61,24 @@ Type *Parser_parse_type_full(Parser *p) {
   } else {
     PrimitiveKind kind = Token_token_to_type(p->current_token.type);
     if (kind != PRIM_UNKNOWN) {
-      Parser_token_advance(p);
+      parser_token_advance(p);
       res = type_get_primitive(p->type_ctx, kind);
     } else if (p->current_token.type == TOKEN_IDENT) {
       StringView name = p->current_token.text;
-      Type *placeholder = Parser_find_placeholder(p, name);
-      Parser_token_advance(p);
+      Type *placeholder = parser_find_placeholder(p, name);
+      parser_token_advance(p);
 
       if (placeholder) {
         return placeholder;
       }
 
       if (p->current_token.type == TOKEN_LT) {
-        Parser_token_advance(p);
+        parser_token_advance(p);
         List args;
         List_init(&args);
 
         while (true) {
-          Type *arg_type = Parser_parse_type_full(p);
+          Type *arg_type = parser_parse_type_full(p);
           if (!arg_type) {
             List_free(&args, 0);
             return NULL;
@@ -86,13 +86,13 @@ Type *Parser_parse_type_full(Parser *p) {
           List_push(&args, arg_type);
 
           if (p->current_token.type == TOKEN_COMMA) {
-            Parser_token_advance(p);
+            parser_token_advance(p);
             continue;
           }
           break;
         }
 
-        if (!Parser_expect(p, TOKEN_GT, "Expected '>' after generic type")) {
+        if (!parser_expect(p, TOKEN_GT, "Expected '>' after generic type")) {
           List_free(&args, 0);
           return NULL;
         }
@@ -141,8 +141,8 @@ Type *Parser_parse_type_full(Parser *p) {
   }
 
   if (p->current_token.type == TOKEN_NOT) {
-    Parser_token_advance(p);
-    Type *error_set = Parser_parse_type_full(p);
+    parser_token_advance(p);
+    Type *error_set = parser_parse_type_full(p);
     if (!error_set)
       return NULL;
     res = type_get_result(p->type_ctx, res, error_set);
@@ -162,8 +162,8 @@ Type *Parser_parse_type_full(Parser *p) {
     }
 
     while (p->current_token.type == TOKEN_BIT_OR) {
-      Parser_token_advance(p);
-      Type *next_type = Parser_parse_type_full(p);
+      parser_token_advance(p);
+      Type *next_type = parser_parse_type_full(p);
       if (!next_type) {
         List_free(&union_members, 0);
         return NULL;
@@ -189,9 +189,9 @@ Type *Parser_parse_type_full(Parser *p) {
   return res;
 }
 
-PrimitiveKind Parser_parse_type(Parser *p) {
+PrimitiveKind parser_parse_type(Parser *p) {
   PrimitiveKind kind = Token_token_to_type(p->current_token.type);
   if (kind != PRIM_UNKNOWN)
-    Parser_token_advance(p);
+    parser_token_advance(p);
   return kind;
 }
