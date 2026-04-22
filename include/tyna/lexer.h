@@ -1,7 +1,7 @@
 #ifndef LEXER_H
 #define LEXER_H
 
-#include "tyl/utils.h"
+#include "tyna/utils.h"
 #include <stddef.h>
 
 struct ErrorHandler;

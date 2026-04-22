@@ -1,7 +1,7 @@
-#ifndef TYL_SEMA_INTERNAL_H
-#define TYL_SEMA_INTERNAL_H
+#ifndef TYNA_SEMA_INTERNAL_H
+#define TYNA_SEMA_INTERNAL_H
 
-#include "tyl/sema.h"
+#include "tyna/sema.h"
 
 // Sema Core
 Symbol *sema_resolve_local(Sema *s, StringView name);

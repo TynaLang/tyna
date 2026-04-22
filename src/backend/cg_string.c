@@ -1,6 +1,6 @@
 #include "cg_internal.h"
-#include "tyl/ast.h"
-#include "tyl/codegen.h"
+#include "tyna/ast.h"
+#include "tyna/codegen.h"
 
 LLVMValueRef cg_get_string_constant_ptr(Codegen *cg, StringView str) {
   size_t idx = cg_string_pool_insert(cg, str);
@@ -11,17 +11,17 @@ LLVMValueRef cg_get_string_constant_ptr(Codegen *cg, StringView str) {
 }
 
 LLVMValueRef cg_string_hash(Codegen *cg, LLVMValueRef str_val) {
-  CgFunc *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_hash"));
+  CgFunc *fn = cg_find_function(cg, sv_from_cstr("__tyna_str_hash"));
   if (!fn)
-    panic("Missing __tyl_str_hash runtime helper");
+    panic("Missing __tyna_str_hash runtime helper");
   return LLVMBuildCall2(cg->builder, fn->type, fn->value, &str_val, 1,
                         "str_hash");
 }
 
 LLVMValueRef cg_string_equals(Codegen *cg, LLVMValueRef a, LLVMValueRef b) {
-  CgFunc *fn = cg_find_function(cg, sv_from_cstr("__tyl_str_equals"));
+  CgFunc *fn = cg_find_function(cg, sv_from_cstr("__tyna_str_equals"));
   if (!fn)
-    panic("Missing __tyl_str_equals runtime helper");
+    panic("Missing __tyna_str_equals runtime helper");
   LLVMValueRef args[] = {a, b};
   LLVMValueRef result =
       LLVMBuildCall2(cg->builder, fn->type, fn->value, args, 2, "str_eq_int");
@@ -39,18 +39,18 @@ LLVMValueRef cg_equality_expr(Codegen *cg, LLVMValueRef lhs, LLVMValueRef rhs,
   while (rt && rt->kind == KIND_POINTER)
     rt = rt->data.pointer_to;
 
-  bool left_is_str_like = lt && (lt->kind == KIND_STRING_BUFFER ||
-                                  (lt->kind == KIND_PRIMITIVE &&
-                                   lt->data.primitive == PRIM_STRING));
-  bool right_is_str_like = rt && (rt->kind == KIND_STRING_BUFFER ||
-                                   (rt->kind == KIND_PRIMITIVE &&
-                                    rt->data.primitive == PRIM_STRING));
+  bool left_is_str_like =
+      lt && (lt->kind == KIND_STRING_BUFFER ||
+             (lt->kind == KIND_PRIMITIVE && lt->data.primitive == PRIM_STRING));
+  bool right_is_str_like =
+      rt && (rt->kind == KIND_STRING_BUFFER ||
+             (rt->kind == KIND_PRIMITIVE && rt->data.primitive == PRIM_STRING));
 
   if (left_is_str_like && right_is_str_like) {
     CgFunc *eq_fn =
-        cg_find_system_function(cg, sv_from_cstr("__tyl_str_equals"));
+        cg_find_system_function(cg, sv_from_cstr("__tyna_str_equals"));
     if (!eq_fn)
-      panic("Missing __tyl_str_equals runtime helper");
+      panic("Missing __tyna_str_equals runtime helper");
     LLVMValueRef args[] = {lhs, rhs};
     LLVMValueRef res = LLVMBuildCall2(cg->builder, eq_fn->type, eq_fn->value,
                                       args, 2, "str_eq");

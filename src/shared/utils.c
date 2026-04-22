@@ -1,7 +1,7 @@
 #include <stdarg.h>
 #include <stdnoreturn.h>
 
-#include "tyl/utils.h"
+#include "tyna/utils.h"
 
 void List_init(List *list) {
   list->items = NULL;

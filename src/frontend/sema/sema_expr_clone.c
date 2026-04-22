@@ -1,5 +1,5 @@
 #include "sema_internal.h"
-#include "tyl/ast.h"
+#include "tyna/ast.h"
 
 static Type *ast_substitute_type(Type *type, TypeContext *ctx,
                                  Type *template_type, List args) {

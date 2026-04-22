@@ -1,9 +1,9 @@
 // Regression guard for the pure str slice: value equality, concat, and
 // length-based for-in (not C-string scan). Run after string/runtime changes:
-//   ./build/tyl examples/tests/strings_slice_semantics.tyl && echo $?
+//   ./build/tyna examples/tests/strings_slice_semantics.tyna && echo $?
 // Expect exit 0 and no "FAIL:" lines on stdout.
 //
-// stdlib/std.tyl is always loaded by the compiler (String methods, runtime).
+// stdlib/std.tyna is always loaded by the compiler (String methods, runtime).
 
 fn main(): i32 {
     // --- Value equality (must not compare struct bits) ---

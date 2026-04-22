@@ -1,10 +1,10 @@
 #ifndef PARSER_H
 #define PARSER_H
 
-#include "tyl/ast.h"
-#include "tyl/errors.h"
-#include "tyl/lexer.h"
-#include "tyl/utils.h"
+#include "tyna/ast.h"
+#include "tyna/errors.h"
+#include "tyna/lexer.h"
+#include "tyna/utils.h"
 #include <stddef.h>
 
 typedef struct Parser Parser;

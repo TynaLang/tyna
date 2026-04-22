@@ -83,7 +83,7 @@ static void sema_fold_string_concat_literals(Sema *s, AstNode *node) {
 
   if (node->call.func->tag == NODE_VAR && node->call.args.len == 2) {
     StringView fn_name = node->call.func->var.value;
-    if (!sv_eq(fn_name, sv_from_cstr("__tyl_str_concat")))
+    if (!sv_eq(fn_name, sv_from_cstr("__tyna_str_concat")))
       return;
     left = node->call.args.items[0];
     right = node->call.args.items[1];

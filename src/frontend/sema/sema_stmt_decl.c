@@ -302,7 +302,7 @@ static size_t sema_insert_drop_calls_before_return(Sema *s, AstNode *block,
         OP_ADDR_OF, AstNode_new_var(sym->name, block->loc), block->loc);
     List_push(&args, arg);
     AstNode *call = AstNode_new_call(
-        AstNode_new_var(sv_from_cstr("__tyl_string_free"), block->loc), args,
+        AstNode_new_var(sv_from_cstr("__tyna_string_free"), block->loc), args,
         block->loc);
     AstNode *expr_stmt = AstNode_new_expr_stmt(call, block->loc);
     List_insert(&block->block.statements, index + inserted, expr_stmt);

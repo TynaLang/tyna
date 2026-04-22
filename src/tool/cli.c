@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "tyl/cli.h"
+#include "tyna/cli.h"
 
 void cli_init_options(CliOptions *opts) {
   opts->mode = MODE_JIT;

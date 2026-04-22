@@ -1,9 +1,9 @@
 #ifndef CODEGEN_H
 #define CODEGEN_H
 
-#include "tyl/ast.h"
-#include "tyl/errors.h"
-#include "tyl/type.h"
+#include "tyna/ast.h"
+#include "tyna/errors.h"
+#include "tyna/type.h"
 #include <llvm-c/Core.h>
 
 typedef struct Codegen Codegen;

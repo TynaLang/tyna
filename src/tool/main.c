@@ -2,15 +2,15 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "tyl/ast.h"
-#include "tyl/ast_dump.h"
-#include "tyl/cli.h"
-#include "tyl/codegen.h"
-#include "tyl/lexer.h"
-#include "tyl/parser.h"
-#include "tyl/runner.h"
-#include "tyl/sema.h"
-#include "tyl/utils.h"
+#include "tyna/ast.h"
+#include "tyna/ast_dump.h"
+#include "tyna/cli.h"
+#include "tyna/codegen.h"
+#include "tyna/lexer.h"
+#include "tyna/parser.h"
+#include "tyna/runner.h"
+#include "tyna/sema.h"
+#include "tyna/utils.h"
 
 static Module *module_find_by_name(Sema *sema, StringView name) {
   for (size_t i = 0; i < sema->modules.len; i++) {
@@ -103,7 +103,7 @@ int main(int argc, char **argv) {
 
   TypeContext *type_ctx = type_context_create();
 
-  const char *std_path = "stdlib/std.tyl";
+  const char *std_path = "stdlib/std.tn";
   const char *std_src = read_file(std_path);
   AstNode *std_ast = NULL;
   ErrorHandler std_eh;
@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  Codegen *cg = Codegen_new("tyl_module", type_ctx, &eh);
+  Codegen *cg = Codegen_new("tyna_module", type_ctx, &eh);
 
   if (std_ast) {
     Codegen_global(cg, std_ast);

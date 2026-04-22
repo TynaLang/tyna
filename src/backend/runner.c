@@ -11,8 +11,8 @@
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
 
-#include "tyl/codegen.h"
-#include "tyl/runner.h"
+#include "tyna/codegen.h"
+#include "tyna/runner.h"
 
 #include "cg_internal.h"
 

@@ -1,9 +1,9 @@
-#ifndef TYL_AST_H
-#define TYL_AST_H
+#ifndef TYNA_AST_H
+#define TYNA_AST_H
 
-#include "tyl/lexer.h"
-#include "tyl/type.h"
-#include "tyl/utils.h"
+#include "tyna/lexer.h"
+#include "tyna/type.h"
+#include "tyna/utils.h"
 #include <stddef.h>
 
 typedef enum AstKind AstKind;
@@ -428,4 +428,4 @@ void Ast_free(AstNode *node);
 void Ast_print(AstNode *node, int indent);
 void Ast_print_to_stream(FILE *out, AstNode *node, int indent);
 
-#endif // TYL_AST_H
+#endif // TYNA_AST_H

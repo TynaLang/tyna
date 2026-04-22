@@ -1,6 +1,6 @@
-# Tyl
+# Tyna
 
-Tyl is a tiny programming language implemented using LLVM. It features functions, basic types, and can either JIT, compile and run or emit LLVM IR.
+Tyna is a tiny programming language implemented using LLVM. It features functions, basic types, and can either JIT, compile and run or emit LLVM IR.
 
 ## Prerequisites
 
@@ -22,7 +22,7 @@ nix develop
 Once inside the shell, you can use `just` to build and run:
 
 ```bash
-just run examples/test.tyl
+just run examples/test.tn
 ```
 
 ### Arch Linux
@@ -39,13 +39,13 @@ To build and run the project:
 just configure
 just build
 # Run an example
-./build/tyl examples/test.tyl
+./build/tyna examples/test.tn
 ```
 
 ### Usage
 
 ```bash
-Usage: tyl [options] <file>
+Usage: tyna [options] <file>
 Options:
   -c, --compile   Compile to executable
   -j, --jit       JIT compile and run (default)
@@ -60,7 +60,7 @@ You can also use the `just` commands:
 
 ## Feature Set
 
-Tyl supports the following language features:
+Tyna supports the following language features:
 
 - **Scalar types:** `int`, `float`, `double`, `char`, `bool`, `string`, with `const` and `let` declarations
 - **Type casting:** Explicit and implicit promotion (e.g., `int` → `float`)

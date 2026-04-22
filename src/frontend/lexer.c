@@ -1,4 +1,4 @@
-#include "tyl/lexer.h"
+#include "tyna/lexer.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>

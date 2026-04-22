@@ -1,5 +1,5 @@
-#ifndef TYL_CLI_H
-#define TYL_CLI_H
+#ifndef TYNA_CLI_H
+#define TYNA_CLI_H
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -26,4 +26,4 @@ bool cli_parse_options(int argc, char **argv, CliOptions *opts);
 void cli_print_usage(const char *prog_name);
 FILE *cli_open_ast_output(const CliOptions *opts);
 
-#endif // TYL_CLI_H
+#endif // TYNA_CLI_H

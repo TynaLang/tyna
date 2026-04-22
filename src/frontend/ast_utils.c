@@ -1,4 +1,4 @@
-#include "tyl/ast.h"
+#include "tyna/ast.h"
 #include <stdio.h>
 #include <stdlib.h>
 

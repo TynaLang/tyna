@@ -1,7 +1,7 @@
-#ifndef TYL_TYPE_H
-#define TYL_TYPE_H
+#ifndef TYNA_TYPE_H
+#define TYNA_TYPE_H
 
-#include "tyl/utils.h"
+#include "tyna/utils.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -137,4 +137,4 @@ bool type_is_concrete(Type *t);
 // Semantic Rules
 int type_can_implicitly_cast(Type *to, Type *from);
 
-#endif // TYL_TYPE_H
+#endif // TYNA_TYPE_H

@@ -3,10 +3,10 @@
 #include <stdlib.h>
 
 #include "cg_internal.h"
-#include "tyl/ast.h"
-#include "tyl/codegen.h"
-#include "tyl/sema.h"
-#include "tyl/utils.h"
+#include "tyna/ast.h"
+#include "tyna/codegen.h"
+#include "tyna/sema.h"
+#include "tyna/utils.h"
 #include "llvm-c/Types.h"
 
 static LLVMValueRef cg_make_param_addressable(Codegen *cg, CgSym *sym) {
@@ -123,8 +123,7 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
     // Fail block
     LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
     // Call panic("Panic: Array Index Out of Bounds")
-    CgFunc *panic_fn =
-        cg_find_system_function(cg, sv_from_parts("panic", 5));
+    CgFunc *panic_fn = cg_find_system_function(cg, sv_from_parts("panic", 5));
     if (!panic_fn) {
       panic("Internal error: system panic helper missing");
     }
@@ -939,7 +938,7 @@ static LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
       Type *obj_type = target->field.object->resolved_type;
       if (!obj_type && target->field.object->tag == NODE_VAR) {
         CgSym *sym = CGSymbolTable_find(cg->current_scope,
-                                           target->field.object->var.value);
+                                        target->field.object->var.value);
         if (sym)
           obj_type = sym->type;
       }

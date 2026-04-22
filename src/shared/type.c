@@ -1,5 +1,5 @@
-#include "tyl/type.h"
-#include "tyl/ast.h"
+#include "tyna/type.h"
+#include "tyna/ast.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 #include "sema_internal.h"
-#include "tyl/ast.h"
+#include "tyna/ast.h"
 
 Type *sema_find_type_by_name(Sema *s, StringView name) {
   if (sv_eq_cstr(name, "String")) {

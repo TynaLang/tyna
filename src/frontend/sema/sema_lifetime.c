@@ -26,7 +26,7 @@ void sema_inject_drop_calls(Sema *s, AstNode *block, List *symbols_to_drop) {
     List_push(&args, arg);
 
     AstNode *call = AstNode_new_call(
-        AstNode_new_var(sv_from_cstr("__tyl_string_free"), loc), args, loc);
+        AstNode_new_var(sv_from_cstr("__tyna_string_free"), loc), args, loc);
     AstNode *expr_stmt = AstNode_new_expr_stmt(call, loc);
     List_push(&block->block.statements, expr_stmt);
   }

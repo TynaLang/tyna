@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 #include "cg_internal.h"
-#include "tyl/utils.h"
+#include "tyna/utils.h"
 
 static void cg_sanitize_type_name(const char *src, char *dst, size_t dst_size) {
   size_t di = 0;
@@ -67,7 +67,7 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
     case PRIM_VOID:
       return LLVMVoidTypeInContext(cg->context);
     case PRIM_STRING: {
-      const char *name = "tyl_string";
+      const char *name = "tyna_string";
       LLVMTypeRef str_ty = LLVMGetTypeByName2(cg->context, name);
       if (!str_ty) {
         str_ty = LLVMStructCreateNamed(cg->context, name);
@@ -232,7 +232,7 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
   }
 
   if (t->kind == KIND_STRING_BUFFER) {
-    const char *name = "tyl_string_buf";
+    const char *name = "tyna_string_buf";
     LLVMTypeRef buf_ty = LLVMGetTypeByName2(cg->context, name);
     if (!buf_ty) {
       buf_ty = LLVMStructCreateNamed(cg->context, name);

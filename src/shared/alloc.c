@@ -1,4 +1,4 @@
-#include "tyl/utils.h"
+#include "tyna/utils.h"
 
 void *xmalloc(size_t size) {
   void *ptr = malloc(size);

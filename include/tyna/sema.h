@@ -1,10 +1,10 @@
 #ifndef SEMANTIC_H
 #define SEMANTIC_H
 
-#include "tyl/ast.h"
-#include "tyl/errors.h"
-#include "tyl/type.h"
-#include "tyl/utils.h"
+#include "tyna/ast.h"
+#include "tyna/errors.h"
+#include "tyna/type.h"
+#include "tyna/utils.h"
 
 typedef enum FuncStatus FuncStatus;
 

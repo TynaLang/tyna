@@ -1,4 +1,4 @@
-#include "tyl/ast.h"
+#include "tyna/ast.h"
 
 static AstNode *AstNode_new(AstKind ast_kind, Location loc) {
   AstNode *node = xmalloc(sizeof(AstNode));

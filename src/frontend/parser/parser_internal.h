@@ -1,7 +1,7 @@
-#ifndef TYL_PARSER_INTERNAL_H
-#define TYL_PARSER_INTERNAL_H
+#ifndef TYNA_PARSER_INTERNAL_H
+#define TYNA_PARSER_INTERNAL_H
 
-#include "tyl/parser.h"
+#include "tyna/parser.h"
 
 Token *parser_token_advance(Parser *p);
 Token parser_token_peek(Lexer *lexer, int n);
@@ -50,4 +50,4 @@ AstNode *parser_parse_postfix_inc(Parser *p, AstNode *expr);
 AstNode *parser_make_postfix(Parser *p, AstNode *expr);
 AstNode *parser_parse_primary(Parser *p);
 
-#endif // TYL_PARSER_INTERNAL_H
+#endif // TYNA_PARSER_INTERNAL_H

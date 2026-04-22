@@ -1,6 +1,6 @@
 #include "cg_internal.h"
-#include "tyl/ast.h"
-#include "tyl/codegen.h"
+#include "tyna/ast.h"
+#include "tyna/codegen.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,9 +94,8 @@ void cg_var_decl(Codegen *cg, AstNode *node) {
   }
 }
 
-
 static void cg_print_stmt(Codegen *cg, AstNode *node) {
-  CgFunc *print_fn = cg_find_function(cg, sv_from_cstr("print"));
+  CgFunc *print_fn = cg_find_function(cg, sv_from_cstr("printf"));
   if (!print_fn)
     return;
 
@@ -182,15 +181,15 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
         }
       } else if (resolved_type->kind == KIND_STRING_BUFFER) {
         fmt_str = "%s";
-        LLVMValueRef ptr_val = LLVMBuildExtractValue(cg->builder, val, 0,
-                                                    "strbuf_ptr");
-        LLVMValueRef len_val = LLVMBuildExtractValue(cg->builder, val, 1,
-                                                    "strbuf_len");
+        LLVMValueRef ptr_val =
+            LLVMBuildExtractValue(cg->builder, val, 0, "strbuf_ptr");
+        LLVMValueRef len_val =
+            LLVMBuildExtractValue(cg->builder, val, 1, "strbuf_len");
         LLVMTypeRef string_ty =
             cg_type_get_llvm(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
         LLVMValueRef result = LLVMGetUndef(string_ty);
-        result = LLVMBuildInsertValue(cg->builder, result, ptr_val, 0,
-                                      "buf2s0");
+        result =
+            LLVMBuildInsertValue(cg->builder, result, ptr_val, 0, "buf2s0");
         val = LLVMBuildInsertValue(cg->builder, result, len_val, 1, "buf2s");
       } else if (resolved_type->kind == KIND_POINTER) {
         if (resolved_type->data.pointer_to->kind == KIND_PRIMITIVE &&
@@ -581,7 +580,7 @@ void cg_statement(Codegen *cg, AstNode *node) {
     LLVMBuildBr(cg->builder, cond_bb);
     LLVMPositionBuilderAtEnd(cg->builder, cond_bb);
 
-    // In Tyl, "loop" is "loop { ... }" (infinite unless break)
+    // In Tyna, "loop" is "loop { ... }" (infinite unless break)
     // We could just branch to body, but we'll keep the cond_bb for continue
     LLVMBuildBr(cg->builder, body_bb);
 
@@ -631,7 +630,7 @@ void cg_statement(Codegen *cg, AstNode *node) {
     }
     if (cg->current_function_uses_arena) {
       CgFunc *arena_pop =
-          cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_pop"));
+          cg_find_system_function(cg, sv_from_cstr("__tyna_string_arena_pop"));
       if (arena_pop) {
         LLVMBuildCall2(cg->builder, arena_pop->type, arena_pop->value, NULL, 0,
                        "");

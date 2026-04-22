@@ -6,10 +6,10 @@
 #include <llvm-c/Types.h>
 
 #include "cg_internal.h"
-#include "tyl/ast.h"
-#include "tyl/codegen.h"
-#include "tyl/errors.h"
-#include "tyl/utils.h"
+#include "tyna/ast.h"
+#include "tyna/codegen.h"
+#include "tyna/errors.h"
+#include "tyna/utils.h"
 
 // prepared for closures and nested functions, but not implemented yet
 static StringView cg_generate_anon_name(Codegen *cg) {
@@ -58,7 +58,7 @@ void cg_define_function(Codegen *cg, AstNode *node) {
   if (sv_eq(name, sv_from_cstr("main")) &&
       LLVMGetNamedFunction(cg->module, llvm_name) != NULL) {
     free(llvm_name);
-    llvm_name = strdup("__tyl_main");
+    llvm_name = strdup("__tyna_main");
   }
 
   LLVMValueRef func = LLVMGetNamedFunction(cg->module, llvm_name);
@@ -110,7 +110,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
 
   if (cg->current_function_uses_arena) {
     CgFunc *arena_push =
-        cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_push"));
+        cg_find_system_function(cg, sv_from_cstr("__tyna_string_arena_push"));
     if (arena_push) {
       LLVMBuildCall2(cg->builder, arena_push->type, arena_push->value, NULL, 0,
                      "");
@@ -149,7 +149,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
   if (!LLVMGetBasicBlockTerminator(current_bb)) {
     if (cg->current_function_uses_arena) {
       CgFunc *arena_pop =
-          cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_pop"));
+          cg_find_system_function(cg, sv_from_cstr("__tyna_string_arena_pop"));
       if (arena_pop) {
         LLVMBuildCall2(cg->builder, arena_pop->type, arena_pop->value, NULL, 0,
                        "");

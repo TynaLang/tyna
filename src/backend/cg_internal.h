@@ -1,10 +1,10 @@
 #ifndef CODEGEN_PRIVATE_H
 #define CODEGEN_PRIVATE_H
 
-#include "tyl/codegen.h"
-#include "tyl/errors.h"
-#include "tyl/type.h"
-#include "tyl/utils.h"
+#include "tyna/codegen.h"
+#include "tyna/errors.h"
+#include "tyna/type.h"
+#include "tyna/utils.h"
 
 #include <llvm-c/Core.h>
 #include <stdbool.h>
@@ -59,6 +59,8 @@ struct Codegen {
   List continue_stack; // List<LLVMBasicBlockRef>
   bool current_function_uses_arena;
 };
+
+void cg_register_runtime_functions(Codegen *cg);
 
 // ===== symbol table =====
 

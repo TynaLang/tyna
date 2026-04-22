@@ -1,8 +1,8 @@
-#ifndef TYL_ERROR_H
-#define TYL_ERROR_H
+#ifndef TYNA_ERROR_H
+#define TYNA_ERROR_H
 
-#include "tyl/lexer.h"
-#include "tyl/utils.h"
+#include "tyna/lexer.h"
+#include "tyna/utils.h"
 #include <stddef.h>
 
 typedef enum { LEVEL_ERROR, LEVEL_WARNING, LEVEL_INFO } ErrorLevel;
@@ -23,4 +23,4 @@ void ErrorHandler_report_level(ErrorHandler *eh, Location loc, ErrorLevel level,
 void ErrorHandler_show_all(ErrorHandler *eh);
 void ErrorHandler_free(ErrorHandler *eh);
 
-#endif // TYL_ERROR_H
+#endif // TYNA_ERROR_H

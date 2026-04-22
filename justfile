@@ -1,36 +1,36 @@
 default: run
 
 configure:
-    cmake -B build -S .
+  cmake -B build -S .
 
 build: configure
-    cmake --build build
+  cmake --build build
 
-# run tyl (optionally pass args)
+# run tyna (optionally pass args)
 run *args: build
-    ./build/tyl {{args}}
+  ./build/tyna {{args}}
 
 # run with a test file
 test: build
-    ./build/tyl examples/test.tyl
+  ./build/tyna examples/test.tn
 
 # emit LLVM IR
 ir: build
-    ./build/tyl -emit-ir examples/test.tyl
+  ./build/tyna -emit-ir examples/test.tn
 
 # emit object file
 obj: build
-    ./build/tyl -emit-obj examples/test.tyl
+  ./build/tyna -emit-obj examples/test.tn
 
-debug:
-    cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug
-    cmake --build build
+debug: 
+  cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug
+  cmake --build build
 
-release:
-    cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-    cmake --build build
+release: 
+  cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
 
-clean:
-    rm -rf build
+clean: 
+  rm -rf build
 
 rebuild: clean build

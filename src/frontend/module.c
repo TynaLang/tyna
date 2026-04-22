@@ -9,11 +9,11 @@
 #endif
 
 #include "sema/sema_internal.h"
-#include "tyl/ast.h"
-#include "tyl/errors.h"
-#include "tyl/parser.h"
-#include "tyl/sema.h"
-#include "tyl/utils.h"
+#include "tyna/ast.h"
+#include "tyna/errors.h"
+#include "tyna/parser.h"
+#include "tyna/sema.h"
+#include "tyna/utils.h"
 
 static char *path_dirname(const char *path) {
   if (!path || path[0] == '\0')
@@ -51,7 +51,7 @@ static char *path_from_import(const char *import_name,
     normalized[len - 1] = '\0';
     len--;
   }
-  if (len > 4 && strcmp(normalized + len - 4, ".tyl") == 0) {
+  if (len > 4 && strcmp(normalized + len - 4, ".tn") == 0) {
     has_ext = true;
   }
 
@@ -62,7 +62,7 @@ static char *path_from_import(const char *import_name,
         *p = '/';
     }
     if (!has_ext)
-      snprintf(pathbuf, sizeof(pathbuf), "stdlib/%s.tyl", rest);
+      snprintf(pathbuf, sizeof(pathbuf), "stdlib/%s.tn", rest);
     else
       snprintf(pathbuf, sizeof(pathbuf), "stdlib/%s", rest);
   } else {
@@ -82,7 +82,7 @@ static char *path_from_import(const char *import_name,
     }
 
     if (!has_ext)
-      snprintf(pathbuf, sizeof(pathbuf), "%s/%s.tyl", dir, normalized);
+      snprintf(pathbuf, sizeof(pathbuf), "%s/%s.tn", dir, normalized);
     else
       snprintf(pathbuf, sizeof(pathbuf), "%s/%s", dir, normalized);
     free(base);

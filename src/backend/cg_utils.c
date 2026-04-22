@@ -3,7 +3,7 @@
 #include <llvm-c/Types.h>
 
 #include "cg_internal.h"
-#include "tyl/codegen.h"
+#include "tyna/codegen.h"
 
 LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name) {
   LLVMBuilderRef tmp_builder = LLVMCreateBuilderInContext(cg->context);
@@ -56,7 +56,6 @@ LLVMValueRef cg_alloca_in_entry_uninitialized(Codegen *cg, Type *type,
   LLVMDisposeBuilder(tmp_builder);
   return alloca;
 }
-
 
 LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
   if (!node)
@@ -243,7 +242,7 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     if (array_type->fixed_array_len > 0) {
       Type *elem_type = array_type->data.instance.generic_args.items[0];
       CgFunc *init_fixed =
-          cg_find_function(cg, sv_from_cstr("__tyl_array_init_fixed"));
+          cg_find_function(cg, sv_from_cstr("__tyna_array_init_fixed"));
       if (!init_fixed) {
         panic("Internal error: fixed array init function missing");
       }
@@ -280,8 +279,7 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
 
     LLVMBuildCondBr(cg->builder, in_bounds, ok_bb, fail_bb);
     LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
-    CgFunc *panic_fn =
-        cg_find_system_function(cg, sv_from_parts("panic", 5));
+    CgFunc *panic_fn = cg_find_system_function(cg, sv_from_parts("panic", 5));
     if (!panic_fn) {
       panic("Internal error: system panic helper missing");
     }
@@ -294,7 +292,7 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
 
     // 5. If this is a multi-dimensional access, we need to adjust the child's
     // metadata.
-    // However, Node Index in Tyl seems to only handle one level at a time.
+    // However, Node Index in Tyna seems to only handle one level at a time.
     // If we have arr[i][j], the inner `arr[i]` returns an Array struct.
     // We must ensure the returned Array struct has rank-1 and shifted dims.
 

@@ -58,7 +58,7 @@ fn test_return_string(): i32 {
 }
 
 fn test_arena_into_str_heap_copy(): i32 {
-    __tyl_test_string_reset_counts();
+    __tyna_test_string_reset_counts();
 
     let s = String.new();
     s.push("arena-copy-longer-than-sso");
@@ -68,7 +68,7 @@ fn test_arena_into_str_heap_copy(): i32 {
         return 1;
     }
 
-    let heap_allocs: i64 = __tyl_test_string_heap_alloc_count();
+    let heap_allocs: i64 = __tyna_test_string_heap_alloc_count();
     if (heap_allocs != 1) {
         print("FAIL: arena into_str did not allocate heap copy");
         return 1;
@@ -129,15 +129,15 @@ fn test_clone_and_free(): i32 {
 }
 
 fn test_scope_cleanup(): i32 {
-    __tyl_test_string_reset_counts();
+    __tyna_test_string_reset_counts();
 
     if (true) {
         let s = String.new();
         s.push("temp");
     }
 
-    let allocs: i64 = __tyl_test_string_alloc_count();
-    let frees: i64 = __tyl_test_string_free_count();
+    let allocs: i64 = __tyna_test_string_alloc_count();
+    let frees: i64 = __tyna_test_string_free_count();
     if (allocs != 1) {
         print("FAIL: scope cleanup alloc count");
         return 1;
@@ -150,7 +150,7 @@ fn test_scope_cleanup(): i32 {
 }
 
 fn test_branch_cleanup(): i32 {
-    __tyl_test_string_reset_counts();
+    __tyna_test_string_reset_counts();
 
     let condition = true;
     if (condition) {
@@ -161,8 +161,8 @@ fn test_branch_cleanup(): i32 {
         t.push("branch");
     }
 
-    let allocs: i64 = __tyl_test_string_alloc_count();
-    let frees: i64 = __tyl_test_string_free_count();
+    let allocs: i64 = __tyna_test_string_alloc_count();
+    let frees: i64 = __tyna_test_string_free_count();
     if (allocs != 1) {
         print("FAIL: branch cleanup alloc count");
         return 1;
@@ -175,7 +175,7 @@ fn test_branch_cleanup(): i32 {
 }
 
 fn test_loop_cleanup(): i32 {
-    __tyl_test_string_reset_counts();
+    __tyna_test_string_reset_counts();
 
     let i: i64 = 0;
     while (i < 2) {
@@ -184,8 +184,8 @@ fn test_loop_cleanup(): i32 {
         i = i + 1;
     }
 
-    let allocs: i64 = __tyl_test_string_alloc_count();
-    let frees: i64 = __tyl_test_string_free_count();
+    let allocs: i64 = __tyna_test_string_alloc_count();
+    let frees: i64 = __tyna_test_string_free_count();
     if (allocs != 2) {
         print("FAIL: loop cleanup alloc count");
         return 1;
@@ -214,14 +214,14 @@ fn test_intern_pool(): i32 {
     let b: str = "intern ".concat(tail);
     
     // Prove they're different allocations before interning
-    if (__tyl_ptr_eq(a.as_c_ptr(), b.as_c_ptr()) == 1) {
+    if (__tyna_ptr_eq(a.as_c_ptr(), b.as_c_ptr()) == 1) {
         print("FAIL: concat returned same pointer (impossible)");
         return 1;
     }
 
     let ia: str = a.intern();
     let ib: str = b.intern();
-    if (__tyl_ptr_eq(ia.as_c_ptr(), ib.as_c_ptr()) != 1) {
+    if (__tyna_ptr_eq(ia.as_c_ptr(), ib.as_c_ptr()) != 1) {
         print("FAIL: intern pool not sharing memory");
         return 1;
     }
@@ -237,7 +237,7 @@ fn test_sso_as_c_ptr_slots(): i32 {
     let b: str = b_buf.into_str();
     let ap = a.as_c_ptr();
     let bp = b.as_c_ptr();
-    if (__tyl_ptr_eq(ap, bp) == 1) {
+    if (__tyna_ptr_eq(ap, bp) == 1) {
         print("FAIL: SSO as_c_ptr slot aliasing");
         return 1;
     }

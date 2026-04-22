@@ -1,6 +1,6 @@
 #include "sema_internal.h"
-#include "tyl/sema.h"
-#include "tyl/utils.h"
+#include "tyna/sema.h"
+#include "tyna/utils.h"
 
 StringView sema_mangle_method_name(StringView owner, StringView method) {
   if (owner.len == 0)

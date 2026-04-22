@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "tyl/errors.h"
-#include "tyl/lexer.h"
+#include "tyna/errors.h"
+#include "tyna/lexer.h"
 
 static char *path_trim_relative(const char *path, const char *entry_path) {
   if (!path)

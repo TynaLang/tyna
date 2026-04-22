@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "tyl/ast_dump.h"
+#include "tyna/ast_dump.h"
 
 void Ast_dump_root(FILE *out, AstNode *ast, const char *label) {
   if (!ast)

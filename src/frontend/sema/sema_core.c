@@ -1,6 +1,6 @@
 #include "sema_internal.h"
-#include "tyl/lexer.h"
-#include "tyl/sema.h"
+#include "tyna/lexer.h"
+#include "tyna/sema.h"
 #include <stdio.h>
 
 void sema_prime_types(Sema *s) {

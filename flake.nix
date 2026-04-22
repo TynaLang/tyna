@@ -38,9 +38,6 @@
                 - "-I${pkgs.glibc.dev}/include"
                 - "-L${pkgs.llvmPackages_latest.libllvm.lib}/lib"
             EOF
-
-            echo "LLVM dev environment ready"
-            llvm-config --version
           '';
         };
     };
