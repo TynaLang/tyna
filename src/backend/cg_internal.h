@@ -105,14 +105,9 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node);
 LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name);
 LLVMValueRef cg_alloca_in_entry_uninitialized(Codegen *cg, Type *type,
                                               StringView name);
-LLVMValueRef cg_coerce_string_buffer_to_str(Codegen *cg, LLVMValueRef value,
-                                            Type *type);
 LLVMValueRef cg_get_string_constant_ptr(Codegen *cg, StringView str);
 LLVMValueRef cg_string_hash(Codegen *cg, LLVMValueRef str_val);
 LLVMValueRef cg_string_equals(Codegen *cg, LLVMValueRef a, LLVMValueRef b);
-bool cg_type_is_str_like(Type *t);
-LLVMValueRef cg_coerce_rvalue_to_str_slice(Codegen *cg, LLVMValueRef v,
-                                           Type *ty);
 LLVMValueRef cg_equality_expr(Codegen *cg, LLVMValueRef lhs, LLVMValueRef rhs,
                               EqualityOp op, Type *left_ty, Type *right_ty);
 

@@ -30,32 +30,23 @@ LLVMValueRef cg_string_equals(Codegen *cg, LLVMValueRef a, LLVMValueRef b) {
                        "str_eq");
 }
 
-bool cg_type_is_str_like(Type *t) {
-  while (t && t->kind == KIND_POINTER)
-    t = t->data.pointer_to;
-  return t && (t->kind == KIND_STRING_BUFFER ||
-               (t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_STRING));
-}
-
-LLVMValueRef cg_coerce_rvalue_to_str_slice(Codegen *cg, LLVMValueRef v,
-                                           Type *ty) {
-  while (ty && ty->kind == KIND_POINTER)
-    ty = ty->data.pointer_to;
-  if (!ty || ty->kind != KIND_STRING_BUFFER)
-    return v;
-  LLVMTypeRef str_ty =
-      cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
-  LLVMValueRef undef = LLVMGetUndef(str_ty);
-  LLVMValueRef p = LLVMBuildExtractValue(cg->builder, v, 0, "buf2s_ptr");
-  LLVMValueRef l = LLVMBuildExtractValue(cg->builder, v, 1, "buf2s_len");
-  LLVMValueRef s0 = LLVMBuildInsertValue(cg->builder, undef, p, 0, "buf2s0");
-  return LLVMBuildInsertValue(cg->builder, s0, l, 1, "buf2s");
-}
-
 LLVMValueRef cg_equality_expr(Codegen *cg, LLVMValueRef lhs, LLVMValueRef rhs,
                               EqualityOp op, Type *left_ty, Type *right_ty) {
-  if (left_ty && right_ty && cg_type_is_str_like(left_ty) &&
-      cg_type_is_str_like(right_ty)) {
+  Type *lt = left_ty;
+  while (lt && lt->kind == KIND_POINTER)
+    lt = lt->data.pointer_to;
+  Type *rt = right_ty;
+  while (rt && rt->kind == KIND_POINTER)
+    rt = rt->data.pointer_to;
+
+  bool left_is_str_like = lt && (lt->kind == KIND_STRING_BUFFER ||
+                                  (lt->kind == KIND_PRIMITIVE &&
+                                   lt->data.primitive == PRIM_STRING));
+  bool right_is_str_like = rt && (rt->kind == KIND_STRING_BUFFER ||
+                                   (rt->kind == KIND_PRIMITIVE &&
+                                    rt->data.primitive == PRIM_STRING));
+
+  if (left_is_str_like && right_is_str_like) {
     CGFunction *eq_fn =
         cg_find_system_function(cg, sv_from_cstr("__tyl_str_equals"));
     if (!eq_fn)

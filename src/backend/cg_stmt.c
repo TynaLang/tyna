@@ -94,36 +94,6 @@ void cg_var_decl(Codegen *cg, AstNode *node) {
   }
 }
 
-static void cg_execute_defer_list(Codegen *cg, List *defer_list) {
-  if (!defer_list)
-    return;
-
-  for (int i = (int)defer_list->len - 1; i >= 0; i--) {
-    AstNode *defer_node = defer_list->items[i];
-    if (defer_node->tag == NODE_DEFER) {
-      cg_statement(cg, defer_node->defer.expr);
-    } else {
-      cg_statement(cg, defer_node);
-    }
-  }
-}
-
-static void cg_cleanup_scope_data(Codegen *cg, CGSymbolTable *scope,
-                                  List *defer_list) {
-  cg_execute_defer_list(cg, defer_list);
-}
-
-static void cg_cleanup_active_scopes(Codegen *cg) {
-  CGSymbolTable *scope = cg->current_scope;
-  for (int i = (int)cg->defers.len - 1; i >= 0 && scope; i--) {
-    if (!scope->parent)
-      break;
-
-    List *defer_list = List_get(&cg->defers, i);
-    cg_cleanup_scope_data(cg, scope, defer_list);
-    scope = scope->parent;
-  }
-}
 
 static void cg_print_stmt(Codegen *cg, AstNode *node) {
   CGFunction *print_fn = cg_find_function(cg, sv_from_cstr("print"));
@@ -212,7 +182,16 @@ static void cg_print_stmt(Codegen *cg, AstNode *node) {
         }
       } else if (resolved_type->kind == KIND_STRING_BUFFER) {
         fmt_str = "%s";
-        val = cg_coerce_string_buffer_to_str(cg, val, resolved_type);
+        LLVMValueRef ptr_val = LLVMBuildExtractValue(cg->builder, val, 0,
+                                                    "strbuf_ptr");
+        LLVMValueRef len_val = LLVMBuildExtractValue(cg->builder, val, 1,
+                                                    "strbuf_len");
+        LLVMTypeRef string_ty =
+            cg_get_llvm_type(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+        LLVMValueRef result = LLVMGetUndef(string_ty);
+        result = LLVMBuildInsertValue(cg->builder, result, ptr_val, 0,
+                                      "buf2s0");
+        val = LLVMBuildInsertValue(cg->builder, result, len_val, 1, "buf2s");
       } else if (resolved_type->kind == KIND_POINTER) {
         if (resolved_type->data.pointer_to->kind == KIND_PRIMITIVE &&
             resolved_type->data.pointer_to->data.primitive == PRIM_CHAR) {
@@ -650,7 +629,6 @@ void cg_statement(Codegen *cg, AstNode *node) {
         val = cg_expression(cg, node->return_stmt.expr);
       }
     }
-    cg_cleanup_active_scopes(cg);
     if (cg->current_function_uses_arena) {
       CGFunction *arena_pop =
           cg_find_system_function(cg, sv_from_cstr("__tyl_string_arena_pop"));
@@ -723,12 +701,10 @@ void cg_statement(Codegen *cg, AstNode *node) {
       data_ptr = str_ptr_val;
       len_val = str_len_val;
     } else if (iter_type->kind == KIND_STRING_BUFFER) {
-      LLVMValueRef string_val =
-          cg_coerce_string_buffer_to_str(cg, iterable_val, iter_type);
       LLVMValueRef str_ptr_val =
-          LLVMBuildExtractValue(cg->builder, string_val, 0, "str_ptr");
+          LLVMBuildExtractValue(cg->builder, iterable_val, 0, "strbuf_ptr");
       LLVMValueRef str_len_val =
-          LLVMBuildExtractValue(cg->builder, string_val, 1, "str_len");
+          LLVMBuildExtractValue(cg->builder, iterable_val, 1, "strbuf_len");
       data_ptr = str_ptr_val;
       len_val = str_len_val;
     } else if (iter_type->kind == KIND_STRUCT &&

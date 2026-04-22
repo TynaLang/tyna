@@ -730,9 +730,7 @@ static LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
   case NODE_BINARY_EQUALITY: {
     Type *lt = left_node->resolved_type;
     Type *rt = right_node->resolved_type;
-    LLVMValueRef lh = cg_coerce_rvalue_to_str_slice(cg, lhs, lt);
-    LLVMValueRef rh = cg_coerce_rvalue_to_str_slice(cg, rhs, rt);
-    return cg_equality_expr(cg, lh, rh, node->binary_equality.op, lt, rt);
+    return cg_equality_expr(cg, lhs, rhs, node->binary_equality.op, lt, rt);
   }
   default:
     return NULL;
