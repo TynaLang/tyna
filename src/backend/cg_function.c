@@ -11,14 +11,6 @@
 #include "tyna/errors.h"
 #include "tyna/utils.h"
 
-// prepared for closures and nested functions, but not implemented yet
-static StringView cg_generate_anon_name(Codegen *cg) {
-  static int anon_count = 0;
-  char buf[32];
-  int len = snprintf(buf, sizeof(buf), "__anon_func_%d", anon_count++);
-  return sv_from_parts(strdup(buf), len);
-};
-
 static LLVMTypeRef *cg_build_param_types(Codegen *cg, AstNode *func_node) {
   List params = func_node->func_decl.params;
   size_t count = params.len;
@@ -85,7 +77,6 @@ void cg_define_function(Codegen *cg, AstNode *node) {
 
 void cg_emit_function_body(Codegen *cg, AstNode *node) {
   if (node->func_decl.is_external) {
-    // External functions are declared but implemented in runtime/linker.
     return;
   }
 

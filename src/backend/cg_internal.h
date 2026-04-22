@@ -87,9 +87,22 @@ LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef value,
 void cg_binary_sync_types(Codegen *cg, LLVMValueRef *lhs, Type *l_ty,
                           LLVMValueRef *rhs, Type *r_ty);
 CgFunc *cg_find_system_function(Codegen *cg, StringView name);
-// ===== expressions / statements =====
+// ===== expressions =====
 
 LLVMValueRef cg_expression(Codegen *cg, AstNode *node);
+LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef value,
+                                  Type *from_ty, Type *union_ty);
+LLVMValueRef cg_extract_tagged_union(Codegen *cg, LLVMValueRef union_val,
+                                     Type *union_t, Type *target_t,
+                                     LLVMTypeRef target_ty);
+int cg_tagged_union_variant_index(Type *union_type, Type *variant);
+int cg_tagged_union_variant_index_llvm(Codegen *cg, Type *union_type,
+                                       LLVMTypeRef llvm_ty);
+int cg_result_error_tag_index(Type *result_type, Type *error_type);
+
+// ===== statements =====
+
 void cg_statement(Codegen *cg, AstNode *node);
 
 // ===== functions =====
@@ -101,7 +114,11 @@ void cg_emit_function_body(Codegen *cg, AstNode *node);
 CgFunc *cg_find_function(Codegen *cg, StringView name);
 CgFunc *cg_find_system_function(Codegen *cg, StringView name);
 
+// ===== module =====
+
 size_t cg_string_pool_insert(Codegen *cg, StringView str);
+
+// ===== utilities =====
 
 LLVMValueRef cg_get_address(Codegen *cg, AstNode *node);
 LLVMValueRef cg_alloca_in_entry(Codegen *cg, Type *type, StringView name);

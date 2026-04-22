@@ -1,0 +1,609 @@
+#include <llvm-c/Core.h>
+#include <stdio.h>
+
+#include "cg_internal.h"
+#include "tyna/ast.h"
+#include "tyna/codegen.h"
+#include "tyna/utils.h"
+#include "llvm-c/Types.h"
+
+LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_binary_is_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_ternary_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_cast_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node);
+LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node);
+LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node);
+
+static LLVMValueRef cg_arith_expr(Codegen *cg, LLVMValueRef lhs,
+                                  LLVMValueRef rhs, ArithmOp op) {
+  LLVMTypeRef type = LLVMTypeOf(lhs);
+  LLVMTypeKind kind = LLVMGetTypeKind(type);
+  bool is_float = (kind == LLVMDoubleTypeKind || kind == LLVMFloatTypeKind);
+
+  switch (op) {
+  case OP_ADD:
+    return is_float ? LLVMBuildFAdd(cg->builder, lhs, rhs, "faddtmp")
+                    : LLVMBuildAdd(cg->builder, lhs, rhs, "addtmp");
+  case OP_SUB:
+    return is_float ? LLVMBuildFSub(cg->builder, lhs, rhs, "fsubtmp")
+                    : LLVMBuildSub(cg->builder, lhs, rhs, "subtmp");
+  case OP_MUL:
+    return is_float ? LLVMBuildFMul(cg->builder, lhs, rhs, "fmultmp")
+                    : LLVMBuildMul(cg->builder, lhs, rhs, "multmp");
+  case OP_DIV:
+    return is_float ? LLVMBuildFDiv(cg->builder, lhs, rhs, "fdivtmp")
+                    : LLVMBuildSDiv(cg->builder, lhs, rhs, "sdivtmp");
+  case OP_MOD:
+    return is_float ? LLVMBuildFRem(cg->builder, lhs, rhs, "fremtmp")
+                    : LLVMBuildSRem(cg->builder, lhs, rhs, "sremtmp");
+  case OP_POW: {
+    CgFunc *pow_fn = cg_find_function(cg, sv_from_parts("pow", 3));
+    LLVMTypeRef double_ty = LLVMDoubleTypeInContext(cg->context);
+    lhs = cg_cast_value(cg, lhs, NULL, double_ty);
+    rhs = cg_cast_value(cg, rhs, NULL, double_ty);
+    LLVMValueRef args[] = {lhs, rhs};
+    return LLVMBuildCall2(cg->builder, pow_fn->type, pow_fn->value, args, 2,
+                          "powtmp");
+  }
+  default:
+    return NULL;
+  }
+}
+
+static LLVMValueRef cg_compare_expr(Codegen *cg, LLVMValueRef lhs,
+                                    LLVMValueRef rhs, CompareOp op) {
+  LLVMTypeRef type = LLVMTypeOf(lhs);
+  LLVMTypeKind kind = LLVMGetTypeKind(type);
+  bool is_float = (kind == LLVMDoubleTypeKind || kind == LLVMFloatTypeKind);
+
+  if (is_float) {
+    LLVMRealPredicate pred;
+    switch (op) {
+    case OP_LT:
+      pred = LLVMRealOLT;
+      break;
+    case OP_GT:
+      pred = LLVMRealOGT;
+      break;
+    case OP_LE:
+      pred = LLVMRealOLE;
+      break;
+    case OP_GE:
+      pred = LLVMRealOGE;
+      break;
+    default:
+      return NULL;
+    }
+    return LLVMBuildFCmp(cg->builder, pred, lhs, rhs, "fcmptmp");
+  } else {
+    LLVMIntPredicate pred;
+    switch (op) {
+    case OP_LT:
+      pred = LLVMIntSLT;
+      break;
+    case OP_GT:
+      pred = LLVMIntSGT;
+      break;
+    case OP_LE:
+      pred = LLVMIntSLE;
+      break;
+    case OP_GE:
+      pred = LLVMIntSGE;
+      break;
+    default:
+      return NULL;
+    }
+    return LLVMBuildICmp(cg->builder, pred, lhs, rhs, "icmptmp");
+  }
+}
+
+static LLVMValueRef cg_logical_expr(Codegen *cg, AstNode *node,
+                                    LLVMValueRef lhs) {
+  LLVMBasicBlockRef original_block = LLVMGetInsertBlock(cg->builder);
+  LLVMValueRef function = cg->current_function;
+
+  LLVMBasicBlockRef rhs_block =
+      LLVMAppendBasicBlockInContext(cg->context, function, "log_rhs");
+  LLVMBasicBlockRef merge_block =
+      LLVMAppendBasicBlockInContext(cg->context, function, "log_merge");
+
+  if (node->binary_logical.op == OP_AND) {
+    LLVMBuildCondBr(cg->builder, lhs, rhs_block, merge_block);
+  } else {
+    LLVMBuildCondBr(cg->builder, lhs, merge_block, rhs_block);
+  }
+
+  LLVMPositionBuilderAtEnd(cg->builder, rhs_block);
+  LLVMValueRef rhs = cg_expression(cg, node->binary_logical.right);
+  LLVMBuildBr(cg->builder, merge_block);
+  LLVMBasicBlockRef rhs_end_block = LLVMGetInsertBlock(cg->builder);
+
+  LLVMPositionBuilderAtEnd(cg->builder, merge_block);
+  LLVMValueRef phi =
+      LLVMBuildPhi(cg->builder, LLVMInt1TypeInContext(cg->context), "log_phi");
+
+  LLVMValueRef incoming_values[2];
+  LLVMBasicBlockRef incoming_blocks[2];
+
+  incoming_values[0] = LLVMConstInt(LLVMInt1TypeInContext(cg->context),
+                                    (node->binary_logical.op == OP_OR), false);
+  incoming_blocks[0] = original_block;
+  incoming_values[1] = rhs;
+  incoming_blocks[1] = rhs_end_block;
+
+  LLVMAddIncoming(phi, incoming_values, incoming_blocks, 2);
+  return phi;
+}
+
+LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
+  AstNode *left_node, *right_node;
+  switch (node->tag) {
+  case NODE_BINARY_ARITH:
+    left_node = node->binary_arith.left;
+    right_node = node->binary_arith.right;
+    break;
+  case NODE_BINARY_COMPARE:
+    left_node = node->binary_compare.left;
+    right_node = node->binary_compare.right;
+    break;
+  case NODE_BINARY_EQUALITY:
+    left_node = node->binary_equality.left;
+    right_node = node->binary_equality.right;
+    break;
+  case NODE_BINARY_LOGICAL:
+    left_node = node->binary_logical.left;
+    right_node = node->binary_logical.right;
+    break;
+  default:
+    return NULL;
+  }
+
+  LLVMValueRef lhs = cg_expression(cg, left_node);
+  if (!lhs)
+    return NULL;
+
+  if (node->tag == NODE_BINARY_LOGICAL) {
+    LLVMTypeRef i1_ty = LLVMInt1TypeInContext(cg->context);
+    lhs = cg_cast_value(cg, lhs, left_node->resolved_type, i1_ty);
+    return cg_logical_expr(cg, node, lhs);
+  }
+
+  LLVMValueRef rhs = cg_expression(cg, right_node);
+  if (!rhs)
+    return NULL;
+
+  if (node->tag == NODE_BINARY_ARITH) {
+    LLVMTypeRef target_ty = cg_type_get_llvm(cg, node->resolved_type);
+
+    LLVMTypeKind lhs_kind = LLVMGetTypeKind(LLVMTypeOf(lhs));
+    LLVMTypeKind rhs_kind = LLVMGetTypeKind(LLVMTypeOf(rhs));
+
+    if ((lhs_kind == LLVMPointerTypeKind && rhs_kind == LLVMIntegerTypeKind) ||
+        (rhs_kind == LLVMPointerTypeKind && lhs_kind == LLVMIntegerTypeKind)) {
+      LLVMValueRef ptr_val = lhs_kind == LLVMPointerTypeKind ? lhs : rhs;
+      LLVMValueRef int_val = lhs_kind == LLVMIntegerTypeKind ? lhs : rhs;
+
+      Type *ptr_sem_type = lhs_kind == LLVMPointerTypeKind
+                               ? left_node->resolved_type
+                               : right_node->resolved_type;
+      Type *elem_sem_type = NULL;
+      if (ptr_sem_type && ptr_sem_type->kind == KIND_POINTER) {
+        elem_sem_type = ptr_sem_type->data.pointer_to;
+      }
+      LLVMTypeRef elem_ty = elem_sem_type
+                                ? cg_type_get_llvm(cg, elem_sem_type)
+                                : LLVMGetElementType(LLVMTypeOf(ptr_val));
+
+      LLVMValueRef index = cg_cast_value(cg, int_val,
+                                         lhs_kind == LLVMIntegerTypeKind
+                                             ? left_node->resolved_type
+                                             : right_node->resolved_type,
+                                         LLVMInt64TypeInContext(cg->context));
+      if (node->binary_arith.op == OP_ADD) {
+        return LLVMBuildGEP2(cg->builder, elem_ty, ptr_val,
+                             (LLVMValueRef[]){index}, 1, "ptraddtmp");
+      }
+      if (node->binary_arith.op == OP_SUB && lhs_kind == LLVMPointerTypeKind) {
+        LLVMValueRef neg_index = LLVMBuildNeg(cg->builder, index, "negidx");
+        return LLVMBuildGEP2(cg->builder, elem_ty, ptr_val,
+                             (LLVMValueRef[]){neg_index}, 1, "ptrsubtmp");
+      }
+    }
+
+    lhs = cg_cast_value(cg, lhs, left_node->resolved_type, target_ty);
+    rhs = cg_cast_value(cg, rhs, right_node->resolved_type, target_ty);
+    return cg_arith_expr(cg, lhs, rhs, node->binary_arith.op);
+  }
+
+  cg_binary_sync_types(cg, &lhs, left_node->resolved_type, &rhs,
+                       right_node->resolved_type);
+
+  switch (node->tag) {
+  case NODE_BINARY_COMPARE:
+    return cg_compare_expr(cg, lhs, rhs, node->binary_compare.op);
+  case NODE_BINARY_EQUALITY: {
+    Type *lt = left_node->resolved_type;
+    Type *rt = right_node->resolved_type;
+    return cg_equality_expr(cg, lhs, rhs, node->binary_equality.op, lt, rt);
+  }
+  default:
+    return NULL;
+  }
+}
+
+LLVMValueRef cg_binary_is_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef left = cg_expression(cg, node->binary_is.left);
+  if (!left)
+    return NULL;
+
+  Type *left_type = node->binary_is.left->resolved_type;
+  Type *right_type = node->binary_is.right->resolved_type;
+  LLVMTypeRef bool_ty = LLVMInt1TypeInContext(cg->context);
+
+  if (left_type && left_type->kind == KIND_RESULT) {
+    LLVMValueRef tag =
+        LLVMBuildExtractValue(cg->builder, left, 1, "result_tag");
+    LLVMTypeRef tag_ty = LLVMInt16TypeInContext(cg->context);
+    if (node->binary_is.right->tag == NODE_VAR &&
+        sv_eq_cstr(node->binary_is.right->var.value, "Error")) {
+      return LLVMBuildICmp(cg->builder, LLVMIntNE, tag,
+                           LLVMConstInt(tag_ty, 0, false), "is_error");
+    }
+    if (right_type && right_type->kind == KIND_ERROR) {
+      int idx = cg_result_error_tag_index(left_type, right_type);
+      return LLVMBuildICmp(cg->builder, LLVMIntEQ, tag,
+                           LLVMConstInt(tag_ty, idx, false), "is_error_type");
+    }
+    if (right_type && right_type->kind == KIND_ERROR_SET) {
+      return LLVMBuildICmp(cg->builder, LLVMIntNE, tag,
+                           LLVMConstInt(tag_ty, 0, false), "is_error_set");
+    }
+  }
+
+  if (left_type && left_type->kind == KIND_ERROR) {
+    if (node->binary_is.right->tag == NODE_VAR &&
+        sv_eq_cstr(node->binary_is.right->var.value, "Error")) {
+      return LLVMConstInt(bool_ty, 1, false);
+    }
+    if (right_type && right_type->kind == KIND_ERROR_SET) {
+      return LLVMConstInt(bool_ty, 1, false);
+    }
+    if (right_type && right_type->kind == KIND_ERROR) {
+      LLVMValueRef right = cg_expression(cg, node->binary_is.right);
+      return cg_equality_expr(cg, left, right, OP_EQ, left_type, right_type);
+    }
+  }
+
+  return LLVMConstInt(bool_ty, 0, false);
+}
+
+LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef left = cg_expression(cg, node->binary_else.left);
+  if (!left)
+    return NULL;
+  Type *left_type = node->binary_else.left->resolved_type;
+  if (!left_type || left_type->kind != KIND_RESULT)
+    return NULL;
+
+  LLVMValueRef tag = LLVMBuildExtractValue(cg->builder, left, 1, "result_tag");
+  LLVMTypeRef tag_ty = LLVMInt16TypeInContext(cg->context);
+  LLVMValueRef is_error =
+      LLVMBuildICmp(cg->builder, LLVMIntNE, tag, LLVMConstInt(tag_ty, 0, false),
+                    "result_is_error");
+
+  LLVMValueRef right = cg_expression(cg, node->binary_else.right);
+  LLVMValueRef success_raw =
+      LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+  LLVMValueRef success_val =
+      cg_cast_value(cg, success_raw, left_type->data.result.success,
+                    cg_type_get_llvm(cg, node->resolved_type));
+
+  return LLVMBuildSelect(cg->builder, is_error, right, success_val, "else_val");
+}
+
+LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
+  UnaryOp op = node->unary.op;
+  AstNode *expr = node->unary.expr;
+  LLVMTypeRef res_ty = NULL;
+  if (op == OP_NEG || op == OP_DEREF) {
+    if (!node->resolved_type) {
+      panic("Unary expression has no resolved type");
+    }
+    res_ty = cg_type_get_llvm(cg, node->resolved_type);
+  }
+
+  if (op == OP_NEG) {
+    LLVMValueRef val = cg_expression(cg, expr);
+    val = cg_cast_value(cg, val, expr->resolved_type, res_ty);
+    if (LLVMGetTypeKind(res_ty) == LLVMDoubleTypeKind ||
+        LLVMGetTypeKind(res_ty) == LLVMFloatTypeKind) {
+      return LLVMBuildFNeg(cg->builder, val, "fnegtmp");
+    }
+    return LLVMBuildNeg(cg->builder, val, "negtmp");
+  }
+
+  if (op == OP_NOT) {
+    LLVMValueRef val = cg_expression(cg, expr);
+    LLVMValueRef bool_val = cg_cast_value(cg, val, expr->resolved_type,
+                                          LLVMInt1TypeInContext(cg->context));
+    return LLVMBuildNot(cg->builder, bool_val, "nottmp");
+  }
+
+  if (op == OP_DEREF) {
+    LLVMValueRef ptr = cg_expression(cg, expr);
+    return LLVMBuildLoad2(cg->builder, res_ty, ptr, "deref_load");
+  }
+
+  if (op == OP_ADDR_OF) {
+    return cg_get_address(cg, expr);
+  }
+
+  LLVMValueRef ptr = cg_get_address(cg, expr);
+  if (!ptr)
+    panic("Invalid unary operand target");
+
+  LLVMTypeRef type = LLVMGetAllocatedType(ptr);
+  LLVMValueRef old_val = LLVMBuildLoad2(cg->builder, type, ptr, "u_load");
+  LLVMValueRef one = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind ||
+                      LLVMGetTypeKind(type) == LLVMFloatTypeKind)
+                         ? LLVMConstReal(type, 1.0)
+                         : LLVMConstInt(type, 1, false);
+
+  LLVMValueRef new_val;
+  if (op == OP_PRE_INC || op == OP_POST_INC) {
+    new_val = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind ||
+               LLVMGetTypeKind(type) == LLVMFloatTypeKind)
+                  ? LLVMBuildFAdd(cg->builder, old_val, one, "inc")
+                  : LLVMBuildAdd(cg->builder, old_val, one, "inc");
+  } else {
+    new_val = (LLVMGetTypeKind(type) == LLVMDoubleTypeKind ||
+               LLVMGetTypeKind(type) == LLVMFloatTypeKind)
+                  ? LLVMBuildFSub(cg->builder, old_val, one, "dec")
+                  : LLVMBuildSub(cg->builder, old_val, one, "dec");
+  }
+
+  LLVMBuildStore(cg->builder, new_val, ptr);
+  return (op == OP_PRE_INC || op == OP_PRE_DEC) ? new_val : old_val;
+}
+
+LLVMValueRef cg_ternary_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef cond = cg_expression(cg, node->ternary.condition);
+  LLVMTypeRef i1_ty = LLVMInt1TypeInContext(cg->context);
+  cond = cg_cast_value(cg, cond, node->ternary.condition->resolved_type, i1_ty);
+
+  LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "ternary_then");
+  LLVMBasicBlockRef else_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "ternary_else");
+  LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "ternary_cont");
+
+  LLVMBuildCondBr(cg->builder, cond, then_bb, else_bb);
+  LLVMTypeRef res_type = cg_type_get_llvm(cg, node->resolved_type);
+
+  LLVMPositionBuilderAtEnd(cg->builder, then_bb);
+  LLVMValueRef then_val = cg_expression(cg, node->ternary.true_expr);
+  then_val = cg_cast_value(cg, then_val, node->ternary.true_expr->resolved_type,
+                           res_type);
+  LLVMBuildBr(cg->builder, merge_bb);
+  LLVMBasicBlockRef then_bb_end = LLVMGetInsertBlock(cg->builder);
+
+  LLVMPositionBuilderAtEnd(cg->builder, else_bb);
+  LLVMValueRef else_val = cg_expression(cg, node->ternary.false_expr);
+  else_val = cg_cast_value(cg, else_val,
+                           node->ternary.false_expr->resolved_type, res_type);
+  LLVMBuildBr(cg->builder, merge_bb);
+  LLVMBasicBlockRef else_bb_end = LLVMGetInsertBlock(cg->builder);
+
+  LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+  LLVMValueRef phi = LLVMBuildPhi(cg->builder, res_type, "ternary_tmp");
+  LLVMValueRef incoming_values[] = {then_val, else_val};
+  LLVMBasicBlockRef incoming_blocks[] = {then_bb_end, else_bb_end};
+  LLVMAddIncoming(phi, incoming_values, incoming_blocks, 2);
+  return phi;
+}
+
+LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef ptr = cg_get_address(cg, node->assign_expr.target);
+  if (!ptr)
+    panic("Invalid assignment target");
+  LLVMValueRef val = cg_expression(cg, node->assign_expr.value);
+
+  Type *target_type = node->assign_expr.target->resolved_type;
+  if (!target_type) {
+    AstNode *target = node->assign_expr.target;
+    if (target->tag == NODE_VAR) {
+      CgSym *sym = CGSymbolTable_find(cg->current_scope, target->var.value);
+      if (sym)
+        target_type = sym->type;
+    } else if (target->tag == NODE_FIELD) {
+      Type *obj_type = target->field.object->resolved_type;
+      if (!obj_type && target->field.object->tag == NODE_VAR) {
+        CgSym *sym = CGSymbolTable_find(cg->current_scope,
+                                        target->field.object->var.value);
+        if (sym)
+          obj_type = sym->type;
+      }
+      if (obj_type && obj_type->kind == KIND_STRUCT) {
+        Member *m = type_get_member(obj_type, target->field.field);
+        if (m)
+          target_type = m->type;
+      } else if (obj_type && obj_type->kind == KIND_UNION) {
+        Type *owner = NULL;
+        Member *m =
+            type_find_union_field(obj_type, target->field.field, &owner);
+        if (m)
+          target_type = m->type;
+      }
+    } else if (target->tag == NODE_INDEX) {
+      Type *array_type = target->index.array->resolved_type;
+      if (array_type) {
+        if (array_type->kind == KIND_POINTER) {
+          target_type = array_type->data.pointer_to;
+        } else if (type_is_array_struct(array_type) &&
+                   array_type->data.instance.generic_args.len > 0) {
+          target_type = array_type->data.instance.generic_args.items[0];
+        }
+      }
+    }
+  }
+
+  if (!target_type) {
+    target_type = node->assign_expr.target->resolved_type;
+  }
+  if (!target_type) {
+    panic("Assignment target has no resolved type");
+  }
+  if (!node->assign_expr.value->resolved_type) {
+    panic("Assignment RHS has no resolved type");
+  }
+  LLVMTypeRef target_ty = cg_type_get_llvm(cg, target_type);
+  if (target_type->kind == KIND_UNION && target_type->is_tagged_union) {
+    int variant_index = cg_tagged_union_variant_index(
+        target_type, node->assign_expr.value->resolved_type);
+    if (variant_index >= 0) {
+      val = cg_make_tagged_union(
+          cg, val, node->assign_expr.value->resolved_type, target_type);
+    } else {
+      val = cg_cast_value(cg, val, node->assign_expr.value->resolved_type,
+                          target_ty);
+    }
+  } else {
+    val = cg_cast_value(cg, val, node->assign_expr.value->resolved_type,
+                        target_ty);
+  }
+
+  if (node->assign_expr.target->tag == NODE_INDEX) {
+    Type *array_type = node->assign_expr.target->index.array->resolved_type;
+    if (type_is_array_struct(array_type)) {
+      LLVMValueRef array_struct_ptr =
+          cg_get_address(cg, node->assign_expr.target->index.array);
+      if (!array_struct_ptr)
+        panic("Invalid array assignment target");
+
+      LLVMTypeRef array_ty = cg_type_get_llvm(cg, array_type);
+      LLVMValueRef len_ptr = LLVMBuildStructGEP2(
+          cg->builder, array_ty, array_struct_ptr, 1, "array_len_ptr");
+      LLVMValueRef curr_len =
+          LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
+                         len_ptr, "array_curr_len");
+      LLVMValueRef idx_val =
+          cg_expression(cg, node->assign_expr.target->index.index);
+      LLVMValueRef idx_i64 = cg_cast_value(
+          cg, idx_val, node->assign_expr.target->index.index->resolved_type,
+          LLVMInt64TypeInContext(cg->context));
+      LLVMValueRef is_append = LLVMBuildICmp(cg->builder, LLVMIntEQ, idx_i64,
+                                             curr_len, "array_is_append");
+      LLVMBasicBlockRef append_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "array_append");
+      LLVMBasicBlockRef skip_append_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "array_skip_append");
+      LLVMBasicBlockRef append_merge_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "array_append_merge");
+      LLVMBuildCondBr(cg->builder, is_append, append_bb, skip_append_bb);
+
+      LLVMPositionBuilderAtEnd(cg->builder, append_bb);
+      LLVMValueRef next_len =
+          LLVMBuildAdd(cg->builder, curr_len,
+                       LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0),
+                       "array_next_len");
+      LLVMBuildStore(cg->builder, next_len, len_ptr);
+      LLVMBuildBr(cg->builder, append_merge_bb);
+
+      LLVMPositionBuilderAtEnd(cg->builder, skip_append_bb);
+      LLVMBuildBr(cg->builder, append_merge_bb);
+
+      LLVMPositionBuilderAtEnd(cg->builder, append_merge_bb);
+    }
+  }
+
+  LLVMBuildStore(cg->builder, val, ptr);
+  return val;
+}
+
+LLVMValueRef cg_cast_expr(Codegen *cg, AstNode *node) {
+  LLVMValueRef val = cg_expression(cg, node->cast_expr.expr);
+  Type *expr_type = node->cast_expr.expr->resolved_type;
+  Type *target_type = node->cast_expr.target_type;
+  LLVMTypeRef target_ty = cg_type_get_llvm(cg, target_type);
+
+  if (expr_type && expr_type->kind == KIND_UNION &&
+      expr_type->is_tagged_union) {
+    int variant_index =
+        cg_tagged_union_variant_index_llvm(cg, expr_type, target_ty);
+    if (variant_index >= 0)
+      return cg_extract_tagged_union(cg, val, expr_type, target_type,
+                                     target_ty);
+  }
+
+  if (target_type && target_type->kind == KIND_UNION &&
+      target_type->is_tagged_union) {
+    int variant_index = cg_tagged_union_variant_index(target_type, expr_type);
+    if (variant_index >= 0)
+      return cg_make_tagged_union(cg, val, expr_type, target_type);
+  }
+
+  return cg_cast_value(cg, val, expr_type, target_ty);
+}
+
+LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
+  if (!node)
+    return NULL;
+  switch (node->tag) {
+  case NODE_NUMBER:
+  case NODE_CHAR:
+  case NODE_BOOL:
+  case NODE_STRING:
+  case NODE_NULL:
+    return cg_const_expr(cg, node);
+  case NODE_VAR:
+    return cg_var_expr(cg, node);
+  case NODE_FIELD:
+    return cg_field_expr(cg, node);
+  case NODE_INDEX: {
+    if (!node->resolved_type) {
+      panic("Internal error: indexed expression has no resolved type");
+    }
+    LLVMValueRef element_ptr = cg_expression_addr(cg, node);
+    return LLVMBuildLoad2(cg->builder,
+                          cg_type_get_llvm(cg, node->resolved_type),
+                          element_ptr, "load_element");
+  }
+  case NODE_BINARY_ARITH:
+  case NODE_BINARY_COMPARE:
+  case NODE_BINARY_EQUALITY:
+  case NODE_BINARY_LOGICAL:
+    return cg_binary_expr(cg, node);
+  case NODE_BINARY_IS:
+    return cg_binary_is_expr(cg, node);
+  case NODE_BINARY_ELSE:
+    return cg_binary_else_expr(cg, node);
+  case NODE_UNARY:
+    return cg_unary_expr(cg, node);
+  case NODE_TERNARY:
+    return cg_ternary_expr(cg, node);
+  case NODE_ASSIGN_EXPR:
+    return cg_assign_expr(cg, node);
+  case NODE_CAST_EXPR:
+    return cg_cast_expr(cg, node);
+  case NODE_CALL:
+    return cg_call_expr(cg, node);
+  case NODE_NEW_EXPR:
+    return cg_new_expr(cg, node);
+  case NODE_ARRAY_LITERAL:
+    return cg_array_literal(cg, node);
+  case NODE_ARRAY_REPEAT:
+    return cg_array_repeat(cg, node);
+  default:
+    fprintf(stderr, "Codegen: Unhandled expression tag %d\n", node->tag);
+    return NULL;
+  }
+}

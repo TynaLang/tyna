@@ -1,63 +1,22 @@
 #include <llvm-c/Core.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "cg_internal.h"
 #include "tyna/ast.h"
 #include "tyna/codegen.h"
 #include "tyna/utils.h"
 
-static void cg_register_system_function(Codegen *cg, StringView name,
-                                        LLVMTypeRef type) {
-  char *c_name = sv_to_cstr(name);
-  LLVMValueRef func = LLVMAddFunction(cg->module, c_name, type);
-  free(c_name);
+#include <llvm-c/Core.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-  CgFunc *f = xmalloc(sizeof(CgFunc));
-  cg_init_CGFunction(f, name, func, type, true, NULL);
-  List_push(&cg->system_functions, f);
-}
-
-static bool cg_has_main(AstNode *root) {
-  for (size_t i = 0; i < root->ast_root.children.len; i++) {
-    AstNode *child = root->ast_root.children.items[i];
-    if (child->tag == NODE_FUNC_DECL &&
-        sv_eq_cstr(child->func_decl.name->var.value, "main")) {
-      return true;
-    }
-  }
-  return false;
-}
-
-static LLVMValueRef cg_create_entry(Codegen *cg, bool has_main) {
-  LLVMValueRef entry_func = NULL;
-  if (has_main) {
-    LLVMTypeRef init_type =
-        LLVMFunctionType(LLVMVoidTypeInContext(cg->context), NULL, 0, 0);
-    entry_func = LLVMAddFunction(cg->module, "init", init_type);
-  } else {
-    LLVMTypeRef main_type =
-        LLVMFunctionType(LLVMInt32TypeInContext(cg->context), NULL, 0, 0);
-    entry_func = LLVMAddFunction(cg->module, "main", main_type);
-  }
-  return entry_func;
-}
-
-static void cg_finalize_entry(Codegen *cg, LLVMValueRef entry_func,
-                              bool has_main) {
-  LLVMPositionBuilderAtEnd(cg->builder, LLVMAppendBasicBlockInContext(
-                                            cg->context, entry_func, "entry"));
-
-  if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
-    if (has_main) {
-      CgFunc *mf = cg_find_function(cg, sv_from_parts("main", 4));
-      LLVMBuildCall2(cg->builder, mf->type, mf->value, NULL, 0, "");
-      LLVMBuildRetVoid(cg->builder);
-    } else {
-      LLVMBuildRet(cg->builder,
-                   LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0));
-    }
-  }
-}
+#include "cg_internal.h"
+#include "tyna/ast.h"
+#include "tyna/codegen.h"
+#include "tyna/utils.h"
 
 static void cg_declare_functions(Codegen *cg, AstNode *root) {
   for (size_t i = 0; i < root->ast_root.children.len; i++) {
@@ -290,7 +249,6 @@ size_t cg_string_pool_insert(Codegen *cg, StringView str) {
   char *copy = sv_to_cstr(str);
   List_push(&cg->string_pool, copy);
 
-  // Generate the global variable immediately
   char name[32];
   sprintf(name, ".str.%zu", cg->string_pool.len - 1);
 
