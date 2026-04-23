@@ -8,6 +8,25 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
   }
 
   Type *decl_type = node->var_decl.declared_type;
+  Symbol *sym =
+      sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
+  if (sym) {
+    sym->value = node->var_decl.value;
+    sym->is_export = node->var_decl.is_export;
+  }
+
+  if (node->var_decl.value && node->var_decl.value->tag == NODE_BINARY_ELSE &&
+      decl_type && type_needs_inference(decl_type)) {
+    Type *left_type =
+        sema_check_expr(s, node->var_decl.value->binary_else.left).type;
+    if (left_type && left_type->kind == KIND_RESULT &&
+        left_type->data.result.success) {
+      decl_type = left_type->data.result.success;
+      if (sym) {
+        sym->type = decl_type;
+      }
+    }
+  }
 
   if (node->var_decl.value) {
     node->var_decl.value = sema_coerce(s, node->var_decl.value, decl_type);
@@ -53,10 +72,8 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
 
   node->var_decl.declared_type = decl_type;
   node->resolved_type = decl_type;
-
-  Symbol *sym =
-      sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
   if (sym) {
+    sym->type = decl_type;
     sym->value = node->var_decl.value;
     sym->is_export = node->var_decl.is_export;
   }

@@ -98,6 +98,27 @@ AstNode *parser_parse_print(Parser *p) {
   return AstNode_new_print_stmt(values, loc);
 }
 
+AstNode *parser_parse_return_stmt(Parser *p, bool require_semi) {
+  Location loc = p->current_token.loc;
+  parser_token_advance(p);
+
+  AstNode *expr = NULL;
+  if (p->current_token.type != TOKEN_SEMI) {
+    expr = parser_parse_expression(p, 0);
+    if (!expr) {
+      parser_sync(p);
+      return NULL;
+    }
+  }
+
+  if (require_semi) {
+    if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after return statement"))
+      return NULL;
+  }
+
+  return AstNode_new_return(expr, loc);
+}
+
 AstNode *parser_parse_statement(Parser *p) {
   Location loc = p->current_token.loc;
   bool is_export = false;
@@ -156,22 +177,7 @@ AstNode *parser_parse_statement(Parser *p) {
     return AstNode_new_loop(stmt, loc);
   }
   case TOKEN_RETURN: {
-    parser_token_advance(p);
-
-    AstNode *expr = NULL;
-    if (p->current_token.type != TOKEN_SEMI) {
-      expr = parser_parse_expression(p, 0);
-      if (!expr) {
-        parser_sync(p);
-        return NULL;
-      }
-    }
-
-    if (parser_expect(p, TOKEN_SEMI, "Expected ';' after return statement"))
-      return AstNode_new_return(expr, loc);
-
-    parser_sync(p);
-    return NULL;
+    return parser_parse_return_stmt(p, true);
   }
   case TOKEN_FN:
     return parser_parse_fn_decl(p, false, is_export, is_external);

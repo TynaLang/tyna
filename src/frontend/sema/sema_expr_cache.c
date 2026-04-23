@@ -111,6 +111,14 @@ ExprInfo sema_check_expr_cache(Sema *s, AstNode *node) {
     info = sema_check_binary_else(s, node);
     break;
 
+  case NODE_BLOCK:
+    sema_check_stmt(s, node);
+    info = (ExprInfo){.type = node->resolved_type
+                                  ? node->resolved_type
+                                  : type_get_primitive(s->types, PRIM_VOID),
+                      .category = VAL_RVALUE};
+    break;
+
   case NODE_CALL:
     info = sema_check_call(s, node);
     break;

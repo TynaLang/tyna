@@ -25,6 +25,36 @@ fn parse_age(val: i32): i32 ! Error {
     return val;
 }
 
+fn parse_score(val: i64): i64 ! Error {
+    if (val == 99) {
+        // Test rich error return with a wider success type
+        return InvalidInput { code: 400, expected: 18 };
+    }
+    return val;
+}
+
+fn nested_error(): i32 ! Error {
+    // Test nested error propagation
+    return parse_age(99);
+}
+
+fn nested_error_different_type(): i64 ! Error {
+    // Test nested error propagation with different success type
+    return parse_score(99);
+}
+
+fn question_same(val: i32): i32 ! Error {
+    // Test postfix '?' propagation inside a result-returning function
+    let propagated = parse_age(val)?;
+    return propagated;
+}
+
+fn question_diff(val: i64): i64 ! Error {
+    // Test postfix '?' propagation with a wider success type
+    let propagated = parse_score(val)?;
+    return propagated;
+}
+
 fn main(): i32 {
     // --- SCENARIO 1: Success Path ---
     let user = find_user(1);
@@ -67,6 +97,61 @@ fn main(): i32 {
     // --- SCENARIO 6: Mixed Success/Else ---
     let real_age = parse_age(25) else -1;
     print("Scenario 6 Pass: actual success gave", real_age);
+
+    // --- SCENARIO 7: Same Success Type Reassignment ---
+    let same_result = parse_age(99) else {
+        print("Scenario 7 handling same success type");
+        same_result = 5;
+    };
+    print("Scenario 7 Pass: same success reassignment gave", same_result);
+
+    // --- SCENARIO 8: Different Success Type Reassignment ---
+    let different_result = parse_score(99) else {
+        print("Scenario 8 handling different success type");
+        different_result = 5;
+    };
+    print("Scenario 8 Pass: different success reassignment gave", different_result);
+
+    // --- SCENARIO 9: Nested Error Propagation ---
+    let nested_result = nested_error() else {
+        print("Scenario 9 handling nested error");
+        nested_result = 5;
+    };
+    print("Scenario 9 Pass: nested error propagation gave", nested_result);
+
+
+    // --- SCENARIO 10: Nested Error Propagation with Different Success Type ---
+    let nested_diff_result = nested_error_different_type() else {
+        print("Scenario 10 handling nested error");
+        nested_diff_result = 5;
+    };
+    print("Scenario 10 Pass: nested error propagation with different success type gave", nested_diff_result);
+
+    // --- SCENARIO 11: Postfix '?' Propagation ---
+    let question_same_ok = question_same(25) else -1;
+    print("Scenario 11 Pass: question_same success gave", question_same_ok);
+
+    let question_same_fallback = question_same(99) else -1;
+    print("Scenario 11 Pass: question_same fallback gave", question_same_fallback);
+
+    // --- SCENARIO 12: Postfix '?' Propagation With Different Success Type ---
+    let question_diff_ok = question_diff(25) else -1;
+    print("Scenario 12 Pass: question_diff success gave", question_diff_ok);
+
+    let question_diff_fallback = question_diff(99) else -1;
+    print("Scenario 12 Pass: question_diff fallback gave", question_diff_fallback);
+
+    // A concrete named result set is still closed today.
+    // This should fail if uncommented because NotFound does not include InvalidInput:
+    // fn nested_different_error(): i32 ! NotFound {
+    //     return parse_score(99);
+    // }
+
+    // This should fail if uncommented because the else block does not return the same success type:
+    // let same_result2 = parse_age(99) else {
+    //   if (false) same_result2 = 5;
+    // };
+    // print(same_result2); 
 
     return 0;
 }

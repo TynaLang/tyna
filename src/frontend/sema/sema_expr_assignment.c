@@ -4,6 +4,73 @@ static bool sema_type_is_move_only(Type *type) {
   return type && type->kind == KIND_STRING_BUFFER;
 }
 
+static bool sema_result_error_set_is_wildcard(Type *error_set) {
+  return error_set && error_set->kind == KIND_ERROR_SET &&
+         (error_set->name.len == 0 || sv_eq_cstr(error_set->name, "Error"));
+}
+
+static void sema_result_union_error_set(Type *target_error_set,
+                                        Type *source_error_set) {
+  if (!target_error_set || !source_error_set ||
+      target_error_set->kind != KIND_ERROR_SET ||
+      source_error_set->kind != KIND_ERROR_SET) {
+    return;
+  }
+
+  for (size_t i = 0; i < source_error_set->members.len; i++) {
+    Member *member = source_error_set->members.items[i];
+    if (!member || !member->type || member->type->kind != KIND_ERROR) {
+      continue;
+    }
+    if (!error_set_contains(target_error_set, member->type)) {
+      type_add_member(target_error_set, NULL, member->type, 0);
+    }
+  }
+}
+
+static Type *sema_result_type_for_assignment(Sema *s, AstNode *target,
+                                             Type *lhs, Type *rhs) {
+  if (!lhs || lhs->kind != KIND_RESULT) {
+    return lhs;
+  }
+
+  Type *success = lhs->data.result.success;
+  Type *error_set = lhs->data.result.error_set;
+  bool success_changed = false;
+
+  if (rhs && rhs->kind == KIND_RESULT) {
+    if (type_is_unknown(success) && rhs->data.result.success) {
+      success = rhs->data.result.success;
+      success_changed = true;
+    }
+    if (sema_result_error_set_is_wildcard(error_set)) {
+      sema_result_union_error_set(error_set, rhs->data.result.error_set);
+    }
+  } else if (rhs && rhs->kind == KIND_ERROR) {
+    if (sema_result_error_set_is_wildcard(error_set) &&
+        !error_set_contains(error_set, rhs)) {
+      type_add_member(error_set, NULL, rhs, 0);
+    }
+  } else if (type_is_unknown(success) && rhs) {
+    success = rhs;
+    success_changed = true;
+  }
+
+  if (success_changed) {
+    lhs = type_get_result(s->types, success, error_set);
+  }
+
+  if (target && target->tag == NODE_VAR) {
+    Symbol *sym = sema_resolve(s, target->var.value);
+    if (sym && sym->kind == SYM_VAR) {
+      sym->type = lhs;
+    }
+    target->resolved_type = lhs;
+  }
+
+  return lhs;
+}
+
 ExprInfo sema_check_assignment(Sema *s, AstNode *node) {
   AstNode *target = node->assign_expr.target;
   ExprInfo lhs_info = sema_check_expr(s, target);
@@ -19,13 +86,24 @@ ExprInfo sema_check_assignment(Sema *s, AstNode *node) {
                       .category = VAL_RVALUE};
   }
 
+  Type *rhs = sema_check_expr(s, node->assign_expr.value).type;
+  lhs = sema_result_type_for_assignment(s, target, lhs, rhs);
+
   node->assign_expr.value = sema_coerce(s, node->assign_expr.value, lhs);
-  Type *rhs = node->assign_expr.value
-                  ? node->assign_expr.value->resolved_type
-                  : type_get_primitive(s->types, PRIM_UNKNOWN);
+  rhs = node->assign_expr.value ? node->assign_expr.value->resolved_type
+                                : type_get_primitive(s->types, PRIM_UNKNOWN);
   if (!type_can_implicitly_cast(lhs, rhs)) {
     sema_error(s, node, "Type mismatch in assignment: expected %s, got %s",
                type_to_name(lhs), type_to_name(rhs));
+  }
+
+  if (lhs && type_is_unknown(lhs) && target->tag == NODE_VAR) {
+    Symbol *sym = sema_resolve(s, target->var.value);
+    if (sym && sym->kind == SYM_VAR) {
+      sym->type = rhs;
+      target->resolved_type = rhs;
+      lhs = rhs;
+    }
   }
 
   if (sema_type_is_move_only(lhs)) {

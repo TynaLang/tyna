@@ -28,6 +28,7 @@ PrimitiveKind parser_parse_type(Parser *p);
 Type *parser_parse_type_full(Parser *p);
 
 /* parser_stmt_misc.c */
+AstNode *parser_parse_return_stmt(Parser *p, bool require_semi);
 AstNode *parser_parse_statement(Parser *p);
 AstNode *parser_parse_block(Parser *p);
 

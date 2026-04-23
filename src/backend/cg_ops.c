@@ -22,6 +22,42 @@ LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node);
 LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node);
 LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node);
 
+static LLVMValueRef cg_block_expr(Codegen *cg, AstNode *node) {
+  if (!node || node->tag != NODE_BLOCK)
+    return NULL;
+
+  cg_push_scope(cg);
+  LLVMValueRef last_val = NULL;
+
+  for (size_t i = 0; i < node->block.statements.len; i++) {
+    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder)))
+      break;
+
+    AstNode *stmt = node->block.statements.items[i];
+    if (!stmt)
+      continue;
+
+    if (stmt->tag == NODE_EXPR_STMT) {
+      last_val = cg_expression(cg, stmt->expr_stmt.expr);
+    } else {
+      cg_statement(cg, stmt);
+    }
+  }
+
+  cg_pop_scope(cg);
+
+  if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder)))
+    return NULL;
+
+  if (last_val)
+    return last_val;
+
+  if (node->resolved_type)
+    return LLVMConstNull(cg_type_get_llvm(cg, node->resolved_type));
+
+  return NULL;
+}
+
 static LLVMValueRef cg_arith_expr(Codegen *cg, LLVMValueRef lhs,
                                   LLVMValueRef rhs, ArithmOp op) {
   LLVMTypeRef type = LLVMTypeOf(lhs);
@@ -299,12 +335,123 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
       LLVMBuildICmp(cg->builder, LLVMIntNE, tag, LLVMConstInt(tag_ty, 0, false),
                     "result_is_error");
 
+    if (!node->binary_else.right) {
+    LLVMBasicBlockRef error_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "question_error");
+    LLVMBasicBlockRef success_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "question_success");
+    LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(
+      cg->context, cg->current_function, "question_merge");
+
+    LLVMBuildCondBr(cg->builder, is_error, error_bb, success_bb);
+
+    LLVMPositionBuilderAtEnd(cg->builder, error_bb);
+    LLVMBuildRet(cg->builder, left);
+
+    LLVMPositionBuilderAtEnd(cg->builder, success_bb);
+    LLVMValueRef success_raw =
+      LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+    LLVMValueRef success_val =
+      cg_cast_value(cg, success_raw, left_type->data.result.success,
+              cg_type_get_llvm(cg, node->resolved_type));
+    LLVMBuildBr(cg->builder, merge_bb);
+
+    LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+    LLVMValueRef phi = LLVMBuildPhi(cg->builder,
+                    cg_type_get_llvm(cg, node->resolved_type),
+                    "question_val");
+    LLVMAddIncoming(phi, &success_val, &success_bb, 1);
+    return phi;
+    }
+
+  if (node->binary_else.right &&
+      node->binary_else.right->tag == NODE_RETURN_STMT) {
+    LLVMBasicBlockRef current_block = LLVMGetInsertBlock(cg->builder);
+    LLVMBasicBlockRef error_bb = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "else_error");
+    LLVMBasicBlockRef success_bb = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "else_success");
+    LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "else_merge");
+
+    (void)current_block;
+    LLVMBuildCondBr(cg->builder, is_error, error_bb, success_bb);
+
+    LLVMPositionBuilderAtEnd(cg->builder, error_bb);
+    cg_statement(cg, node->binary_else.right);
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+      LLVMBuildBr(cg->builder, merge_bb);
+    }
+
+    LLVMPositionBuilderAtEnd(cg->builder, success_bb);
+    LLVMValueRef success_raw =
+        LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+    LLVMValueRef success_val =
+        cg_cast_value(cg, success_raw, left_type->data.result.success,
+                      cg_type_get_llvm(cg, node->resolved_type));
+    LLVMBuildBr(cg->builder, merge_bb);
+
+    LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+    LLVMValueRef phi = LLVMBuildPhi(
+        cg->builder, cg_type_get_llvm(cg, node->resolved_type), "else_val");
+    LLVMAddIncoming(phi, &success_val, &success_bb, 1);
+    return phi;
+  }
+
+  if (node->binary_else.right && node->binary_else.right->tag == NODE_BLOCK) {
+    LLVMBasicBlockRef error_bb = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "else_error");
+    LLVMBasicBlockRef success_bb = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "else_success");
+    LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "else_merge");
+
+    LLVMBuildCondBr(cg->builder, is_error, error_bb, success_bb);
+
+    LLVMPositionBuilderAtEnd(cg->builder, error_bb);
+    LLVMValueRef block_val = cg_expression(cg, node->binary_else.right);
+    bool error_terminated =
+        LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder)) != NULL;
+    if (!error_terminated) {
+      if (block_val && node->resolved_type) {
+        block_val = cg_cast_value(cg, block_val,
+                                  node->binary_else.right->resolved_type,
+                                  cg_type_get_llvm(cg, node->resolved_type));
+      }
+      if (!block_val && node->resolved_type) {
+        block_val = LLVMConstNull(cg_type_get_llvm(cg, node->resolved_type));
+      }
+      LLVMBuildBr(cg->builder, merge_bb);
+    }
+
+    LLVMPositionBuilderAtEnd(cg->builder, success_bb);
+    LLVMValueRef success_raw =
+        LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+    LLVMValueRef success_val =
+        cg_cast_value(cg, success_raw, left_type->data.result.success,
+                      cg_type_get_llvm(cg, node->resolved_type));
+    LLVMBuildBr(cg->builder, merge_bb);
+
+    LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+    LLVMTypeRef out_ty = cg_type_get_llvm(cg, node->resolved_type);
+    LLVMValueRef phi = LLVMBuildPhi(cg->builder, out_ty, "else_val_block");
+    if (!error_terminated) {
+      LLVMAddIncoming(phi, &block_val, &error_bb, 1);
+    }
+    LLVMAddIncoming(phi, &success_val, &success_bb, 1);
+    return phi;
+  }
+
   LLVMValueRef right = cg_expression(cg, node->binary_else.right);
   LLVMValueRef success_raw =
       LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
   LLVMValueRef success_val =
       cg_cast_value(cg, success_raw, left_type->data.result.success,
                     cg_type_get_llvm(cg, node->resolved_type));
+  if (right && node->resolved_type) {
+    right = cg_cast_value(cg, right, node->binary_else.right->resolved_type,
+                          cg_type_get_llvm(cg, node->resolved_type));
+  }
 
   return LLVMBuildSelect(cg->builder, is_error, right, success_val, "else_val");
 }
@@ -586,6 +733,8 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
     return cg_binary_is_expr(cg, node);
   case NODE_BINARY_ELSE:
     return cg_binary_else_expr(cg, node);
+  case NODE_BLOCK:
+    return cg_block_expr(cg, node);
   case NODE_UNARY:
     return cg_unary_expr(cg, node);
   case NODE_TERNARY:

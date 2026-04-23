@@ -169,6 +169,25 @@ static int is_lvalue(AstNode *node) {
          (node->tag == NODE_UNARY && node->unary.op == OP_DEREF);
 }
 
+static bool token_starts_expression(TokenType type) {
+  switch (type) {
+  case TOKEN_IDENT:
+  case TOKEN_NUMBER:
+  case TOKEN_CHAR:
+  case TOKEN_STRING:
+  case TOKEN_TRUE:
+  case TOKEN_FALSE:
+  case TOKEN_NULL:
+  case TOKEN_NEW:
+  case TOKEN_LPAREN:
+  case TOKEN_LBRACKET:
+  case TOKEN_ERROR_KEYWORD:
+    return true;
+  default:
+    return false;
+  }
+}
+
 AstNode *parser_parse_expression(Parser *p, int min_bp) {
   AstNode *left = parser_parse_primary(p);
   if (!left)
@@ -194,6 +213,10 @@ AstNode *parser_parse_expression(Parser *p, int min_bp) {
     parser_token_advance(p);
 
     if (op.type == TOKEN_QUESTION) {
+      if (!token_starts_expression(p->current_token.type)) {
+        left = AstNode_new_binary_else(left, NULL, op.loc);
+        continue;
+      }
       AstNode *true_expr = parser_parse_expression(p, 0);
       if (!true_expr)
         return NULL;
@@ -206,7 +229,14 @@ AstNode *parser_parse_expression(Parser *p, int min_bp) {
       continue;
     }
 
-    AstNode *right = parser_parse_expression(p, bp.right_bp);
+    AstNode *right = NULL;
+    if (op.type == TOKEN_ELSE && p->current_token.type == TOKEN_RETURN) {
+      right = parser_parse_return_stmt(p, false);
+    } else if (op.type == TOKEN_ELSE && p->current_token.type == TOKEN_LBRACE) {
+      right = parser_parse_block(p);
+    } else {
+      right = parser_parse_expression(p, bp.right_bp);
+    }
     if (!right)
       return NULL;
 

@@ -811,6 +811,27 @@ bool type_is_unknown(Type *t) {
   return t && t->kind == KIND_PRIMITIVE && t->data.primitive == PRIM_UNKNOWN;
 }
 
+static bool error_set_contains_all(Type *to, Type *from) {
+  if (!to || !from || to->kind != KIND_ERROR_SET || from->kind != KIND_ERROR_SET)
+    return false;
+  for (size_t i = 0; i < from->members.len; i++) {
+    Member *member = from->members.items[i];
+    if (!member || !member->type || member->type->kind != KIND_ERROR)
+      return false;
+    bool found = false;
+    for (size_t j = 0; j < to->members.len; j++) {
+      Member *candidate = to->members.items[j];
+      if (candidate && candidate->type && type_equals(candidate->type, member->type)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      return false;
+  }
+  return true;
+}
+
 bool type_is_concrete(Type *t) {
   if (!t)
     return false;
@@ -927,9 +948,17 @@ int type_can_implicitly_cast(Type *to, Type *from) {
         return 1;
       if (to->data.result.error_set &&
           to->data.result.error_set->kind == KIND_ERROR_SET &&
-          sv_eq(to->data.result.error_set->name, sv_from_parts("Error", 5))) {
-        return type_can_implicitly_cast(to->data.result.success,
-                                        from->data.result.success);
+          type_can_implicitly_cast(to->data.result.success,
+                                   from->data.result.success)) {
+        if (sv_eq(to->data.result.error_set->name, sv_from_parts("Error", 5))) {
+          return 1;
+        }
+        if (from->data.result.error_set &&
+            from->data.result.error_set->kind == KIND_ERROR_SET &&
+            error_set_contains_all(to->data.result.error_set,
+                                   from->data.result.error_set)) {
+          return 1;
+        }
       }
       return 0;
     }

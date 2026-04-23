@@ -95,6 +95,7 @@ void sema_check_block(Sema *s, AstNode *node) {
 
   List return_points;
   List_init(&return_points);
+  Type *last_type = type_get_primitive(s->types, PRIM_VOID);
 
   for (size_t i = 0; i < node->block.statements.len; i++) {
     AstNode *stmt = node->block.statements.items[i];
@@ -105,6 +106,11 @@ void sema_check_block(Sema *s, AstNode *node) {
       List_push(&return_points, info);
     }
     sema_check_stmt(s, node->block.statements.items[i]);
+    if (stmt && stmt->tag == NODE_EXPR_STMT && stmt->expr_stmt.expr) {
+      last_type = sema_check_expr(s, stmt->expr_stmt.expr).type;
+    } else if (stmt && stmt->tag == NODE_RETURN_STMT) {
+      last_type = s->ret_type ? s->ret_type : last_type;
+    }
   }
 
   size_t symbols_to_drop = s->scope->symbols.len;
@@ -123,6 +129,7 @@ void sema_check_block(Sema *s, AstNode *node) {
     sema_check_stmt(s, node->block.statements.items[j]);
   }
 
+  node->resolved_type = last_type;
   sema_scope_pop(s);
 }
 

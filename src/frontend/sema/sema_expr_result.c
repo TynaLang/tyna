@@ -1,5 +1,10 @@
 #include "sema_internal.h"
 
+static bool sema_result_error_set_is_wildcard(Type *error_set) {
+  return error_set && error_set->kind == KIND_ERROR_SET &&
+         (error_set->name.len == 0 || sv_eq_cstr(error_set->name, "Error"));
+}
+
 ExprInfo sema_check_binary_is(Sema *s, AstNode *node) {
   Type *left = sema_check_expr(s, node->binary_is.left).type;
   Type *right = sema_check_expr(s, node->binary_is.right).type;
@@ -67,17 +72,76 @@ ExprInfo sema_check_binary_is(Sema *s, AstNode *node) {
   return (ExprInfo){.type = result, .category = VAL_RVALUE};
 }
 
+static bool sema_block_has_return(AstNode *block) {
+  if (!block || block->tag != NODE_BLOCK)
+    return false;
+  for (size_t i = 0; i < block->block.statements.len; i++) {
+    AstNode *stmt = block->block.statements.items[i];
+    if (stmt && stmt->tag == NODE_RETURN_STMT)
+      return true;
+  }
+  return false;
+}
+
 ExprInfo sema_check_binary_else(Sema *s, AstNode *node) {
   Type *left = sema_check_expr(s, node->binary_else.left).type;
-  Type *right = sema_check_expr(s, node->binary_else.right).type;
 
-  if (!left || !right) {
+  if (!left) {
     sema_error(s, node, "Invalid operands for 'else' expression");
     return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
                       .category = VAL_RVALUE};
   }
 
   if (left->kind == KIND_RESULT) {
+    if (!node->binary_else.right) {
+      if (s->fn_node) {
+        if (s->ret_type && s->ret_type->kind == KIND_RESULT &&
+            s->ret_type->data.result.error_set &&
+            sema_result_error_set_is_wildcard(
+                s->ret_type->data.result.error_set) &&
+            left->data.result.error_set &&
+            left->data.result.error_set->kind == KIND_ERROR_SET) {
+          for (size_t i = 0; i < left->data.result.error_set->members.len;
+               i++) {
+            Member *member = left->data.result.error_set->members.items[i];
+            if (member && member->type && member->type->kind == KIND_ERROR &&
+                !error_set_contains(s->ret_type->data.result.error_set,
+                                    member->type)) {
+              type_add_member(s->ret_type->data.result.error_set, NULL,
+                              member->type, 0);
+            }
+          }
+        }
+        return (ExprInfo){.type = left->data.result.success,
+                          .category = VAL_RVALUE};
+      }
+      sema_error(s, node, "The '?' operator requires a function context",
+                 type_to_name(left));
+      return (ExprInfo){.type = left->data.result.success,
+                        .category = VAL_RVALUE};
+    }
+
+    if (node->binary_else.right &&
+        node->binary_else.right->tag == NODE_RETURN_STMT) {
+      sema_check_stmt(s, node->binary_else.right);
+      return (ExprInfo){.type = left->data.result.success,
+                        .category = VAL_RVALUE};
+    }
+
+    if (node->binary_else.right && node->binary_else.right->tag == NODE_BLOCK &&
+        sema_block_has_return(node->binary_else.right)) {
+      sema_check_stmt(s, node->binary_else.right);
+      return (ExprInfo){.type = left->data.result.success,
+                        .category = VAL_RVALUE};
+    }
+
+    Type *right = sema_check_expr(s, node->binary_else.right).type;
+    if (!right) {
+      sema_error(s, node, "Invalid operands for 'else' expression");
+      return (ExprInfo){.type = left->data.result.success,
+                        .category = VAL_RVALUE};
+    }
+
     if (type_can_implicitly_cast(left->data.result.success, right)) {
       return (ExprInfo){.type = left->data.result.success,
                         .category = VAL_RVALUE};
