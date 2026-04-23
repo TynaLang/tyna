@@ -130,6 +130,7 @@ struct AstNode {
     struct {
       AstNode *name;
       List members; // List<AstNode* (NODE_VAR_DECL)>
+      StringView message;
       bool is_export;
     } error_decl;
 
@@ -412,7 +413,8 @@ AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
                                  bool is_frozen, bool is_export, Location loc);
 AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
                                 bool is_frozen, bool is_export, Location loc);
-AstNode *AstNode_new_error_decl(AstNode *name, List members, bool is_export,
+AstNode *AstNode_new_error_decl(AstNode *name, List members,
+                                StringView message, bool is_export,
                                 Location loc);
 AstNode *AstNode_new_error_set_decl(AstNode *name, List members, bool is_export,
                                     Location loc);

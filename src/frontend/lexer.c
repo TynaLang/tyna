@@ -365,6 +365,9 @@ Token Token_advance(Lexer *l) {
   case '|':
     t.type = (peek(l) == '|') ? (advance(l), TOKEN_OR) : TOKEN_BIT_OR;
     break;
+  case '@':
+    t.type = TOKEN_AT;
+    break;
 
   default:
     t.type = TOKEN_LEXER_ERROR;

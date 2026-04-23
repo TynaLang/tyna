@@ -306,11 +306,13 @@ AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
   return node;
 }
 
-AstNode *AstNode_new_error_decl(AstNode *name, List members, bool is_export,
-                                Location loc) {
+AstNode *AstNode_new_error_decl(AstNode *name, List members,
+                                 StringView message, bool is_export,
+                                 Location loc) {
   AstNode *node = AstNode_new(NODE_ERROR_DECL, loc);
   node->error_decl.name = name;
   node->error_decl.members = members;
+  node->error_decl.message = message;
   node->error_decl.is_export = is_export;
   return node;
 }

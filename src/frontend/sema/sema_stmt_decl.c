@@ -1,4 +1,38 @@
 #include "sema_internal.h"
+#include <ctype.h>
+
+static bool sema_error_message_validate(Sema *s, AstNode *node, StringView msg,
+                                        size_t field_count) {
+  bool valid = true;
+  for (size_t i = 0; i + 1 < msg.len; i++) {
+    if (msg.data[i] != '$')
+      continue;
+
+    size_t j = i + 1;
+    if (j >= msg.len || !isdigit((unsigned char)msg.data[j])) {
+      sema_error(s, node,
+                 "Invalid placeholder in @message: expected '$<number>'");
+      valid = false;
+      continue;
+    }
+
+    int idx = 0;
+    while (j < msg.len && isdigit((unsigned char)msg.data[j])) {
+      idx = idx * 10 + (msg.data[j] - '0');
+      j++;
+    }
+
+    if ((size_t)idx >= field_count) {
+      sema_error(s, node,
+                 "@message placeholder '$%d' is out of bounds for error "
+                 "payload with %zu field(s)",
+                 idx, field_count);
+      valid = false;
+    }
+    i = j - 1;
+  }
+  return valid;
+}
 
 void sema_check_var_decl(Sema *s, AstNode *node) {
   StringView name = node->var_decl.name->var.value;
@@ -95,6 +129,55 @@ void sema_check_error_decl(Sema *s, AstNode *node) {
 
   size_t offset = 0;
   size_t max_align = 1;
+
+  if (node->error_decl.message.len > 0) {
+    sema_error_message_validate(s, node, node->error_decl.message,
+                                node->error_decl.members.len);
+    t->error_message_template = node->error_decl.message;
+  }
+
+  {
+    StringView error_name = name;
+    const char *prefix = "__tyna_error_print_";
+    size_t prefix_len = strlen(prefix);
+    size_t name_len = error_name.len;
+    char *internal_name = xmalloc(prefix_len + name_len + 1);
+    memcpy(internal_name, prefix, prefix_len);
+    memcpy(internal_name + prefix_len, error_name.data, name_len);
+    internal_name[prefix_len + name_len] = '\0';
+
+    StringView method_name = sv_from_cstr(internal_name);
+    AstNode *method_name_node = AstNode_new_var(method_name, node->loc);
+    Type *self_ptr_type = type_get_pointer(s->types, t);
+    AstNode *self_param =
+        AstNode_new_param(AstNode_new_var(sv_from_cstr("self"), node->loc),
+                          self_ptr_type, node->loc);
+    List params;
+    List_init(&params);
+    List_push(&params, self_param);
+
+    AstNode *fn_decl = AstNode_new_func_decl(
+        method_name_node, params, type_get_primitive(s->types, PRIM_VOID), NULL,
+        false, false, false, node->loc);
+
+    Symbol *method_sym = xcalloc(1, sizeof(Symbol));
+    method_sym->name = method_name;
+    method_sym->original_name = sv_from_cstr("print");
+    method_sym->type = type_get_primitive(s->types, PRIM_VOID);
+    method_sym->kind = SYM_METHOD;
+    method_sym->value = fn_decl;
+    method_sym->is_const = false;
+    method_sym->is_export = false;
+    method_sym->is_external = false;
+    method_sym->is_moved = false;
+    method_sym->requires_storage = false;
+    method_sym->requires_arena = false;
+    method_sym->scope = NULL;
+    method_sym->func_status = FUNC_NONE;
+    method_sym->builtin_kind = BUILTIN_NONE;
+    method_sym->module = NULL;
+    List_push(&t->methods, method_sym);
+  }
 
   for (size_t i = 0; i < node->error_decl.members.len; i++) {
     AstNode *mem = node->error_decl.members.items[i];

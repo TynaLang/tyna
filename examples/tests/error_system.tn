@@ -2,6 +2,7 @@
 error NotFound;
 
 // 2. Declare a rich error (20 byte payload)
+@message("Invalid input: code $0 expected $1")
 error InvalidInput {
     code: i32,
     expected: i32,
@@ -140,6 +141,16 @@ fn main(): i32 {
 
     let question_diff_fallback = question_diff(99) else -1;
     print("Scenario 12 Pass: question_diff fallback gave", question_diff_fallback);
+
+    // --- SCENARIO 13: Error print with @message ---
+    let invalid = InvalidInput { code: 123, expected: 456 };
+    invalid.print();
+    print("Scenario 13 Pass: error print emitted");
+
+    // --- SCENARIO 14: Error print without @message (should print type name) ---
+    let not_found = NotFound;
+    not_found.print();
+    print("Scenario 14 Pass: bare error print emitted");
 
     // A concrete named result set is still closed today.
     // This should fail if uncommented because NotFound does not include InvalidInput:

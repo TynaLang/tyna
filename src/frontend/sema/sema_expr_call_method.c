@@ -144,7 +144,7 @@ bool sema_try_resolve_method_call(Sema *s, AstNode *node) {
     }
 
     if (obj_type->kind == KIND_STRUCT || obj_type->kind == KIND_TEMPLATE ||
-        obj_type->kind == KIND_STRING_BUFFER ||
+        obj_type->kind == KIND_ERROR || obj_type->kind == KIND_STRING_BUFFER ||
         (obj_type->kind == KIND_PRIMITIVE &&
          obj_type->data.primitive == PRIM_STRING)) {
       if (sema_try_resolve_struct_method(s, node, field_node, obj_type,
@@ -175,6 +175,7 @@ bool sema_try_resolve_method_call(Sema *s, AstNode *node) {
                : sema_find_type_by_name(s, sm->static_member.parent);
     if (parent_type && (parent_type->kind == KIND_STRUCT ||
                         parent_type->kind == KIND_TEMPLATE ||
+                        parent_type->kind == KIND_ERROR ||
                         parent_type->kind == KIND_STRING_BUFFER ||
                         (parent_type->kind == KIND_PRIMITIVE &&
                          parent_type->data.primitive == PRIM_STRING))) {

@@ -185,6 +185,8 @@ AstNode *parser_parse_statement(Parser *p) {
     return parser_parse_struct_decl(p, false, is_export);
   case TOKEN_UNION:
     return parser_parse_union_decl(p, false, is_export);
+  case TOKEN_AT:
+    return parser_parse_error_decl(p, is_export);
   case TOKEN_ERROR_KEYWORD:
     return parser_parse_error_decl(p, is_export);
   case TOKEN_ERRORS:

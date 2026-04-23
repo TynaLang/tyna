@@ -1,6 +1,7 @@
 #include <llvm-c/Core.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "cg_internal.h"
 #include "tyna/ast.h"
@@ -8,6 +9,387 @@
 #include "tyna/sema.h"
 #include "tyna/utils.h"
 #include "llvm-c/Types.h"
+
+static bool cg_is_error_print_method(StringView name) {
+  const char *prefix = "__tyna_error_print_";
+  size_t prefix_len = strlen(prefix);
+  return name.len > prefix_len && memcmp(name.data, prefix, prefix_len) == 0;
+}
+
+static LLVMValueRef cg_get_error_field_value(Codegen *cg,
+                                             LLVMValueRef error_ptr,
+                                             Type *error_type, Member *member) {
+  LLVMTypeRef err_ty = cg_type_get_llvm(cg, error_type);
+  LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+      cg->builder, err_ty, error_ptr, member->index, "error_field_ptr");
+  LLVMTypeRef field_ty = cg_type_get_llvm(cg, member->type);
+  return LLVMBuildLoad2(cg->builder, field_ty, field_ptr, "error_field");
+}
+
+static void cg_append_fmt_char(char **fmt, size_t *fmt_len, size_t *fmt_cap,
+                               char ch) {
+  if (*fmt_len + 2 >= *fmt_cap) {
+    *fmt_cap = *fmt_cap ? *fmt_cap * 2 : 256;
+    *fmt = realloc(*fmt, *fmt_cap);
+  }
+  (*fmt)[(*fmt_len)++] = ch;
+}
+
+static void cg_append_fmt_text(char **fmt, size_t *fmt_len, size_t *fmt_cap,
+                               const char *text) {
+  while (*text) {
+    char ch = *text++;
+    if (ch == '%') {
+      cg_append_fmt_char(fmt, fmt_len, fmt_cap, '%');
+      cg_append_fmt_char(fmt, fmt_len, fmt_cap, '%');
+    } else {
+      cg_append_fmt_char(fmt, fmt_len, fmt_cap, ch);
+    }
+  }
+}
+
+static void cg_append_fmt_literal(char **fmt, size_t *fmt_len, size_t *fmt_cap,
+                                  const char *text) {
+  while (*text) {
+    cg_append_fmt_char(fmt, fmt_len, fmt_cap, *text++);
+  }
+}
+
+static void cg_append_fmt_stringview(char **fmt, size_t *fmt_len,
+                                     size_t *fmt_cap, StringView sv) {
+  for (size_t i = 0; i < sv.len; i++) {
+    char ch = sv.data[i];
+    if (ch == '%') {
+      cg_append_fmt_char(fmt, fmt_len, fmt_cap, '%');
+      cg_append_fmt_char(fmt, fmt_len, fmt_cap, '%');
+    } else {
+      cg_append_fmt_char(fmt, fmt_len, fmt_cap, ch);
+    }
+  }
+}
+
+static void cg_push_fmt_arg(LLVMValueRef **fmt_args, size_t *arg_count,
+                            LLVMValueRef value) {
+  *fmt_args = realloc(*fmt_args, sizeof(LLVMValueRef) * (*arg_count + 1));
+  (*fmt_args)[(*arg_count)++] = value;
+}
+
+static LLVMValueRef cg_error_print_call(Codegen *cg, AstNode *node) {
+  if (node->call.args.len == 0)
+    panic("Error print call missing self argument");
+
+  AstNode *self_node = node->call.args.items[0];
+  LLVMValueRef self_val = cg_expression(cg, self_node);
+  Type *self_type = self_node->resolved_type;
+  if (!self_type) {
+    panic("Error print call missing resolved self type");
+  }
+
+  bool self_is_ptr = false;
+  while (self_type && self_type->kind == KIND_POINTER) {
+    self_is_ptr = true;
+    self_type = self_type->data.pointer_to;
+  }
+
+  if (!self_type || self_type->kind != KIND_ERROR) {
+    panic("Error print call on non-error type");
+  }
+
+  Type *error_type = self_type;
+  LLVMTypeRef err_ty = cg_type_get_llvm(cg, error_type);
+  LLVMValueRef err_ptr = self_val;
+  if (!self_is_ptr) {
+    LLVMValueRef temp = cg_alloca_in_entry_uninitialized(
+        cg, error_type, sv_from_cstr("error_tmp"));
+    LLVMBuildStore(cg->builder, self_val, temp);
+    err_ptr = temp;
+  }
+
+  StringView tmpl = error_type->error_message_template;
+  char *fmt = NULL;
+  size_t fmt_len = 0;
+  size_t fmt_cap = 0;
+  LLVMValueRef *fmt_args = NULL;
+  size_t arg_count = 0;
+
+  if (tmpl.len > 0) {
+    for (size_t i = 0; i < tmpl.len; i++) {
+      char c = tmpl.data[i];
+      if (c != '$') {
+        cg_append_fmt_char(&fmt, &fmt_len, &fmt_cap, c);
+        continue;
+      }
+
+      size_t j = i + 1;
+      if (j >= tmpl.len || tmpl.data[j] < '0' || tmpl.data[j] > '9') {
+        cg_append_fmt_char(&fmt, &fmt_len, &fmt_cap, '$');
+        continue;
+      }
+
+      int idx = 0;
+      while (j < tmpl.len && tmpl.data[j] >= '0' && tmpl.data[j] <= '9') {
+        idx = idx * 10 + (tmpl.data[j] - '0');
+        j++;
+      }
+
+      if (idx < 0 || (size_t)idx >= error_type->members.len) {
+        panic("Error message placeholder out of range");
+      }
+
+      Member *member = error_type->members.items[idx];
+      LLVMValueRef field_val =
+          cg_get_error_field_value(cg, err_ptr, error_type, member);
+      Type *field_ty = member->type;
+      if (field_ty->kind == KIND_PRIMITIVE) {
+        switch (field_ty->data.primitive) {
+        case PRIM_BOOL: {
+          LLVMValueRef true_str =
+              cg_get_string_constant_ptr(cg, sv_from_cstr("true"));
+          LLVMValueRef false_str =
+              cg_get_string_constant_ptr(cg, sv_from_cstr("false"));
+          LLVMValueRef is_true = LLVMBuildICmp(
+              cg->builder, LLVMIntEQ, field_val,
+              LLVMConstInt(LLVMTypeOf(field_val), 1, 0), "bool_eq");
+          LLVMValueRef selected = LLVMBuildSelect(
+              cg->builder, is_true, true_str, false_str, "bool_str");
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%s");
+          cg_push_fmt_arg(&fmt_args, &arg_count, selected);
+          break;
+        }
+        case PRIM_CHAR: {
+          LLVMValueRef char_val =
+              LLVMBuildZExt(cg->builder, field_val,
+                            LLVMInt32TypeInContext(cg->context), "char_to_int");
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%c");
+          cg_push_fmt_arg(&fmt_args, &arg_count, char_val);
+          break;
+        }
+        case PRIM_I8:
+        case PRIM_I16:
+        case PRIM_I32: {
+          LLVMValueRef int_val =
+              LLVMBuildSExt(cg->builder, field_val,
+                            LLVMInt32TypeInContext(cg->context), "int_prom");
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%d");
+          cg_push_fmt_arg(&fmt_args, &arg_count, int_val);
+          break;
+        }
+        case PRIM_U8:
+        case PRIM_U16:
+        case PRIM_U32: {
+          LLVMValueRef uint_val =
+              LLVMBuildZExt(cg->builder, field_val,
+                            LLVMInt32TypeInContext(cg->context), "uint_prom");
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%u");
+          cg_push_fmt_arg(&fmt_args, &arg_count, uint_val);
+          break;
+        }
+        case PRIM_I64: {
+          LLVMValueRef int_val =
+              LLVMBuildSExt(cg->builder, field_val,
+                            LLVMInt64TypeInContext(cg->context), "i64_prom");
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%ld");
+          cg_push_fmt_arg(&fmt_args, &arg_count, int_val);
+          break;
+        }
+        case PRIM_U64: {
+          LLVMValueRef uint_val =
+              LLVMBuildZExt(cg->builder, field_val,
+                            LLVMInt64TypeInContext(cg->context), "u64_prom");
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%lu");
+          cg_push_fmt_arg(&fmt_args, &arg_count, uint_val);
+          break;
+        }
+        case PRIM_F32: {
+          LLVMValueRef float_val =
+              LLVMBuildFPExt(cg->builder, field_val,
+                             LLVMDoubleTypeInContext(cg->context), "f_prom");
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%f");
+          cg_push_fmt_arg(&fmt_args, &arg_count, float_val);
+          break;
+        }
+        case PRIM_F64: {
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%f");
+          cg_push_fmt_arg(&fmt_args, &arg_count, field_val);
+          break;
+        }
+        case PRIM_STRING: {
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%s");
+          LLVMValueRef str_ptr =
+              LLVMBuildExtractValue(cg->builder, field_val, 0, "str_ptr");
+          cg_push_fmt_arg(&fmt_args, &arg_count, str_ptr);
+          break;
+        }
+        default: {
+          cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%p");
+          LLVMValueRef ptr_val = LLVMBuildBitCast(
+              cg->builder, field_val,
+              LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+              "ptr_val");
+          cg_push_fmt_arg(&fmt_args, &arg_count, ptr_val);
+          break;
+        }
+        }
+      } else if (field_ty->kind == KIND_POINTER &&
+                 field_ty->data.pointer_to->kind == KIND_PRIMITIVE &&
+                 field_ty->data.pointer_to->data.primitive == PRIM_CHAR) {
+        cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%s");
+        cg_push_fmt_arg(&fmt_args, &arg_count, field_val);
+      } else {
+        cg_append_fmt_literal(&fmt, &fmt_len, &fmt_cap, "%p");
+        LLVMValueRef ptr_val = LLVMBuildBitCast(
+            cg->builder, field_val,
+            LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0), "ptr_val");
+        cg_push_fmt_arg(&fmt_args, &arg_count, ptr_val);
+      }
+
+      i = j - 1;
+    }
+  } else {
+    cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "Error ");
+    cg_append_fmt_stringview(&fmt, &fmt_len, &fmt_cap, error_type->name);
+    if (error_type->members.len > 0) {
+      cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "{");
+      for (size_t idx = 0; idx < error_type->members.len; idx++) {
+        if (idx > 0)
+          cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, ", ");
+        Member *member = error_type->members.items[idx];
+        cg_append_fmt_stringview(&fmt, &fmt_len, &fmt_cap,
+                                 sv_from_cstr(member->name));
+        cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "=");
+        LLVMValueRef field_val =
+            cg_get_error_field_value(cg, err_ptr, error_type, member);
+        Type *field_ty = member->type;
+        if (field_ty->kind == KIND_PRIMITIVE) {
+          switch (field_ty->data.primitive) {
+          case PRIM_BOOL: {
+            LLVMValueRef true_str =
+                cg_get_string_constant_ptr(cg, sv_from_cstr("true"));
+            LLVMValueRef false_str =
+                cg_get_string_constant_ptr(cg, sv_from_cstr("false"));
+            LLVMValueRef is_true = LLVMBuildICmp(
+                cg->builder, LLVMIntEQ, field_val,
+                LLVMConstInt(LLVMTypeOf(field_val), 1, 0), "bool_eq");
+            LLVMValueRef selected = LLVMBuildSelect(
+                cg->builder, is_true, true_str, false_str, "bool_str");
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%s");
+            cg_push_fmt_arg(&fmt_args, &arg_count, selected);
+            break;
+          }
+          case PRIM_CHAR: {
+            LLVMValueRef char_val = LLVMBuildZExt(
+                cg->builder, field_val, LLVMInt32TypeInContext(cg->context),
+                "char_to_int");
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%c");
+            cg_push_fmt_arg(&fmt_args, &arg_count, char_val);
+            break;
+          }
+          case PRIM_I8:
+          case PRIM_I16:
+          case PRIM_I32: {
+            LLVMValueRef int_val =
+                LLVMBuildSExt(cg->builder, field_val,
+                              LLVMInt32TypeInContext(cg->context), "int_prom");
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%d");
+            cg_push_fmt_arg(&fmt_args, &arg_count, int_val);
+            break;
+          }
+          case PRIM_U8:
+          case PRIM_U16:
+          case PRIM_U32: {
+            LLVMValueRef uint_val =
+                LLVMBuildZExt(cg->builder, field_val,
+                              LLVMInt32TypeInContext(cg->context), "uint_prom");
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%u");
+            cg_push_fmt_arg(&fmt_args, &arg_count, uint_val);
+            break;
+          }
+          case PRIM_I64: {
+            LLVMValueRef int_val =
+                LLVMBuildSExt(cg->builder, field_val,
+                              LLVMInt64TypeInContext(cg->context), "i64_prom");
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%ld");
+            cg_push_fmt_arg(&fmt_args, &arg_count, int_val);
+            break;
+          }
+          case PRIM_U64: {
+            LLVMValueRef uint_val =
+                LLVMBuildZExt(cg->builder, field_val,
+                              LLVMInt64TypeInContext(cg->context), "u64_prom");
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%lu");
+            cg_push_fmt_arg(&fmt_args, &arg_count, uint_val);
+            break;
+          }
+          case PRIM_F32: {
+            LLVMValueRef float_val =
+                LLVMBuildFPExt(cg->builder, field_val,
+                               LLVMDoubleTypeInContext(cg->context), "f_prom");
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%f");
+            cg_push_fmt_arg(&fmt_args, &arg_count, float_val);
+            break;
+          }
+          case PRIM_F64: {
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%f");
+            cg_push_fmt_arg(&fmt_args, &arg_count, field_val);
+            break;
+          }
+          case PRIM_STRING: {
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%s");
+            LLVMValueRef str_ptr =
+                LLVMBuildExtractValue(cg->builder, field_val, 0, "str_ptr");
+            cg_push_fmt_arg(&fmt_args, &arg_count, str_ptr);
+            break;
+          }
+          default: {
+            cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%p");
+            LLVMValueRef ptr_val = LLVMBuildBitCast(
+                cg->builder, field_val,
+                LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+                "ptr_val");
+            cg_push_fmt_arg(&fmt_args, &arg_count, ptr_val);
+            break;
+          }
+          }
+        } else if (field_ty->kind == KIND_POINTER &&
+                   field_ty->data.pointer_to->kind == KIND_PRIMITIVE &&
+                   field_ty->data.pointer_to->data.primitive == PRIM_CHAR) {
+          cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%s");
+          cg_push_fmt_arg(&fmt_args, &arg_count, field_val);
+        } else {
+          cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "%p");
+          LLVMValueRef ptr_val = LLVMBuildBitCast(
+              cg->builder, field_val,
+              LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0),
+              "ptr_val");
+          cg_push_fmt_arg(&fmt_args, &arg_count, ptr_val);
+        }
+      }
+      cg_append_fmt_text(&fmt, &fmt_len, &fmt_cap, "}");
+    }
+  }
+
+  cg_append_fmt_char(&fmt, &fmt_len, &fmt_cap, '\n');
+  cg_append_fmt_char(&fmt, &fmt_len, &fmt_cap, '\0');
+  StringView fmt_sv = sv_from_parts(fmt, fmt_len);
+  LLVMValueRef fmt_ptr = cg_get_string_constant_ptr(cg, fmt_sv);
+
+  CgFunc *printf_fn = cg_find_function(cg, sv_from_cstr("printf"));
+  if (!printf_fn)
+    panic("Missing printf for error print");
+
+  LLVMValueRef *args = xmalloc(sizeof(LLVMValueRef) * (1 + arg_count));
+  args[0] = fmt_ptr;
+  for (size_t i = 0; i < arg_count; i++)
+    args[i + 1] = fmt_args[i];
+
+  LLVMValueRef result =
+      LLVMBuildCall2(cg->builder, printf_fn->type, printf_fn->value, args,
+                     (unsigned)(1 + arg_count), "");
+  free(args);
+  free(fmt_args);
+  free(fmt);
+  return result;
+}
 
 static LLVMValueRef cg_typeof_string(Codegen *cg, Type *type) {
   const char *type_name = type_to_name(type);
@@ -163,6 +545,10 @@ LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
     if (!arg_type)
       arg_type = type_get_primitive(cg->type_ctx, PRIM_UNKNOWN);
     return cg_typeof_string(cg, arg_type);
+  }
+
+  if (cg_is_error_print_method(fn_name)) {
+    return cg_error_print_call(cg, node);
   }
 
   CgFunc *fn = cg_find_function(cg, fn_name);

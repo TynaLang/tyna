@@ -475,6 +475,7 @@ AstNode *Ast_clone(AstNode *node) {
     for (size_t i = 0; i < node->error_decl.members.len; i++)
       List_push(&copy->error_decl.members,
                 Ast_clone(node->error_decl.members.items[i]));
+    copy->error_decl.message = node->error_decl.message;
     copy->error_decl.is_export = node->error_decl.is_export;
     break;
 

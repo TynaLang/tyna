@@ -261,9 +261,57 @@ struct_decl_error:
   return NULL;
 }
 
+static StringView parser_parse_error_message_attr(Parser *p) {
+  if (p->current_token.type != TOKEN_AT)
+    return sv_from_parts("", 0);
+
+  parser_token_advance(p); // consume '@'
+  Token attr_name = p->current_token;
+  if (!parser_expect(p, TOKEN_IDENT, "Expected attribute name after '@'"))
+    return sv_from_parts("", 0);
+
+  if (!sv_eq(attr_name.text, sv_from_cstr("message"))) {
+    ErrorHandler_report(p->eh, attr_name.loc,
+                        "Unknown error attribute '%.*s'",
+                        (int)attr_name.text.len,
+                        attr_name.text.data);
+    return sv_from_parts("", 0);
+  }
+
+  if (!parser_expect(p, TOKEN_LPAREN, "Expected '(' after @message"))
+    return sv_from_parts("", 0);
+
+  if (p->current_token.type != TOKEN_STRING) {
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Expected string literal in @message");
+    return sv_from_parts("", 0);
+  }
+
+  StringView message = p->current_token.text;
+  parser_token_advance(p);
+
+  if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after @message string"))
+    return sv_from_parts("", 0);
+
+  return message;
+}
+
 AstNode *parser_parse_error_decl(Parser *p, bool is_export) {
   Location loc = p->current_token.loc;
+  StringView message = sv_from_parts("", 0);
+
+  if (p->current_token.type == TOKEN_AT) {
+    message = parser_parse_error_message_attr(p);
+  }
+
+  if (p->current_token.type != TOKEN_ERROR_KEYWORD) {
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Expected 'error' after attribute");
+    return NULL;
+  }
+
   parser_token_advance(p); // consume 'error'
+
 
   Token name_token = p->current_token;
   if (!parser_expect(p, TOKEN_IDENT, "Expected error name"))
@@ -321,7 +369,7 @@ AstNode *parser_parse_error_decl(Parser *p, bool is_export) {
       return NULL;
   }
 
-  return AstNode_new_error_decl(name_node, members, is_export, loc);
+  return AstNode_new_error_decl(name_node, members, message, is_export, loc);
 }
 
 AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {

@@ -52,6 +52,7 @@ typedef struct Member {
 struct Type {
   TypeKind kind;
   StringView name;
+  StringView error_message_template;
   size_t size;
   size_t alignment;
   uint64_t fixed_array_len;
