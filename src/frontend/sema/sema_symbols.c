@@ -41,8 +41,9 @@ Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
   sym->type = type;
   sym->is_const = is_const;
   sym->is_export = false;
+  sym->is_pub_module = false;
   sym->is_external = false;
-  sym->is_moved = 0;
+  sym->is_moved = false;
   sym->requires_storage = 0;
   sym->requires_arena = 0;
   sym->value = NULL;
@@ -50,7 +51,7 @@ Symbol *sema_define(Sema *s, StringView name, Type *type, bool is_const,
   sym->kind = SYM_VAR;
   sym->builtin_kind = BUILTIN_NONE;
   sym->scope = s->scope;
-  sym->module = NULL;
+  sym->module = s->current_module;
 
   List_push(&s->scope->symbols, sym);
   return sym;

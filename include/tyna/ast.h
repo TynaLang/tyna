@@ -152,6 +152,7 @@ struct AstNode {
       Type *return_type;
       bool is_static;
       bool is_export;
+      bool is_pub_module;
       bool is_external;
       bool requires_arena;
       bool consumes_string_arg;
@@ -380,7 +381,8 @@ AstNode *AstNode_new_expr_stmt(AstNode *expr, Location loc);
 AstNode *AstNode_new_call(AstNode *func, List args, Location loc);
 AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
                                AstNode *body, bool is_static, bool is_export,
-                               bool is_external, Location loc);
+                               bool is_pub_module, bool is_external,
+                               Location loc);
 AstNode *AstNode_new_return(AstNode *expr, Location loc);
 AstNode *AstNode_new_param(AstNode *name, Type *type, Location loc);
 AstNode *AstNode_new_block(Location loc);
@@ -413,9 +415,8 @@ AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
                                  bool is_frozen, bool is_export, Location loc);
 AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
                                 bool is_frozen, bool is_export, Location loc);
-AstNode *AstNode_new_error_decl(AstNode *name, List members,
-                                StringView message, bool is_export,
-                                Location loc);
+AstNode *AstNode_new_error_decl(AstNode *name, List members, StringView message,
+                                bool is_export, Location loc);
 AstNode *AstNode_new_error_set_decl(AstNode *name, List members, bool is_export,
                                     Location loc);
 AstNode *AstNode_new_impl_decl(Type *type, List members, Location loc);

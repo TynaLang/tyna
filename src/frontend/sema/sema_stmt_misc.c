@@ -7,6 +7,9 @@ void sema_check_import(Sema *s, AstNode *node) {
   if (!module)
     return;
 
+  bool import_stdlib_symbols =
+      module->is_stdlib && s->current_module && s->current_module->is_stdlib;
+
   StringView name = node->import.alias;
   if (sema_resolve_local(s, name)) {
     sema_error(s, node, "Duplicate import alias '" SV_FMT "'", SV_ARG(name));
@@ -45,6 +48,35 @@ void sema_check_import(Sema *s, AstNode *node) {
     export_sym->is_external = export->is_external;
     export_sym->is_export = false;
     export_sym->module = module;
+  }
+
+  if (import_stdlib_symbols) {
+    for (size_t i = 0; i < module->symbols.len; i++) {
+      Symbol *sym = module->symbols.items[i];
+      if (!sym->is_pub_module || sym->is_export)
+        continue;
+
+      StringView sym_name =
+          sym->original_name.len ? sym->original_name : sym->name;
+      if (sema_resolve_local(s, sym_name)) {
+        sema_error(s, node, "Duplicate imported symbol '" SV_FMT "'",
+                   SV_ARG(sym_name));
+        continue;
+      }
+
+      Symbol *import_sym =
+          sema_define(s, sym_name, sym->type, sym->is_const, node->loc);
+      if (!import_sym)
+        continue;
+
+      import_sym->original_name = sym->original_name;
+      import_sym->value = sym->value;
+      import_sym->kind = sym->kind;
+      import_sym->func_status = sym->func_status;
+      import_sym->is_external = sym->is_external;
+      import_sym->is_export = false;
+      import_sym->module = module;
+    }
   }
 }
 

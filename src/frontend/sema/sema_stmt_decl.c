@@ -158,7 +158,7 @@ void sema_check_error_decl(Sema *s, AstNode *node) {
 
     AstNode *fn_decl = AstNode_new_func_decl(
         method_name_node, params, type_get_primitive(s->types, PRIM_VOID), NULL,
-        false, false, false, node->loc);
+        false, false, false, false, node->loc);
 
     Symbol *method_sym = xcalloc(1, sizeof(Symbol));
     method_sym->name = method_name;

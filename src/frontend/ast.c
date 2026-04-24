@@ -170,7 +170,8 @@ AstNode *AstNode_new_call(AstNode *func, List args, Location loc) {
 
 AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
                                AstNode *body, bool is_static, bool is_export,
-                               bool is_external, Location loc) {
+                               bool is_pub_module, bool is_external,
+                               Location loc) {
   AstNode *node = AstNode_new(NODE_FUNC_DECL, loc);
   node->func_decl.name = name;
   node->func_decl.params = params;
@@ -178,6 +179,7 @@ AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
   node->func_decl.body = body;
   node->func_decl.is_static = is_static;
   node->func_decl.is_export = is_export;
+  node->func_decl.is_pub_module = is_pub_module;
   node->func_decl.is_external = is_external;
   node->func_decl.requires_arena = false;
   node->func_decl.consumes_string_arg = false;

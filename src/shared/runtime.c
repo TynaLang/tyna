@@ -466,6 +466,76 @@ void __tyna_string_new(TynaStringBuf *out) {
   *out = (TynaStringBuf){d, 0, initial};
 }
 
+void __tyna_string_with_capacity(TynaStringBuf *out, int64_t capacity) {
+  if (!out)
+    return;
+
+  if (capacity <= 0)
+    capacity = 1;
+
+  char *d = __tyna_string_alloc_buffer(capacity);
+  if (!d) {
+    *out = (TynaStringBuf){NULL, 0, 0};
+    return;
+  }
+  tyna_string_alloc_count++;
+  d[0] = '\0';
+  *out = (TynaStringBuf){d, 0, capacity};
+}
+
+char *__tyna_string_as_mut_ptr(TynaStringBuf *buf) {
+  if (!buf || !buf->data)
+    return NULL;
+  return buf->data;
+}
+
+void __tyna_string_set_len(TynaStringBuf *buf, int64_t len) {
+  if (!buf || !buf->data || len < 0)
+    return;
+
+  buf->len = len;
+  buf->data[len] = '\0';
+}
+
+void __tyna_string_promote_if_arena(TynaStringBuf *buf) {
+  if (!buf || !buf->data)
+    return;
+
+  if (!tyna_string_arena_owns(buf->data))
+    return;
+
+  int64_t len = buf->len;
+  int64_t alloc_size = len + 1;
+  char *heap_ptr = malloc((size_t)alloc_size);
+  if (!heap_ptr)
+    return;
+
+  if (len > 0) {
+    memcpy(heap_ptr, buf->data, (size_t)len);
+  }
+  heap_ptr[len] = '\0';
+  buf->data = heap_ptr;
+  buf->cap = len > 0 ? len : 1;
+  tyna_string_alloc_count++;
+  tyna_string_heap_alloc_count++;
+}
+
+String __tyna_str_slice(String src, int64_t start, int64_t end) {
+  if (!src.ptr || start < 0 || end < start) {
+    return (String){NULL, 0};
+  }
+
+  char *new_ptr = src.ptr + start;
+  int64_t new_len = end - start;
+  return (String){new_ptr, new_len};
+}
+
+int64_t __tyna_str_len(String s) {
+  if (!s.ptr)
+    return 0;
+  return tyna_str_real_len(s);
+}
+
 void __tyna_string_push(TynaStringBuf *buf, String piece) {
   if (!buf || !piece.ptr)
     return;
@@ -620,15 +690,15 @@ const char *__tyna_as_c_ptr(String s) {
   if (!tyna_str_is_sso(s))
     return s.ptr;
 
-  static _Thread_local char tmp[4][TYNA_SSO_MAX_LEN + 1];
-  static _Thread_local int tmp_index = 0;
-  int current = tmp_index;
-  tmp_index = (tmp_index + 1) % 4;
-
   int64_t len = tyna_str_sso_len(s);
-  tyna_str_sso_copy(s, tmp[current]);
-  tmp[current][len] = '\0';
-  return tmp[current];
+  char *heap_copy = malloc((size_t)len + 1);
+  if (!heap_copy)
+    return "";
+  tyna_str_sso_copy(s, heap_copy);
+  heap_copy[len] = '\0';
+  tyna_string_alloc_count++;
+  tyna_string_heap_alloc_count++;
+  return heap_copy;
 }
 
 int32_t __tyna_ptr_eq(const void *a, const void *b) { return a == b ? 1 : 0; }

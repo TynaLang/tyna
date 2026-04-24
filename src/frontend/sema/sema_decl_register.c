@@ -36,6 +36,7 @@ void sema_register_func_signature(Sema *s, AstNode *node) {
   if (sym) {
     sym->original_name = name;
     sym->is_export = node->func_decl.is_export;
+    sym->is_pub_module = node->func_decl.is_pub_module;
     sym->is_external = node->func_decl.is_external;
     sym->func_status = node->func_decl.body ? FUNC_IMPLEMENTATION : FUNC_NONE;
     sym->value = node;
@@ -72,6 +73,7 @@ void sema_register_method_signature(Sema *s, AstNode *node,
     sym->value = node;
     sym->kind = node->func_decl.is_static ? SYM_STATIC_METHOD : SYM_METHOD;
     sym->is_export = is_exported_method;
+    sym->is_pub_module = node->func_decl.is_pub_module;
 
     node->func_decl.name->var.value = mangled_name;
   }

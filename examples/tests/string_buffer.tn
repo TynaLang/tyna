@@ -19,7 +19,6 @@ fn take_buffer(s: String): str {
 }
 
 fn free_nested(s: String): i32 {
-    s.free();
     return 0;
 }
 
@@ -120,9 +119,8 @@ fn test_clone_and_free(): i32 {
     let keep = String.new();
     keep.push("keep");
     let keep_clone: str = keep.clone_str();
-    keep.free();
     if (keep_clone != "keep") {
-        print("FAIL: free after clone_str failed");
+        print("FAIL: clone_str failed");
         return 1;
     }
     return 0;

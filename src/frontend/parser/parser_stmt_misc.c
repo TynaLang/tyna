@@ -1,5 +1,51 @@
 #include "parser_internal.h"
 
+bool parser_parse_visibility_modifier(Parser *p, bool *is_export,
+                                      bool *is_pub_module, bool *is_external) {
+  bool seen = false;
+  while (p->current_token.type == TOKEN_EXPORT ||
+         p->current_token.type == TOKEN_PUB ||
+         p->current_token.type == TOKEN_EXTERNAL) {
+    if (p->current_token.type == TOKEN_EXPORT) {
+      *is_export = true;
+      seen = true;
+      parser_token_advance(p);
+      continue;
+    }
+
+    if (p->current_token.type == TOKEN_PUB) {
+      seen = true;
+      *is_export = true;
+      parser_token_advance(p);
+      if (p->current_token.type == TOKEN_LPAREN) {
+        parser_token_advance(p);
+        if (p->current_token.type != TOKEN_IDENT ||
+            !(sv_eq_cstr(p->current_token.text, "stdlib") ||
+              sv_eq_cstr(p->current_token.text, "module"))) {
+          ErrorHandler_report(p->eh, p->current_token.loc,
+                              "Expected 'stdlib' or 'module' after 'pub('");
+          return false;
+        }
+        *is_pub_module = true;
+        parser_token_advance(p);
+        if (!parser_expect(p, TOKEN_RPAREN,
+                           "Expected ')' after pub visibility")) {
+          return false;
+        }
+      }
+      continue;
+    }
+
+    if (p->current_token.type == TOKEN_EXTERNAL) {
+      *is_external = true;
+      seen = true;
+      parser_token_advance(p);
+      continue;
+    }
+  }
+  return seen;
+}
+
 AstNode *parser_parse_block(Parser *p) {
   Location loc = p->current_token.loc;
   parser_token_advance(p); // consume '{'
@@ -122,20 +168,13 @@ AstNode *parser_parse_return_stmt(Parser *p, bool require_semi) {
 AstNode *parser_parse_statement(Parser *p) {
   Location loc = p->current_token.loc;
   bool is_export = false;
+  bool is_pub_module = false;
   bool is_external = false;
 
-  while (p->current_token.type == TOKEN_EXPORT ||
-         p->current_token.type == TOKEN_EXTERNAL) {
-    if (p->current_token.type == TOKEN_EXPORT) {
-      is_export = true;
-      parser_token_advance(p);
-      continue;
-    }
-    if (p->current_token.type == TOKEN_EXTERNAL) {
-      is_external = true;
-      parser_token_advance(p);
-      continue;
-    }
+  if (!parser_parse_visibility_modifier(p, &is_export, &is_pub_module,
+                                        &is_external)) {
+    if (p->current_token.type == TOKEN_PUB)
+      return NULL;
   }
 
   switch (p->current_token.type) {
@@ -180,7 +219,8 @@ AstNode *parser_parse_statement(Parser *p) {
     return parser_parse_return_stmt(p, true);
   }
   case TOKEN_FN:
-    return parser_parse_fn_decl(p, false, is_export, is_external);
+    return parser_parse_fn_decl(p, false, is_export, is_pub_module,
+                                is_external);
   case TOKEN_STRUCT:
     return parser_parse_struct_decl(p, false, is_export);
   case TOKEN_UNION:
@@ -212,7 +252,7 @@ AstNode *parser_parse_statement(Parser *p) {
                           "Expected 'fn' after 'static'");
       return NULL;
     }
-    return parser_parse_fn_decl(p, true, is_export, is_external);
+    return parser_parse_fn_decl(p, true, is_export, is_pub_module, is_external);
   }
   case TOKEN_BREAK: {
     parser_token_advance(p);

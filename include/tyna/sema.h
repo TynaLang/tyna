@@ -45,6 +45,7 @@ struct Symbol {
   Type *type;
   int is_const;
   int is_export;
+  int is_pub_module;
   int is_external;
   int is_moved;
   int requires_storage;
@@ -65,6 +66,7 @@ typedef struct Module {
   List symbols; // List<Symbol*>
   List exports; // List<Symbol*>
   bool is_analyzed;
+  bool is_stdlib;
 } Module;
 
 struct SemaScope {

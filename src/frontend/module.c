@@ -199,6 +199,7 @@ Module *module_resolve_or_load(Sema *s, StringView import_path,
   List_init(&module->symbols);
   List_init(&module->exports);
   module->is_analyzed = false;
+  module->is_stdlib = strstr(path, "/stdlib/") != NULL;
 
   List_push(&s->modules, module);
 

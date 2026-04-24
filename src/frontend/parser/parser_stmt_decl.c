@@ -61,7 +61,7 @@ AstNode *parser_parse_var_decl(Parser *p, bool is_export) {
 }
 
 AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
-                              bool is_external) {
+                              bool is_pub_module, bool is_external) {
   parser_token_advance(p); // consume 'fn'
 
   Token ident = p->current_token;
@@ -146,7 +146,7 @@ AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
 
   return AstNode_new_func_decl(AstNode_new_var(ident.text, ident.loc), params,
                                ret_type, body, is_static, is_export,
-                               is_external, loc);
+                               is_pub_module, is_external, loc);
 }
 
 AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
@@ -205,7 +205,7 @@ AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false);
+      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false, false);
       if (fn) {
         List_push(&members, fn);
       } else {
@@ -271,10 +271,8 @@ static StringView parser_parse_error_message_attr(Parser *p) {
     return sv_from_parts("", 0);
 
   if (!sv_eq(attr_name.text, sv_from_cstr("message"))) {
-    ErrorHandler_report(p->eh, attr_name.loc,
-                        "Unknown error attribute '%.*s'",
-                        (int)attr_name.text.len,
-                        attr_name.text.data);
+    ErrorHandler_report(p->eh, attr_name.loc, "Unknown error attribute '%.*s'",
+                        (int)attr_name.text.len, attr_name.text.data);
     return sv_from_parts("", 0);
   }
 
@@ -311,7 +309,6 @@ AstNode *parser_parse_error_decl(Parser *p, bool is_export) {
   }
 
   parser_token_advance(p); // consume 'error'
-
 
   Token name_token = p->current_token;
   if (!parser_expect(p, TOKEN_IDENT, "Expected error name"))
@@ -428,7 +425,7 @@ AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false);
+      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false, false);
       if (fn) {
         List_push(&members, fn);
       } else {
@@ -636,13 +633,22 @@ AstNode *parser_parse_impl_decl(Parser *p) {
   while (p->current_token.type != TOKEN_RBRACE &&
          p->current_token.type != TOKEN_EOF) {
     bool is_static = false;
+    bool is_pub_module = false;
+    bool is_export = false;
+    bool is_external = false;
+    if (parser_parse_visibility_modifier(p, &is_export, &is_pub_module,
+                                         &is_external)) {
+      // visibility modifier consumed
+    }
+
     if (p->current_token.type == TOKEN_STATIC) {
       is_static = true;
       parser_token_advance(p);
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false);
+      AstNode *fn = parser_parse_fn_decl(p, is_static, true, is_pub_module,
+                                        is_external);
       if (fn) {
         List_push(&members, fn);
       } else {

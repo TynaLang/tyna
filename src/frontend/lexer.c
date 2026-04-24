@@ -104,6 +104,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_EXPORT;
   else if (sv_eq_cstr(text, "external"))
     t.type = TOKEN_EXTERNAL;
+  else if (sv_eq_cstr(text, "pub"))
+    t.type = TOKEN_PUB;
   else if (sv_eq_cstr(text, "error"))
     t.type = TOKEN_ERROR_KEYWORD;
   else if (sv_eq_cstr(text, "errors"))

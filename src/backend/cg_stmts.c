@@ -337,6 +337,24 @@ void cg_statement(Codegen *cg, AstNode *node) {
         val = cg_expression(cg, node->return_stmt.expr);
       }
     }
+    if (has_value && cg->current_function_uses_arena &&
+        node->return_stmt.expr && node->return_stmt.expr->resolved_type &&
+        node->return_stmt.expr->resolved_type->kind == KIND_STRING_BUFFER) {
+      CgFunc *promote_fn = cg_find_system_function(
+          cg, sv_from_cstr("__tyna_string_promote_if_arena"));
+      if (promote_fn) {
+        LLVMValueRef tmp = cg_alloca_in_entry(
+            cg, node->return_stmt.expr->resolved_type,
+            sv_from_cstr("return_string_buf"));
+        LLVMBuildStore(cg->builder, val, tmp);
+        LLVMBuildCall2(cg->builder, promote_fn->type, promote_fn->value,
+                       (LLVMValueRef[]){tmp}, 1, "");
+        val = LLVMBuildLoad2(
+            cg->builder,
+            cg_type_get_llvm(cg, node->return_stmt.expr->resolved_type), tmp,
+            "promoted_return_string_buf");
+      }
+    }
     if (cg->current_function_uses_arena) {
       CgFunc *arena_pop =
           cg_find_system_function(cg, sv_from_cstr("__tyna_string_arena_pop"));
