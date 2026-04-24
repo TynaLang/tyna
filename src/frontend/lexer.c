@@ -100,8 +100,6 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_NEW;
   else if (sv_eq_cstr(text, "import"))
     t.type = TOKEN_IMPORT;
-  else if (sv_eq_cstr(text, "export"))
-    t.type = TOKEN_EXPORT;
   else if (sv_eq_cstr(text, "external"))
     t.type = TOKEN_EXTERNAL;
   else if (sv_eq_cstr(text, "pub"))

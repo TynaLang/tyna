@@ -1,16 +1,16 @@
-export error IOError {
+pub error IOError {
     code: i32;
     message: *const char;
     path: *const char;
 }
 
-export error NullError {
+pub error NullError {
     code: i32;
     message: *const char;
     some_field: i32;
 }
 
-export errors SystemDefined = {
+pub errors SystemDefined = {
     IOError,
     NullError,
 };

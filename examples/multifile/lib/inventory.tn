@@ -1,16 +1,16 @@
 import lib.item;
 
-export struct InventoryItem {
+pub struct InventoryItem {
     item: Item;
     count: i32;
 }
 
-export struct Inventory {
+pub struct Inventory {
     items: [InventoryItem; 4];
     len: i32;
 }
 
-export impl Inventory {
+pub impl Inventory {
     fn init(self: *Inventory): void {
         self.len = 0;
     }

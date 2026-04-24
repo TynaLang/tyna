@@ -76,13 +76,13 @@ static AstNode *parser_parse_index(Parser *p, AstNode *expr) {
 static bool parser_is_identifier_like(TokenType type) {
   return type == TOKEN_IDENT || type == TOKEN_PRINT || type == TOKEN_FN ||
          type == TOKEN_RETURN || type == TOKEN_IF || type == TOKEN_ELSE ||
-         type == TOKEN_IMPORT || type == TOKEN_EXPORT ||
-         type == TOKEN_EXTERNAL || type == TOKEN_ERROR_KEYWORD ||
-         type == TOKEN_ERRORS || type == TOKEN_IS || type == TOKEN_NEW ||
-         type == TOKEN_DEFER || type == TOKEN_STRUCT || type == TOKEN_UNION ||
-         type == TOKEN_SWITCH || type == TOKEN_CASE || type == TOKEN_FOR ||
-         type == TOKEN_WHILE || type == TOKEN_LOOP || type == TOKEN_IN ||
-         type == TOKEN_BREAK || type == TOKEN_CONTINUE || type == TOKEN_FROZEN ||
+         type == TOKEN_IMPORT || type == TOKEN_EXTERNAL ||
+         type == TOKEN_ERROR_KEYWORD || type == TOKEN_ERRORS ||
+         type == TOKEN_IS || type == TOKEN_NEW || type == TOKEN_DEFER ||
+         type == TOKEN_STRUCT || type == TOKEN_UNION || type == TOKEN_SWITCH ||
+         type == TOKEN_CASE || type == TOKEN_FOR || type == TOKEN_WHILE ||
+         type == TOKEN_LOOP || type == TOKEN_IN || type == TOKEN_BREAK ||
+         type == TOKEN_CONTINUE || type == TOKEN_FROZEN ||
          type == TOKEN_STATIC || type == TOKEN_IMPL || type == TOKEN_TYPE_INT ||
          type == TOKEN_TYPE_STR || type == TOKEN_TYPE_BOOLEAN ||
          type == TOKEN_TYPE_CHAR || type == TOKEN_TYPE_FLOAT ||
@@ -91,8 +91,8 @@ static bool parser_is_identifier_like(TokenType type) {
          type == TOKEN_TYPE_U8 || type == TOKEN_TYPE_U16 ||
          type == TOKEN_TYPE_U32 || type == TOKEN_TYPE_U64 ||
          type == TOKEN_TYPE_F32 || type == TOKEN_TYPE_F64 ||
-         type == TOKEN_TYPE_VOID || type == TOKEN_TRUE ||
-         type == TOKEN_FALSE || type == TOKEN_NULL;
+         type == TOKEN_TYPE_VOID || type == TOKEN_TRUE || type == TOKEN_FALSE ||
+         type == TOKEN_NULL;
 }
 
 static AstNode *parser_parse_field(Parser *p, AstNode *expr) {

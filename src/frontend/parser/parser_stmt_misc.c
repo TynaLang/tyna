@@ -3,16 +3,8 @@
 bool parser_parse_visibility_modifier(Parser *p, bool *is_export,
                                       bool *is_pub_module, bool *is_external) {
   bool seen = false;
-  while (p->current_token.type == TOKEN_EXPORT ||
-         p->current_token.type == TOKEN_PUB ||
+  while (p->current_token.type == TOKEN_PUB ||
          p->current_token.type == TOKEN_EXTERNAL) {
-    if (p->current_token.type == TOKEN_EXPORT) {
-      *is_export = true;
-      seen = true;
-      parser_token_advance(p);
-      continue;
-    }
-
     if (p->current_token.type == TOKEN_PUB) {
       seen = true;
       *is_export = true;

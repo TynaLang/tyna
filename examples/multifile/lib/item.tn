@@ -1,9 +1,9 @@
-export struct Item {
+pub struct Item {
     id: i32;
     name: str;
 }
 
-export impl Item {
+pub impl Item {
     static fn make(id: i32, name: str): Item {
         let item: Item;
         item.id = id;

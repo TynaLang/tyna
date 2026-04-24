@@ -1,12 +1,12 @@
 import lib.item;
 import lib.inventory;
 
-export struct User {
+pub struct User {
     name: str;
     inventory: Inventory;
 }
 
-export impl User {
+pub impl User {
     static fn create(name: str): User {
         let user: User;
         user.name = name;
