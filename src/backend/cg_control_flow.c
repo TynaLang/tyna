@@ -21,6 +21,9 @@ void cg_control_flow_statement(Codegen *cg, AstNode *node) {
     for (size_t i = 0; i < node->block.statements.len; i++) {
       cg_statement(cg, node->block.statements.items[i]);
     }
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+      cg_emit_scope_drops(cg, cg->current_scope);
+    }
     cg_pop_scope(cg);
     break;
   }
@@ -409,6 +412,9 @@ void cg_control_flow_statement(Codegen *cg, AstNode *node) {
 
     List_pop(&cg->break_stack);
     List_pop(&cg->continue_stack);
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+      cg_emit_scope_drops(cg, cg->current_scope);
+    }
     cg_pop_scope(cg);
     break;
   }
@@ -444,6 +450,9 @@ void cg_control_flow_statement(Codegen *cg, AstNode *node) {
     List_pop(&cg->continue_stack);
 
     LLVMPositionBuilderAtEnd(cg->builder, end_bb);
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+      cg_emit_scope_drops(cg, cg->current_scope);
+    }
     cg_pop_scope(cg);
     break;
   }
@@ -497,6 +506,9 @@ void cg_control_flow_statement(Codegen *cg, AstNode *node) {
     List_pop(&cg->continue_stack);
 
     LLVMPositionBuilderAtEnd(cg->builder, end_bb);
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
+      cg_emit_scope_drops(cg, cg->current_scope);
+    }
     cg_pop_scope(cg);
     break;
   }

@@ -356,12 +356,27 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
       return LLVMBuildIntToPtr(cg->builder, value, to_ty, "inttoptrtmp");
     }
 
-    if (from_kind == LLVMStructTypeKind && from_t &&
-        ((from_t->kind == KIND_PRIMITIVE &&
-          from_t->data.primitive == PRIM_STRING) ||
-         from_t->kind == KIND_STRING_BUFFER)) {
-      // str / String buffer → C pointer (first field is always char*).
-      return LLVMBuildExtractValue(cg->builder, value, 0, "string_data_ptr");
+    if (from_kind == LLVMStructTypeKind) {
+      bool is_string_like = false;
+      if (from_t && from_t->kind == KIND_PRIMITIVE &&
+          from_t->data.primitive == PRIM_STRING) {
+        is_string_like = true;
+      } else if (from_t && from_t->kind == KIND_STRING_BUFFER) {
+        is_string_like = true;
+      } else {
+        unsigned field_count = LLVMCountStructElementTypes(from_ty);
+        if (field_count >= 2) {
+          LLVMTypeRef *fields = malloc(sizeof(LLVMTypeRef) * field_count);
+          LLVMGetStructElementTypes(from_ty, fields);
+          is_string_like = LLVMGetTypeKind(fields[0]) == LLVMPointerTypeKind &&
+                           LLVMGetTypeKind(fields[1]) == LLVMIntegerTypeKind;
+          free(fields);
+        }
+      }
+
+      if (is_string_like) {
+        return LLVMBuildExtractValue(cg->builder, value, 0, "string_data_ptr");
+      }
     }
 
     return LLVMBuildBitCast(cg->builder, value, to_ty, "bitcasttmp");

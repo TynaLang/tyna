@@ -7,136 +7,106 @@ void sema_check_import(Sema *s, AstNode *node) {
   if (!module)
     return;
 
-  bool import_stdlib_symbols =
-      module->is_stdlib && s->current_module && s->current_module->is_stdlib;
+  if (node->import.mode == IMPORT_NAMESPACE) {
+    StringView name = node->import.alias;
+    if (sema_resolve_local(s, name)) {
+      sema_error(s, node, "Duplicate import alias '" SV_FMT "'", SV_ARG(name));
+      return;
+    }
 
-  StringView name = node->import.alias;
-  if (sema_resolve_local(s, name)) {
-    sema_error(s, node, "Duplicate import alias '" SV_FMT "'", SV_ARG(name));
+    Symbol *sym = sema_define(
+        s, name, type_get_primitive(s->types, PRIM_UNKNOWN), false, node->loc);
+    if (sym) {
+      sym->kind = SYM_MODULE;
+      sym->module = module;
+      sym->is_export = false;
+      sym->is_external = false;
+      sym->value = NULL;
+    }
     return;
   }
 
-  Symbol *sym = sema_define(s, name, type_get_primitive(s->types, PRIM_UNKNOWN),
-                            false, node->loc);
-  if (sym) {
-    sym->kind = SYM_MODULE;
-    sym->module = module;
-    sym->is_export = false;
-    sym->is_external = false;
-    sym->value = NULL;
-  }
+  if (node->import.mode == IMPORT_WILDCARD) {
+    for (size_t i = 0; i < module->exports.len; i++) {
+      Symbol *export = module->exports.items[i];
+      StringView export_name =
+          export->original_name.len ? export->original_name : export->name;
+      if (sema_resolve_local(s, export_name)) {
+        sema_error(s, node,
+                   "Wildcard import introduces colliding name '" SV_FMT "'",
+                   SV_ARG(export_name));
+        continue;
+      }
 
-  for (size_t i = 0; i < module->exports.len; i++) {
-    Symbol *export = module->exports.items[i];
-    StringView export_name =
-        export->original_name.len ? export->original_name : export->name;
-    if (sema_resolve_local(s, export_name)) {
-      sema_error(s, node, "Duplicate imported symbol '" SV_FMT "'",
-                 SV_ARG(export_name));
-      continue;
-    }
-
-    Symbol *export_sym =
-        sema_define(s, export_name, export->type, export->is_const, node->loc);
-    if (!export_sym)
-      continue;
-
-    export_sym->original_name = export->original_name;
-    export_sym->value = export->value;
-    export_sym->kind = export->kind;
-    export_sym->func_status = export->func_status;
-    export_sym->is_external = export->is_external;
-    export_sym->is_export = false;
-    export_sym->module = module;
-  }
-
-  if (import_stdlib_symbols) {
-    for (size_t i = 0; i < module->symbols.len; i++) {
-      Symbol *sym = module->symbols.items[i];
-      if (!sym->is_pub_module || sym->is_export)
+      Symbol *import_sym = sema_define(s, export_name, export->type,
+                                       export->is_const, node->loc);
+      if (!import_sym)
         continue;
 
-      StringView sym_name =
-          sym->original_name.len ? sym->original_name : sym->name;
-      if (sema_resolve_local(s, sym_name)) {
-        sema_error(s, node, "Duplicate imported symbol '" SV_FMT "'",
-                   SV_ARG(sym_name));
+      import_sym->original_name = export->original_name;
+      import_sym->value = export->value;
+      import_sym->kind = export->kind;
+      import_sym->func_status = export->func_status;
+      import_sym->is_external = export->is_external;
+      import_sym->is_export = false;
+      import_sym->module = module;
+    }
+    return;
+  }
+
+  if (node->import.mode == IMPORT_SELECTIVE) {
+    for (size_t i = 0; i < node->import.symbols.len; i++) {
+      ImportSymbol *symbol = node->import.symbols.items[i];
+      StringView requested_name = symbol->name;
+      StringView local_name = symbol->alias.len ? symbol->alias : symbol->name;
+      Symbol *found = NULL;
+      for (size_t j = 0; j < module->exports.len; j++) {
+        Symbol *export = module->exports.items[j];
+        StringView export_name =
+            export->original_name.len ? export->original_name : export->name;
+        if (sv_eq(export_name, requested_name)) {
+          found = export;
+          break;
+        }
+      }
+
+      if (!found) {
+        sema_error(s, node, "Cannot find public symbol '" SV_FMT "' in module",
+                   SV_ARG(requested_name));
+        continue;
+      }
+
+      if (sema_resolve_local(s, local_name)) {
+        sema_error(s, node,
+                   "Selective import introduces colliding name '" SV_FMT "'",
+                   SV_ARG(local_name));
         continue;
       }
 
       Symbol *import_sym =
-          sema_define(s, sym_name, sym->type, sym->is_const, node->loc);
+          sema_define(s, local_name, found->type, found->is_const, node->loc);
       if (!import_sym)
         continue;
 
-      import_sym->original_name = sym->original_name;
-      import_sym->value = sym->value;
-      import_sym->kind = sym->kind;
-      import_sym->func_status = sym->func_status;
-      import_sym->is_external = sym->is_external;
+      import_sym->original_name = found->original_name;
+      import_sym->value = found->value;
+      import_sym->kind = found->kind;
+      import_sym->func_status = found->func_status;
+      import_sym->is_external = found->is_external;
       import_sym->is_export = false;
       import_sym->module = module;
     }
+    return;
   }
-}
-
-typedef struct {
-  size_t index;
-  AstNode *return_expr;
-} ReturnDropInfo;
-
-static size_t sema_insert_drop_calls_before_return(Sema *s, AstNode *block,
-                                                   List *symbols, size_t count,
-                                                   size_t index,
-                                                   AstNode *return_expr) {
-  if (!block || block->tag != NODE_BLOCK)
-    return 0;
-
-  AstNode *return_var = sema_find_underlying_var(return_expr);
-  StringView return_name = {NULL, 0};
-  if (return_var && return_var->tag == NODE_VAR)
-    return_name = return_var->var.value;
-
-  size_t inserted = 0;
-  for (size_t i = 0; i < count; i++) {
-    Symbol *sym = symbols->items[i];
-    if (!sym || sym->kind != SYM_VAR || sym->is_moved || !sym->type ||
-        sym->type->kind != KIND_STRING_BUFFER)
-      continue;
-    if (return_name.len && sv_eq(sym->name, return_name))
-      continue;
-
-    List args;
-    List_init(&args);
-    AstNode *arg = AstNode_new_unary(
-        OP_ADDR_OF, AstNode_new_var(sym->name, block->loc), block->loc);
-    List_push(&args, arg);
-    AstNode *call = AstNode_new_call(
-        AstNode_new_var(sv_from_cstr("__tyna_string_free"), block->loc), args,
-        block->loc);
-    AstNode *expr_stmt = AstNode_new_expr_stmt(call, block->loc);
-    List_insert(&block->block.statements, index + inserted, expr_stmt);
-    sema_check_stmt(s, expr_stmt);
-    inserted++;
-  }
-  return inserted;
 }
 
 void sema_check_block(Sema *s, AstNode *node) {
   sema_scope_push(s);
 
-  List return_points;
-  List_init(&return_points);
   Type *last_type = type_get_primitive(s->types, PRIM_VOID);
 
   for (size_t i = 0; i < node->block.statements.len; i++) {
     AstNode *stmt = node->block.statements.items[i];
-    if (stmt && stmt->tag == NODE_RETURN_STMT) {
-      ReturnDropInfo *info = xmalloc(sizeof(ReturnDropInfo));
-      info->index = i;
-      info->return_expr = stmt->return_stmt.expr;
-      List_push(&return_points, info);
-    }
     sema_check_stmt(s, node->block.statements.items[i]);
     if (stmt && stmt->tag == NODE_EXPR_STMT && stmt->expr_stmt.expr) {
       last_type = sema_check_expr(s, stmt->expr_stmt.expr).type;
@@ -145,21 +115,9 @@ void sema_check_block(Sema *s, AstNode *node) {
     }
   }
 
-  size_t symbols_to_drop = s->scope->symbols.len;
-  for (int j = (int)return_points.len - 1; j >= 0; j--) {
-    ReturnDropInfo *info = return_points.items[j];
-    sema_insert_drop_calls_before_return(s, node, &s->scope->symbols,
-                                         symbols_to_drop, info->index,
-                                         info->return_expr);
-    free(info);
-  }
-  List_free(&return_points, 0);
-
-  size_t injected_start = node->block.statements.len;
-  sema_inject_drop_calls(s, node, &s->scope->symbols);
-  for (size_t j = injected_start; j < node->block.statements.len; j++) {
-    sema_check_stmt(s, node->block.statements.items[j]);
-  }
+  List_free(&node->block.symbols_to_drop, 0);
+  List_init(&node->block.symbols_to_drop);
+  sema_get_drops_for_scope(s, s->scope, &node->block.symbols_to_drop);
 
   node->resolved_type = last_type;
   sema_scope_pop(s);
@@ -224,5 +182,12 @@ void sema_check_return_stmt(Sema *s, AstNode *node) {
   } else if (!type_can_implicitly_cast(s->ret_type, expr_type)) {
     sema_error(s, node, "Type mismatch: function returns '%s' but got '%s'",
                type_to_name(s->ret_type), type_to_name(expr_type));
+  }
+
+  List_free(&node->return_stmt.symbols_to_drop, 0);
+  List_init(&node->return_stmt.symbols_to_drop);
+  for (SemaScope *scope = s->scope; scope != NULL && scope->parent != NULL;
+       scope = scope->parent) {
+    sema_get_drops_for_scope(s, scope, &node->return_stmt.symbols_to_drop);
   }
 }

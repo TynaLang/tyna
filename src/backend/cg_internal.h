@@ -104,6 +104,9 @@ int cg_result_error_tag_index(Type *result_type, Type *error_type);
 // ===== statements =====
 
 void cg_statement(Codegen *cg, AstNode *node);
+void cg_emit_drops(Codegen *cg, List *symbols_to_drop);
+void cg_emit_scope_drops(Codegen *cg, CgSymtab *scope);
+void cg_emit_scope_chain_drops(Codegen *cg);
 
 // ===== functions =====
 

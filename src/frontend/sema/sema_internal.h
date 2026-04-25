@@ -106,7 +106,8 @@ AstNode *sema_find_underlying_var(AstNode *node);
 void sema_mark_symbol_requires_storage(Symbol *sym);
 void sema_mark_moved_symbol(Symbol *sym);
 void sema_mark_node_requires_storage(Sema *s, AstNode *node);
-void sema_inject_drop_calls(Sema *s, AstNode *block, List *symbols_to_drop);
+void sema_get_drops_for_scope(Sema *s, SemaScope *scope,
+                              List *out_symbols_to_drop);
 
 // Module helpers
 Module *module_find_by_path(Sema *s, const char *abs_path);

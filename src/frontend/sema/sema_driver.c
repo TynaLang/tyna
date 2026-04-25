@@ -209,4 +209,6 @@ void sema_analyze(Sema *s, AstNode *root) {
   for (size_t i = 0; i < root->ast_root.children.len; i++) {
     sema_check_function_bodies(s, root->ast_root.children.items[i]);
   }
+
+  type_refresh_drop_metadata(s->types);
 }

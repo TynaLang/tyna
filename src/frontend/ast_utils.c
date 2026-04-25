@@ -157,12 +157,14 @@ void Ast_free(AstNode *node) {
     break;
   case NODE_RETURN_STMT:
     Ast_free(node->return_stmt.expr);
+    List_free(&node->return_stmt.symbols_to_drop, 0);
     break;
   case NODE_BLOCK:
     for (size_t i = 0; i < node->block.statements.len; i++) {
       Ast_free((AstNode *)node->block.statements.items[i]);
     }
     List_free(&node->block.statements, 0);
+    List_free(&node->block.symbols_to_drop, 0);
     break;
   case NODE_INDEX:
     Ast_free(node->index.index);
@@ -254,6 +256,11 @@ void Ast_free(AstNode *node) {
     List_free(&node->impl_decl.members, 0);
     break;
   case NODE_IMPORT:
+    for (size_t i = 0; i < node->import.symbols.len; i++) {
+      ImportSymbol *symbol = node->import.symbols.items[i];
+      free(symbol);
+    }
+    List_free(&node->import.symbols, 0);
     break;
 
   default:
@@ -395,6 +402,10 @@ AstNode *Ast_clone(AstNode *node) {
 
   case NODE_RETURN_STMT:
     copy->return_stmt.expr = Ast_clone(node->return_stmt.expr);
+    List_init(&copy->return_stmt.symbols_to_drop);
+    for (size_t i = 0; i < node->return_stmt.symbols_to_drop.len; i++)
+      List_push(&copy->return_stmt.symbols_to_drop,
+                node->return_stmt.symbols_to_drop.items[i]);
     break;
 
   case NODE_PARAM:
@@ -409,6 +420,10 @@ AstNode *Ast_clone(AstNode *node) {
     for (size_t i = 0; i < node->block.statements.len; i++)
       List_push(&copy->block.statements,
                 Ast_clone(node->block.statements.items[i]));
+    List_init(&copy->block.symbols_to_drop);
+    for (size_t i = 0; i < node->block.symbols_to_drop.len; i++)
+      List_push(&copy->block.symbols_to_drop,
+                node->block.symbols_to_drop.items[i]);
     break;
 
   case NODE_FIELD:
@@ -496,6 +511,20 @@ AstNode *Ast_clone(AstNode *node) {
                 Ast_clone(node->impl_decl.members.items[i]));
     break;
 
+  case NODE_IMPORT:
+    copy->import.path = node->import.path;
+    copy->import.alias = node->import.alias;
+    copy->import.mode = node->import.mode;
+    List_init(&copy->import.symbols);
+    for (size_t i = 0; i < node->import.symbols.len; i++) {
+      ImportSymbol *symbol = node->import.symbols.items[i];
+      ImportSymbol *copy_sym = xmalloc(sizeof(ImportSymbol));
+      copy_sym->name = symbol->name;
+      copy_sym->alias = symbol->alias;
+      List_push(&copy->import.symbols, copy_sym);
+    }
+    break;
+
   case NODE_ARRAY_LITERAL:
     List_init(&copy->array_literal.items);
     for (size_t i = 0; i < node->array_literal.items.len; i++)
@@ -567,15 +596,17 @@ AstNode *Ast_clone(AstNode *node) {
 }
 
 void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
-  if (!node)
-    return;
-
   FILE *prev_stream = ast_stream;
   ast_stream = out ? out : stdout;
+
 #define Ast_print(node, indent) Ast_print_to_stream(ast_stream, node, indent)
 #define printf(...) fprintf(ast_stream, __VA_ARGS__)
 
   print_indent(indent);
+  if (!node) {
+    printf("NULL\n");
+    return;
+  }
 
   switch (node->tag) {
   case NODE_AST_ROOT:
@@ -714,20 +745,30 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
       Ast_print(arg, indent + 2);
     }
     break;
-  case NODE_FUNC_DECL:
-    printf("FUNC DECL: " SV_FMT " RETURNS %s\n",
+  case NODE_FUNC_DECL: {
+    char *modifiers = xmalloc(64);
+
+    sprintf(modifiers, "%s%s%s", node->func_decl.is_static ? "static " : "",
+            node->func_decl.is_export ? "export " : "",
+            node->func_decl.is_external ? "extern " : "");
+
+    printf("FUNC DECL: " SV_FMT " RETURNS %s %s\n",
            SV_ARG(node->func_decl.name->var.value),
-           type_to_name(node->func_decl.return_type));
+           type_to_name(node->func_decl.return_type), modifiers);
     print_indent(indent + 1);
     printf("PARAMS:\n");
     for (size_t i = 0; i < node->func_decl.params.len; i++) {
       AstNode *param = node->func_decl.params.items[i];
       Ast_print(param, indent + 2);
     }
-    print_indent(indent + 1);
-    printf("BODY:\n");
-    Ast_print(node->func_decl.body, indent + 2);
+    if (!node->func_decl.is_external) {
+      print_indent(indent + 1);
+      printf("BODY:\n");
+      Ast_print(node->func_decl.body, indent + 2);
+    }
+
     break;
+  }
   case NODE_RETURN_STMT:
     printf("RETURN_STMT\n");
     if (node->return_stmt.expr) {
@@ -907,8 +948,22 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
     Ast_print(node->field.object, indent + 2);
     break;
   case NODE_IMPORT:
-    printf("IMPORT: path='" SV_FMT "' alias='" SV_FMT "'\n",
-           SV_ARG(node->import.path), SV_ARG(node->import.alias));
+    printf("IMPORT: " SV_FMT " AS " SV_FMT " (mode: %s)\n",
+           SV_ARG(node->import.path), SV_ARG(node->import.alias),
+           node->import.mode == IMPORT_NAMESPACE   ? "NAMESPACE"
+           : node->import.mode == IMPORT_WILDCARD  ? "WILDCARD"
+           : node->import.mode == IMPORT_SELECTIVE ? "SELECTIVE"
+                                                   : "UNKNOWN");
+    if (node->import.symbols.len > 0) {
+      print_indent(indent + 1);
+      printf("SYMBOLS:\n");
+      for (size_t i = 0; i < node->import.symbols.len; i++) {
+        ImportSymbol *symbol = node->import.symbols.items[i];
+        print_indent(indent + 2);
+        printf(SV_FMT " AS " SV_FMT "\n", SV_ARG(symbol->name),
+               SV_ARG(symbol->alias));
+      }
+    }
     break;
   case NODE_ARRAY_REPEAT:
     printf("ARRAY_REPEAT (Type: %s)\n", type_to_name(node->resolved_type));

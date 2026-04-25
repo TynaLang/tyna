@@ -28,6 +28,8 @@ typedef enum TokenType {
   TOKEN_IF,
   TOKEN_ELSE,
   TOKEN_IMPORT,
+  TOKEN_FROM,
+  TOKEN_AS,
   TOKEN_EXTERNAL,
   TOKEN_PUB,
   TOKEN_AT,

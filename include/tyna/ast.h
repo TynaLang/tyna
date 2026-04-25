@@ -13,6 +13,8 @@ typedef enum CompareOp CompareOp;
 typedef enum EqualityOp EqualityOp;
 typedef enum LogicalOp LogicalOp;
 typedef enum UnaryOp UnaryOp;
+typedef enum ImportMode ImportMode;
+typedef struct ImportSymbol ImportSymbol;
 
 enum ArithmOp { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POW, OP_MOD };
 enum CompareOp { OP_LT, OP_GT, OP_LE, OP_GE };
@@ -27,6 +29,12 @@ enum UnaryOp {
   OP_NOT,
   OP_ADDR_OF,
   OP_DEREF
+};
+
+enum ImportMode {
+  IMPORT_NAMESPACE,
+  IMPORT_WILDCARD,
+  IMPORT_SELECTIVE,
 };
 
 enum AstKind {
@@ -267,7 +275,8 @@ struct AstNode {
     } new_expr;
 
     struct {
-      AstNode *expr; // Optional
+      List symbols_to_drop; // List<Symbol*>
+      AstNode *expr;        // Optional
     } return_stmt;
 
     struct {
@@ -279,6 +288,7 @@ struct AstNode {
 
     struct {
       List statements;
+      List symbols_to_drop; // List<Symbol*>
     } block;
 
     struct {
@@ -340,14 +350,22 @@ struct AstNode {
     } case_stmt;
 
     struct {
+      ImportMode mode;
       StringView path;
       StringView alias;
+      List symbols; // List<ImportSymbol*>
     } import;
   };
 };
 
+typedef struct ImportSymbol {
+  StringView name;
+  StringView alias;
+} ImportSymbol;
+
 AstNode *AstNode_new_program(Location loc);
-AstNode *AstNode_new_import(StringView path, StringView alias, Location loc);
+AstNode *AstNode_new_import(StringView path, StringView alias, ImportMode mode,
+                            List symbols, Location loc);
 
 AstNode *AstNode_new_var_decl(AstNode *name, AstNode *value, Type *type,
                               int is_const, bool is_export, Location loc);

@@ -13,10 +13,111 @@ static void type_free_internal(Type *t) {
     free(m);
   }
   List_free(&t->members, 0);
+  List_free(&t->field_drops, 0);
   List_free(&t->methods, 0);
   List_free(&t->impls, 0);
   // Note: name is usually a StringView pointing to source or interned memory
   free(t);
+}
+
+static void type_init_common(Type *t) {
+  t->needs_drop = false;
+  t->drop_fn = NULL;
+  List_init(&t->members);
+  List_init(&t->field_drops);
+  List_init(&t->methods);
+  List_init(&t->impls);
+}
+
+static bool type_needs_drop_recursive(Type *type, List *stack);
+
+static bool type_member_needs_drop(Member *member, List *stack) {
+  if (!member || !member->type)
+    return false;
+  return type_needs_drop_recursive(member->type, stack);
+}
+
+static bool type_needs_drop_recursive(Type *type, List *stack) {
+  if (!type)
+    return false;
+
+  for (size_t i = 0; i < stack->len; i++) {
+    if (stack->items[i] == type)
+      return type->needs_drop;
+  }
+
+  List_push(stack, type);
+
+  bool needs_drop = false;
+  switch (type->kind) {
+  case KIND_STRING_BUFFER:
+    needs_drop = true;
+    break;
+
+  case KIND_STRUCT:
+  case KIND_UNION:
+    for (size_t i = 0; i < type->members.len; i++) {
+      Member *member = type->members.items[i];
+      if (type_member_needs_drop(member, stack)) {
+        needs_drop = true;
+        break;
+      }
+    }
+    break;
+
+  default:
+    needs_drop = type->needs_drop;
+    break;
+  }
+
+  List_pop(stack);
+  type->needs_drop = needs_drop;
+  return needs_drop;
+}
+
+static void type_refresh_single(Type *type) {
+  if (!type)
+    return;
+
+  List_free(&type->field_drops, 0);
+  List_init(&type->field_drops);
+
+  List stack;
+  List_init(&stack);
+  bool needs_drop = type_needs_drop_recursive(type, &stack);
+  List_free(&stack, 0);
+
+  if (needs_drop && type->kind == KIND_STRUCT) {
+    for (size_t i = 0; i < type->members.len; i++) {
+      Member *member = type->members.items[i];
+      List member_stack;
+      List_init(&member_stack);
+      if (member && member->type &&
+          type_needs_drop_recursive(member->type, &member_stack)) {
+        List_push(&type->field_drops, member);
+      }
+      List_free(&member_stack, 0);
+    }
+  }
+}
+
+void type_refresh_drop_metadata(TypeContext *ctx) {
+  if (!ctx)
+    return;
+
+  for (int i = 0; i <= PRIM_UNKNOWN; i++) {
+    type_refresh_single(ctx->primitives[i]);
+  }
+  type_refresh_single(ctx->string_buffer);
+  for (size_t i = 0; i < ctx->templates.len; i++) {
+    type_refresh_single(ctx->templates.items[i]);
+  }
+  for (size_t i = 0; i < ctx->instances.len; i++) {
+    type_refresh_single(ctx->instances.items[i]);
+  }
+  for (size_t i = 0; i < ctx->structs.len; i++) {
+    type_refresh_single(ctx->structs.items[i]);
+  }
 }
 
 size_t type_get_primitive_size(PrimitiveKind prim) {
@@ -56,10 +157,9 @@ static void register_array_template(TypeContext *ctx) {
   array_tmpl->kind = KIND_TEMPLATE;
   array_tmpl->name = sv_from_parts("Array", 5);
 
+  type_init_common(array_tmpl);
   List_init(&array_tmpl->data.template.placeholders);
   List_init(&array_tmpl->data.template.fields);
-  List_init(&array_tmpl->members);
-  List_init(&array_tmpl->impls);
 
   // 1. Add Placeholders (The <T>)
   StringView *t_sv = xmalloc(sizeof(StringView));
@@ -71,12 +171,14 @@ static void register_array_template(TypeContext *ctx) {
   Type *t_type = xcalloc(1, sizeof(Type));
   t_type->kind = KIND_TEMPLATE;
   t_type->name = *t_sv;
+  type_init_common(t_type);
 
   // data: ptr<T>
   Type *ptr_t = xcalloc(1, sizeof(Type));
   ptr_t->kind = KIND_POINTER;
   ptr_t->data.pointer_to = t_type;
   ptr_t->size = 8;
+  type_init_common(ptr_t);
   type_add_member(array_tmpl, "data", ptr_t, 0);
 
   // len: i64
@@ -111,9 +213,7 @@ TypeContext *type_context_create() {
     if (i == PRIM_STRING) {
       ctx->primitives[i]->alignment = 8;
     }
-    List_init(&ctx->primitives[i]->members);
-    List_init(&ctx->primitives[i]->methods);
-    List_init(&ctx->primitives[i]->impls);
+    type_init_common(ctx->primitives[i]);
     ctx->primitives[i]->is_frozen = false;
     ctx->primitives[i]->is_intrinsic = false;
   }
@@ -129,11 +229,11 @@ TypeContext *type_context_create() {
   sb->name = sv_from_cstr("String");
   sb->size = 24;
   sb->alignment = 8;
-  List_init(&sb->members);
-  List_init(&sb->methods);
-  List_init(&sb->impls);
+  type_init_common(sb);
   sb->is_frozen = true;
   sb->is_intrinsic = true;
+  sb->needs_drop = true;
+  sb->drop_fn = "__tyna_drop_String";
   ctx->string_buffer = sb;
 
   return ctx;
@@ -172,9 +272,7 @@ Type *type_get_pointer(TypeContext *ctx, Type *to) {
   new_ptr->data.pointer_to = to;
   new_ptr->size = 8; // Assuming 64-bit
   new_ptr->alignment = 8;
-  List_init(&new_ptr->members);
-  List_init(&new_ptr->methods);
-  List_init(&new_ptr->impls);
+  type_init_common(new_ptr);
   List_push(&ctx->instances, new_ptr);
   return new_ptr;
 }
@@ -196,9 +294,7 @@ Type *type_get_struct(TypeContext *ctx, StringView name) {
   Type *s = xcalloc(1, sizeof(Type));
   s->kind = KIND_STRUCT;
   s->name = name;
-  List_init(&s->members);
-  List_init(&s->methods);
-  List_init(&s->impls);
+  type_init_common(s);
   s->alignment = 0;
   s->size = 0;
   s->is_frozen = false;
@@ -223,8 +319,7 @@ Type *type_get_union(TypeContext *ctx, StringView name) {
   Type *u = xcalloc(1, sizeof(Type));
   u->kind = KIND_UNION;
   u->name = name;
-  List_init(&u->members);
-  List_init(&u->methods);
+  type_init_common(u);
   u->alignment = 0;
   u->size = 0;
   u->is_frozen = false;
@@ -249,8 +344,7 @@ Type *type_get_error(TypeContext *ctx, StringView name) {
   Type *err = xcalloc(1, sizeof(Type));
   err->kind = KIND_ERROR;
   err->name = name;
-  List_init(&err->members);
-  List_init(&err->methods);
+  type_init_common(err);
   err->alignment = 0;
   err->size = 0;
   err->is_frozen = false;
@@ -275,8 +369,7 @@ Type *type_get_error_set(TypeContext *ctx, StringView name) {
   Type *set = xcalloc(1, sizeof(Type));
   set->kind = KIND_ERROR_SET;
   set->name = name;
-  List_init(&set->members);
-  List_init(&set->methods);
+  type_init_common(set);
   set->alignment = 0;
   set->size = 0;
   set->is_frozen = false;
@@ -289,8 +382,7 @@ Type *type_get_error_set_anonymous(TypeContext *ctx) {
   Type *set = xcalloc(1, sizeof(Type));
   set->kind = KIND_ERROR_SET;
   set->name = sv_from_parts("", 0);
-  List_init(&set->members);
-  List_init(&set->methods);
+  type_init_common(set);
   set->alignment = 0;
   set->size = 0;
   set->is_frozen = false;
@@ -314,8 +406,7 @@ Type *type_get_result(TypeContext *ctx, Type *success, Type *error_set) {
   res->data.result.error_set = error_set;
   res->alignment = 0;
   res->size = 0;
-  List_init(&res->members);
-  List_init(&res->methods);
+  type_init_common(res);
   res->is_frozen = true;
   res->is_intrinsic = false;
   List_push(&ctx->instances, res);
@@ -345,8 +436,7 @@ Type *type_get_union_anonymous(TypeContext *ctx, List types) {
   Type *u = xcalloc(1, sizeof(Type));
   u->kind = KIND_UNION;
   u->name = sv_from_parts("<anonymous union>", 16);
-  List_init(&u->members);
-  List_init(&u->methods);
+  type_init_common(u);
 
   size_t max_size = 0;
   size_t max_align = 1;
@@ -433,7 +523,8 @@ static Type *resolve_placeholder(TypeContext *ctx, Type *blueprint,
 
 Type *type_resolve_placeholders(TypeContext *ctx, Type *blueprint,
                                 Type *template_type, List args) {
-  if (!template_type || !template_type->data.template.placeholders.len)
+  if (!template_type || template_type->kind != KIND_TEMPLATE ||
+      !template_type->data.template.placeholders.len)
     return blueprint;
   return resolve_placeholder(ctx, blueprint,
                              template_type->data.template.placeholders, args);
@@ -490,9 +581,7 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
   for (size_t i = 0; i < args.len; i++) {
     List_push(&inst->data.instance.generic_args, args.items[i]);
   }
-  List_init(&inst->members);
-  List_init(&inst->methods);
-  List_init(&inst->impls);
+  type_init_common(inst);
 
   // Clone members and swap placeholders
   for (size_t i = 0; i < template_type->members.len; i++) {
@@ -812,7 +901,8 @@ bool type_is_unknown(Type *t) {
 }
 
 static bool error_set_contains_all(Type *to, Type *from) {
-  if (!to || !from || to->kind != KIND_ERROR_SET || from->kind != KIND_ERROR_SET)
+  if (!to || !from || to->kind != KIND_ERROR_SET ||
+      from->kind != KIND_ERROR_SET)
     return false;
   for (size_t i = 0; i < from->members.len; i++) {
     Member *member = from->members.items[i];
@@ -821,7 +911,8 @@ static bool error_set_contains_all(Type *to, Type *from) {
     bool found = false;
     for (size_t j = 0; j < to->members.len; j++) {
       Member *candidate = to->members.items[j];
-      if (candidate && candidate->type && type_equals(candidate->type, member->type)) {
+      if (candidate && candidate->type &&
+          type_equals(candidate->type, member->type)) {
         found = true;
         break;
       }

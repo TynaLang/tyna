@@ -189,6 +189,7 @@ AstNode *AstNode_new_func_decl(AstNode *name, List params, Type *ret_type,
 AstNode *AstNode_new_return(AstNode *expr, Location loc) {
   AstNode *node = AstNode_new(NODE_RETURN_STMT, loc);
   node->return_stmt.expr = expr;
+  List_init(&node->return_stmt.symbols_to_drop);
   return node;
 }
 
@@ -204,6 +205,7 @@ AstNode *AstNode_new_param(AstNode *name, Type *type, Location loc) {
 AstNode *AstNode_new_block(Location loc) {
   AstNode *node = AstNode_new(NODE_BLOCK, loc);
   List_init(&node->block.statements);
+  List_init(&node->block.symbols_to_drop);
   return node;
 }
 
@@ -232,10 +234,13 @@ AstNode *AstNode_new_case_stmt(AstNode *pattern, Type *pattern_type,
   return node;
 }
 
-AstNode *AstNode_new_import(StringView path, StringView alias, Location loc) {
+AstNode *AstNode_new_import(StringView path, StringView alias, ImportMode mode,
+                            List symbols, Location loc) {
   AstNode *node = AstNode_new(NODE_IMPORT, loc);
   node->import.path = path;
   node->import.alias = alias;
+  node->import.mode = mode;
+  node->import.symbols = symbols;
   return node;
 }
 
@@ -308,9 +313,8 @@ AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
   return node;
 }
 
-AstNode *AstNode_new_error_decl(AstNode *name, List members,
-                                 StringView message, bool is_export,
-                                 Location loc) {
+AstNode *AstNode_new_error_decl(AstNode *name, List members, StringView message,
+                                bool is_export, Location loc) {
   AstNode *node = AstNode_new(NODE_ERROR_DECL, loc);
   node->error_decl.name = name;
   node->error_decl.members = members;

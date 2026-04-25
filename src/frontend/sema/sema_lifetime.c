@@ -1,33 +1,58 @@
 #include "sema_internal.h"
 
-static bool sema_symbol_needs_drop(Symbol *sym) {
-  return sym && sym->kind == SYM_VAR && !sym->is_moved && sym->type &&
-         sym->type->kind == KIND_STRING_BUFFER;
+static bool sema_type_needs_drop(Type *type, List *seen) {
+  if (!type)
+    return false;
+
+  for (size_t i = 0; i < seen->len; i++) {
+    if (seen->items[i] == type)
+      return false;
+  }
+
+  switch (type->kind) {
+  case KIND_STRING_BUFFER:
+    return true;
+  case KIND_POINTER:
+  case KIND_PRIMITIVE:
+    return false;
+  case KIND_STRUCT:
+  case KIND_UNION:
+    List_push(seen, type);
+    for (size_t i = 0; i < type->members.len; i++) {
+      Member *member = type->members.items[i];
+      if (member && sema_type_needs_drop(member->type, seen)) {
+        List_pop(seen);
+        return true;
+      }
+    }
+    List_pop(seen);
+    return false;
+  default:
+    return type->needs_drop;
+  }
 }
 
-void sema_inject_drop_calls(Sema *s, AstNode *block, List *symbols_to_drop) {
+static bool sema_symbol_needs_drop(Symbol *sym) {
+  if (!sym || sym->kind != SYM_VAR || sym->is_moved || !sym->type)
+    return false;
+
+  List seen;
+  List_init(&seen);
+  bool needs_drop = sema_type_needs_drop(sym->type, &seen);
+  List_free(&seen, 0);
+  return needs_drop;
+}
+
+void sema_get_drops_for_scope(Sema *s, SemaScope *scope,
+                              List *out_symbols_to_drop) {
   (void)s;
-  if (!block || block->tag != NODE_BLOCK || !symbols_to_drop)
+  if (!scope || !out_symbols_to_drop)
     return;
 
-  for (size_t i = 0; i < symbols_to_drop->len; i++) {
-    Symbol *sym = symbols_to_drop->items[i];
-    if (!sema_symbol_needs_drop(sym))
-      continue;
-
-    Location loc = block->loc;
-    if (sym->value)
-      loc = sym->value->loc;
-
-    List args;
-    List_init(&args);
-    AstNode *arg =
-        AstNode_new_unary(OP_ADDR_OF, AstNode_new_var(sym->name, loc), loc);
-    List_push(&args, arg);
-
-    AstNode *call = AstNode_new_call(
-        AstNode_new_var(sv_from_cstr("__tyna_string_free"), loc), args, loc);
-    AstNode *expr_stmt = AstNode_new_expr_stmt(call, loc);
-    List_push(&block->block.statements, expr_stmt);
+  for (size_t i = 0; i < scope->symbols.len; i++) {
+    Symbol *sym = scope->symbols.items[i];
+    if (sema_symbol_needs_drop(sym)) {
+      List_push(out_symbols_to_drop, sym);
+    }
   }
 }

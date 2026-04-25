@@ -1,21 +1,147 @@
 #include "cg_internal.h"
 #include "tyna/ast.h"
 #include "tyna/codegen.h"
+#include "tyna/sema.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+static bool cg_type_needs_drop(Type *type, List *seen) {
+  if (!type)
+    return false;
+
+  for (size_t i = 0; i < seen->len; i++) {
+    if (seen->items[i] == type)
+      return false;
+  }
+
+  switch (type->kind) {
+  case KIND_STRING_BUFFER:
+    return true;
+  case KIND_POINTER:
+  case KIND_PRIMITIVE:
+    return false;
+  case KIND_STRUCT:
+  case KIND_UNION:
+    List_push(seen, type);
+    for (size_t i = 0; i < type->members.len; i++) {
+      Member *member = type->members.items[i];
+      if (member && cg_type_needs_drop(member->type, seen)) {
+        List_pop(seen);
+        return true;
+      }
+    }
+    List_pop(seen);
+    return type->needs_drop;
+  default:
+    return type->needs_drop;
+  }
+}
+
+static bool cg_symbol_needs_drop(Type *type) {
+  List seen;
+  List_init(&seen);
+  bool needs_drop = cg_type_needs_drop(type, &seen);
+  List_free(&seen, 0);
+  return needs_drop;
+}
+
+static void cg_ensure_symbol_storage(Codegen *cg, CgSym *sym) {
+  if (!sym || !sym->is_direct_value)
+    return;
+
+  LLVMValueRef storage =
+      cg_alloca_in_entry_uninitialized(cg, sym->type, sym->name);
+  LLVMBuildStore(cg->builder, sym->value, storage);
+  sym->value = storage;
+  sym->is_direct_value = false;
+}
+
+static void cg_emit_drop_for_value(Codegen *cg, Type *type,
+                                   LLVMValueRef value_ptr) {
+  if (!type || !value_ptr || !cg_symbol_needs_drop(type))
+    return;
+
+  if (type->drop_fn) {
+    CgFunc *drop_func =
+        cg_find_system_function(cg, sv_from_cstr(type->drop_fn));
+    if (!drop_func || !drop_func->value || !drop_func->type) {
+      fprintf(stderr, "Internal Error: Missing drop function '%s' for type\n",
+              type->drop_fn);
+      exit(1);
+    }
+    LLVMBuildCall2(cg->builder, drop_func->type, drop_func->value, &value_ptr,
+                   1, "");
+    return;
+  }
+
+  if (type->kind == KIND_STRUCT) {
+    LLVMTypeRef struct_ty = cg_type_get_llvm(cg, type);
+    for (size_t i = 0; i < type->members.len; i++) {
+      Member *member = type->members.items[i];
+      if (!member || !member->type || !cg_symbol_needs_drop(member->type))
+        continue;
+
+      LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+          cg->builder, struct_ty, value_ptr, member->index, "drop_field_ptr");
+      cg_emit_drop_for_value(cg, member->type, field_ptr);
+    }
+  }
+}
+
+void cg_emit_drops(Codegen *cg, List *symbols_to_drop) {
+  if (!cg || !symbols_to_drop)
+    return;
+
+  for (size_t i = 0; i < symbols_to_drop->len; i++) {
+    Symbol *sym = symbols_to_drop->items[i];
+    if (!sym || !sym->type || !cg_symbol_needs_drop(sym->type))
+      continue;
+
+    CgSym *cgsym = CGSymbolTable_find(cg->current_scope, sym->name);
+    if (!cgsym) {
+      panic("Internal error: missing codegen symbol for drop of '" SV_FMT "'",
+            SV_ARG(sym->name));
+    }
+
+    cg_ensure_symbol_storage(cg, cgsym);
+    cg_emit_drop_for_value(cg, cgsym->type ? cgsym->type : sym->type,
+                           cgsym->value);
+  }
+}
+
+void cg_emit_scope_drops(Codegen *cg, CgSymtab *scope) {
+  if (!cg || !scope)
+    return;
+
+  for (int i = (int)scope->symbols.len - 1; i >= 0; i--) {
+    CgSym *sym = scope->symbols.items[i];
+    if (!sym || !sym->type || !cg_symbol_needs_drop(sym->type))
+      continue;
+
+    cg_ensure_symbol_storage(cg, sym);
+    cg_emit_drop_for_value(cg, sym->type, sym->value);
+  }
+}
+
+void cg_emit_scope_chain_drops(Codegen *cg) {
+  if (!cg || !cg->current_scope)
+    return;
+
+  for (CgSymtab *scope = cg->current_scope;
+       scope != NULL && scope->parent != NULL; scope = scope->parent) {
+    cg_emit_scope_drops(cg, scope);
+  }
+}
+
 void cg_control_flow_statement(Codegen *cg, AstNode *node);
-LLVMValueRef cg_build_error_payload_array(Codegen *cg,
-                                          LLVMValueRef error_val,
-                                          Type *error_type,
-                                          Type *result_type);
+LLVMValueRef cg_build_error_payload_array(Codegen *cg, LLVMValueRef error_val,
+                                          Type *error_type, Type *result_type);
 LLVMValueRef cg_build_result_value(Codegen *cg, AstNode *expr,
                                    Type *result_type);
 LLVMValueRef cg_extract_tagged_union_payload(Codegen *cg,
                                              LLVMValueRef union_val,
-                                             Type *union_t,
-                                             Type *variant_type);
+                                             Type *union_t, Type *variant_type);
 
 static bool cg_type_requires_zero_init(Type *t) {
   if (!t)
@@ -323,9 +449,18 @@ void cg_statement(Codegen *cg, AstNode *node) {
     cg_expression(cg, node->expr_stmt.expr);
     break;
   case NODE_RETURN_STMT: {
+    LLVMTypeRef fn_ret_ty = NULL;
+    bool fn_returns_void = false;
+    if (cg->current_function_ref && cg->current_function_ref->decl &&
+        cg->current_function_ref->decl->func_decl.return_type) {
+      fn_ret_ty = cg_type_get_llvm(
+          cg, cg->current_function_ref->decl->func_decl.return_type);
+      fn_returns_void = LLVMGetTypeKind(fn_ret_ty) == LLVMVoidTypeKind;
+    }
+
     LLVMValueRef val = NULL;
     bool has_value = node->return_stmt.expr != NULL;
-    if (has_value) {
+    if (has_value && !fn_returns_void) {
       if (cg->current_function_ref && cg->current_function_ref->decl &&
           cg->current_function_ref->decl->func_decl.return_type &&
           cg->current_function_ref->decl->func_decl.return_type->kind ==
@@ -336,16 +471,20 @@ void cg_statement(Codegen *cg, AstNode *node) {
       } else {
         val = cg_expression(cg, node->return_stmt.expr);
       }
+    } else if (has_value && fn_returns_void) {
+      cg_expression(cg, node->return_stmt.expr);
+      has_value = false;
     }
+
     if (has_value && cg->current_function_uses_arena &&
         node->return_stmt.expr && node->return_stmt.expr->resolved_type &&
         node->return_stmt.expr->resolved_type->kind == KIND_STRING_BUFFER) {
       CgFunc *promote_fn = cg_find_system_function(
           cg, sv_from_cstr("__tyna_string_promote_if_arena"));
       if (promote_fn) {
-        LLVMValueRef tmp = cg_alloca_in_entry(
-            cg, node->return_stmt.expr->resolved_type,
-            sv_from_cstr("return_string_buf"));
+        LLVMValueRef tmp =
+            cg_alloca_in_entry(cg, node->return_stmt.expr->resolved_type,
+                               sv_from_cstr("return_string_buf"));
         LLVMBuildStore(cg->builder, val, tmp);
         LLVMBuildCall2(cg->builder, promote_fn->type, promote_fn->value,
                        (LLVMValueRef[]){tmp}, 1, "");
@@ -363,7 +502,7 @@ void cg_statement(Codegen *cg, AstNode *node) {
                        "");
       }
     }
-    if (has_value) {
+    if (has_value && !fn_returns_void) {
       LLVMBuildRet(cg->builder, val);
     } else {
       LLVMBuildRetVoid(cg->builder);

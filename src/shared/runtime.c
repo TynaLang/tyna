@@ -599,6 +599,8 @@ void __tyna_string_free(TynaStringBuf *buf) {
   buf->cap = 0;
 }
 
+void __tyna_drop_String(TynaStringBuf *buf) { __tyna_string_free(buf); }
+
 int64_t __tyna_test_string_alloc_count(void) { return tyna_string_alloc_count; }
 
 int64_t __tyna_test_string_free_count(void) { return tyna_string_free_count; }

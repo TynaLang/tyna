@@ -3,7 +3,7 @@
 
 static Type *ast_substitute_type(Type *type, TypeContext *ctx,
                                  Type *template_type, List args) {
-  if (!type || !ctx || !template_type)
+  if (!type || !ctx || !template_type || template_type->kind != KIND_TEMPLATE)
     return type;
   return type_resolve_placeholders(ctx, type, template_type, args);
 }
@@ -308,7 +308,9 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
 
 Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
                                        AstNode *field_node) {
-  if (!obj_type || !obj_type->data.instance.from_template)
+  if (!obj_type || obj_type->kind != KIND_STRUCT ||
+      !obj_type->data.instance.from_template ||
+      obj_type->data.instance.from_template->kind != KIND_TEMPLATE)
     return method;
 
   Type *template_type = obj_type->data.instance.from_template;
@@ -341,7 +343,6 @@ Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
     if (concrete_fn->func_decl.name)
       concrete_fn->func_decl.name->var.value = concrete_name;
 
-    sema_check_stmt(s, concrete_fn);
     alias->value = concrete_fn;
     List_push(&s->types->instantiated_functions, concrete_fn);
   } else {

@@ -40,6 +40,27 @@ static AstNode *sema_build_method_self_arg(Symbol *concrete_method,
   return self_arg;
 }
 
+static Symbol *sema_resolve_module_path_symbol(Sema *s, AstNode *node) {
+  if (!node)
+    return NULL;
+
+  if (node->tag == NODE_VAR) {
+    Symbol *sym = sema_resolve(s, node->var.value);
+    if (sym && sym->kind == SYM_MODULE)
+      return sym;
+    return NULL;
+  }
+
+  if (node->tag != NODE_FIELD)
+    return NULL;
+
+  Symbol *parent = sema_resolve_module_path_symbol(s, node->field.object);
+  if (!parent || parent->kind != SYM_MODULE)
+    return NULL;
+
+  return module_lookup_export(parent->module, node->field.field);
+}
+
 static bool sema_try_resolve_struct_method(Sema *s, AstNode *node,
                                            AstNode *field_node, Type *obj_type,
                                            Type *orig_obj_type) {
@@ -160,6 +181,25 @@ bool sema_try_resolve_method_call(Sema *s, AstNode *node) {
           return true;
         }
       }
+    }
+
+    Symbol *module_sym =
+        sema_resolve_module_path_symbol(s, field_node->field.object);
+    if (module_sym) {
+      Symbol *target_sym =
+          module_lookup_export(module_sym->module, field_node->field.field);
+      if (!target_sym) {
+        sema_error(s, node, "Module does not contain '" SV_FMT "'",
+                   SV_ARG(field_node->field.field));
+        return true;
+      }
+
+      if (!sema_bind_method_alias(s, target_sym, field_node)) {
+        return true;
+      }
+
+      node->call.func = AstNode_new_var(target_sym->name, field_node->loc);
+      return true;
     }
   }
 

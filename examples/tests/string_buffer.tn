@@ -1,5 +1,11 @@
-// Phase 2: mutable String buffer, str view, C pointer, intern pool.
+import std.str.*;
 external fn puts(c: *const char): i32;
+
+// Test functions
+external fn __tyna_test_string_alloc_count(): i64;
+external fn __tyna_test_string_free_count(): i64;
+external fn __tyna_test_string_heap_alloc_count(): i64;
+external fn __tyna_test_string_reset_counts(): void;
 
 fn make_message(): str {
     let s = String.new();

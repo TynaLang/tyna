@@ -1,8 +1,26 @@
 #include "sema_internal.h"
 
+static Symbol *sema_resolve_module_path_symbol(Sema *s, AstNode *node) {
+  if (!node)
+    return NULL;
+
+  if (node->tag == NODE_VAR) {
+    Symbol *sym = sema_resolve(s, node->var.value);
+    if (sym && sym->kind == SYM_MODULE)
+      return sym;
+    return NULL;
+  }
+  if (node->tag != NODE_FIELD)
+    return NULL;
+
+  Symbol *parent = sema_resolve_module_path_symbol(s, node->field.object);
+  if (!parent || parent->kind != SYM_MODULE)
+    return NULL;
+
+  return module_lookup_export(parent->module, node->field.field);
+}
+
 ExprInfo sema_check_field(Sema *s, AstNode *node) {
-  ExprInfo object_info = sema_check_expr(s, node->field.object);
-  Type *obj_type = object_info.type;
   if (!node->field.field.data || !node->field.field.len) {
     sema_error(s, node, "Member access requires a non-empty member name");
     return (ExprInfo){
@@ -10,6 +28,37 @@ ExprInfo sema_check_field(Sema *s, AstNode *node) {
         .category = VAL_RVALUE,
     };
   }
+
+  Symbol *module_sym = sema_resolve_module_path_symbol(s, node->field.object);
+  if (module_sym) {
+    // Resolve namespaced module access, e.g. std.fs.read
+    Symbol *target_sym =
+        module_lookup_export(module_sym->module, node->field.field);
+    if (!target_sym) {
+      sema_error(s, node, "Module does not contain '" SV_FMT "'",
+                 SV_ARG(node->field.field));
+      return (ExprInfo){
+          .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+          .category = VAL_RVALUE,
+      };
+    }
+
+    if (!target_sym->is_export) {
+      sema_error(s, node,
+                 "'" SV_FMT "' is not accessible from module namespace",
+                 SV_ARG(node->field.field));
+      return (ExprInfo){
+          .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+          .category = VAL_RVALUE,
+      };
+    }
+
+    node->resolved_type = target_sym->type;
+    return (ExprInfo){.type = target_sym->type, .category = VAL_RVALUE};
+  }
+
+  ExprInfo object_info = sema_check_expr(s, node->field.object);
+  Type *obj_type = object_info.type;
   if (!obj_type) {
     return (ExprInfo){
         .type = type_get_primitive(s->types, PRIM_UNKNOWN),

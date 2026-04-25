@@ -56,6 +56,8 @@ struct Type {
   size_t size;
   size_t alignment;
   uint64_t fixed_array_len;
+  bool needs_drop;
+  const char *drop_fn;
 
   union {
     PrimitiveKind primitive;
@@ -75,6 +77,7 @@ struct Type {
   } data;
 
   List members;         // List<Member*> - Resolved for concrete types
+  List field_drops;     // List<Member*> - Fields that require recursive drop
   List methods;         // List<Symbol*> - New infrastructure for methods
   List impls;           // List<AstNode*> for generic impl declarations
   bool is_frozen;       // If true, fields cannot be added/modified.
@@ -95,13 +98,13 @@ struct TypeContext {
 TypeContext *type_context_create();
 void type_context_free(TypeContext *ctx);
 
-// Type Retrieval
 Type *type_get_primitive(TypeContext *ctx, PrimitiveKind primitive);
 Type *type_get_string_buffer(TypeContext *ctx);
 Type *type_get_pointer(TypeContext *ctx, Type *to);
 Type *type_get_named(TypeContext *ctx, StringView name);
 Type *type_get_struct(TypeContext *ctx, StringView name);
 Type *type_get_union(TypeContext *ctx, StringView name);
+void type_refresh_drop_metadata(TypeContext *ctx);
 Type *type_get_error(TypeContext *ctx, StringView name);
 Type *type_get_error_set(TypeContext *ctx, StringView name);
 Type *type_get_error_set_anonymous(TypeContext *ctx);

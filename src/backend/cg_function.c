@@ -138,6 +138,7 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
 
   LLVMBasicBlockRef current_bb = LLVMGetInsertBlock(cg->builder);
   if (!LLVMGetBasicBlockTerminator(current_bb)) {
+    cg_emit_scope_drops(cg, cg->current_scope);
     if (cg->current_function_uses_arena) {
       CgFunc *arena_pop =
           cg_find_system_function(cg, sv_from_cstr("__tyna_string_arena_pop"));

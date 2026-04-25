@@ -2,40 +2,43 @@
 
 bool parser_parse_visibility_modifier(Parser *p, bool *is_export,
                                       bool *is_pub_module, bool *is_external) {
-  bool seen = false;
+  bool found_any = false;
+
   while (p->current_token.type == TOKEN_PUB ||
          p->current_token.type == TOKEN_EXTERNAL) {
-    if (p->current_token.type == TOKEN_PUB) {
-      seen = true;
-      *is_export = true;
-      parser_token_advance(p);
-      if (p->current_token.type == TOKEN_LPAREN) {
-        parser_token_advance(p);
-        if (p->current_token.type != TOKEN_IDENT ||
-            !(sv_eq_cstr(p->current_token.text, "stdlib") ||
-              sv_eq_cstr(p->current_token.text, "module"))) {
-          ErrorHandler_report(p->eh, p->current_token.loc,
-                              "Expected 'stdlib' or 'module' after 'pub('");
-          return false;
-        }
-        *is_pub_module = true;
-        parser_token_advance(p);
-        if (!parser_expect(p, TOKEN_RPAREN,
-                           "Expected ')' after pub visibility")) {
-          return false;
-        }
-      }
-      continue;
-    }
+    found_any = true;
 
-    if (p->current_token.type == TOKEN_EXTERNAL) {
+    if (p->current_token.type == TOKEN_PUB) {
+      *is_export = true;
+      parser_token_advance(p); // consume 'pub'
+
+      if (p->current_token.type == TOKEN_LPAREN) {
+        parser_token_advance(p); // consume '('
+
+        if (sv_eq_cstr(p->current_token.text, "stdlib") ||
+            sv_eq_cstr(p->current_token.text, "module")) {
+          *is_pub_module = true;
+          parser_token_advance(p);
+        } else {
+
+          ErrorHandler_report(p->eh, p->current_token.loc,
+                              "Expected 'stdlib' or 'module' inside pub(...)");
+
+          while (p->current_token.type != TOKEN_RPAREN &&
+                 p->current_token.type != TOKEN_EOF) {
+            parser_token_advance(p);
+          }
+        }
+        parser_expect(p, TOKEN_RPAREN,
+                      "Expected ')' after visibility modifier");
+      }
+    } else if (p->current_token.type == TOKEN_EXTERNAL) {
       *is_external = true;
-      seen = true;
       parser_token_advance(p);
-      continue;
     }
   }
-  return seen;
+
+  return found_any;
 }
 
 AstNode *parser_parse_block(Parser *p) {
@@ -62,12 +65,61 @@ AstNode *parser_parse_block(Parser *p) {
 
 static bool parser_is_import_path_segment(TokenType type) {
   return type == TOKEN_IDENT || type == TOKEN_ERROR_KEYWORD ||
-         type == TOKEN_ERRORS;
+         type == TOKEN_ERRORS ||
+         (type >= TOKEN_TYPE_INT && type <= TOKEN_TYPE_VOID);
 }
 
 static AstNode *parser_parse_import(Parser *p) {
   Location loc = p->current_token.loc;
   parser_token_advance(p); // consume 'import'
+
+  ImportMode mode = IMPORT_NAMESPACE;
+  List symbols;
+  List_init(&symbols);
+  StringView alias = {NULL, 0};
+
+  if (p->current_token.type == TOKEN_LBRACE) {
+    mode = IMPORT_SELECTIVE;
+    parser_token_advance(p); // consume '{'
+
+    while (p->current_token.type != TOKEN_RBRACE &&
+           p->current_token.type != TOKEN_EOF) {
+      if (p->current_token.type != TOKEN_IDENT) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected identifier in import list");
+        return NULL;
+      }
+
+      ImportSymbol *symbol = xmalloc(sizeof(ImportSymbol));
+      symbol->name = p->current_token.text;
+      symbol->alias = p->current_token.text;
+      parser_token_advance(p);
+
+      if (p->current_token.type == TOKEN_AS) {
+        parser_token_advance(p);
+        if (p->current_token.type != TOKEN_IDENT) {
+          ErrorHandler_report(p->eh, p->current_token.loc,
+                              "Expected identifier after 'as'");
+          free(symbol);
+          return NULL;
+        }
+        symbol->alias = p->current_token.text;
+        parser_token_advance(p);
+      }
+
+      List_push(&symbols, symbol);
+      if (p->current_token.type == TOKEN_COMMA)
+        parser_token_advance(p);
+      else
+        break;
+    }
+
+    if (!parser_expect(p, TOKEN_RBRACE,
+                       "Expected '}' after import symbol list"))
+      return NULL;
+    if (!parser_expect(p, TOKEN_FROM, "Expected 'from' after import list"))
+      return NULL;
+  }
 
   if (!parser_is_import_path_segment(p->current_token.type)) {
     ErrorHandler_report(p->eh, loc, "Expected module path after 'import'");
@@ -76,11 +128,23 @@ static AstNode *parser_parse_import(Parser *p) {
 
   const char *path_start = p->current_token.text.data;
   const char *path_end = p->current_token.text.data + p->current_token.text.len;
-  StringView alias = p->current_token.text;
+  alias = p->current_token.text;
 
   parser_token_advance(p);
   while (p->current_token.type == TOKEN_DOT) {
     parser_token_advance(p);
+    if (p->current_token.type == TOKEN_STAR) {
+      if (mode == IMPORT_SELECTIVE) {
+        ErrorHandler_report(
+            p->eh, p->current_token.loc,
+            "Wildcard import cannot be combined with a select list");
+        return NULL;
+      }
+      mode = IMPORT_WILDCARD;
+      parser_token_advance(p);
+      break;
+    }
+
     if (!parser_is_import_path_segment(p->current_token.type)) {
       ErrorHandler_report(p->eh, p->current_token.loc,
                           "Expected module path after '.'");
@@ -91,12 +155,23 @@ static AstNode *parser_parse_import(Parser *p) {
     parser_token_advance(p);
   }
 
+  if (p->current_token.type == TOKEN_AS) {
+    parser_token_advance(p);
+    if (p->current_token.type != TOKEN_IDENT) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected identifier after 'as'");
+      return NULL;
+    }
+    alias = p->current_token.text;
+    parser_token_advance(p);
+  }
+
   StringView path = sv_from_parts(path_start, (size_t)(path_end - path_start));
 
   if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after import statement"))
     return NULL;
 
-  return AstNode_new_import(path, alias, loc);
+  return AstNode_new_import(path, alias, mode, symbols, loc);
 }
 
 AstNode *parser_parse_print(Parser *p) {
@@ -163,11 +238,7 @@ AstNode *parser_parse_statement(Parser *p) {
   bool is_pub_module = false;
   bool is_external = false;
 
-  if (!parser_parse_visibility_modifier(p, &is_export, &is_pub_module,
-                                        &is_external)) {
-    if (p->current_token.type == TOKEN_PUB)
-      return NULL;
-  }
+  parser_parse_visibility_modifier(p, &is_export, &is_pub_module, &is_external);
 
   switch (p->current_token.type) {
   case TOKEN_EOF:

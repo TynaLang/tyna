@@ -1,14 +1,14 @@
-import std.error;
+import std.error as err;
 import std.fs;
 
 fn main(): i32 {
-    let result = open("missing.txt");
+    let result = fs.open("missing.txt");
 
     if (result is Error) {
         print("we got an error:");
     }
 
-    if (result is IOError) {
+    if (result is err.IOError) {
         print("ioerror:", result.path);
         return 1;
     } else {

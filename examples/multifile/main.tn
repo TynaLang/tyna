@@ -38,8 +38,8 @@ fn main() {
     let apple = Item::make(4, "Apple");
 
     let alice = User::create("Alice");
-    alice.pick_item(sword);
     alice.pick_item(potion);
+    alice.pick_item(sword);
     alice.pick_item(shield);
     alice.pick_item(shield);
     alice.pick_item(potion);

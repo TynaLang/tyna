@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
   AstNode *std_ast = NULL;
   ErrorHandler std_eh;
   bool std_eh_init = false;
+
   if (std_src) {
     ErrorHandler_init(&std_eh, std_src, std_path, std_path, "stdlib");
     std_eh_init = true;
@@ -163,6 +164,8 @@ int main(int argc, char **argv) {
       ErrorHandler_free(&std_eh);
     }
   }
+
+  stdlib_modules_end = sema.modules.len;
 
   if (opts.ast_print_entrypoint && opts.ast_print_before_sema) {
     Ast_dump_root(ast_out, user_ast, "main");

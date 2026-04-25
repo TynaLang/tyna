@@ -1,4 +1,4 @@
-import std.error;
+import { IOError } from std.error;
 
 pub fn open(path: str): *void ! Error {
     let handle: *void = null;

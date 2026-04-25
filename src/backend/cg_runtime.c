@@ -65,6 +65,7 @@ void cg_register_runtime_functions(Codegen *cg) {
       {"__tyna_string_as_mut_ptr", i8_ptr, false, 1, {buf_ptr_ty}},
       {"__tyna_string_set_len", void_ty, false, 2, {buf_ptr_ty, i64_ty}},
       {"__tyna_string_free", void_ty, false, 1, {buf_ptr_ty}},
+      {"__tyna_drop_String", void_ty, false, 1, {buf_ptr_ty}},
       {"__tyna_string_into_str", str_ty, false, 1, {buf_ptr_ty}},
       {"__tyna_string_clone_str", str_ty, false, 1, {buf_ptr_ty}},
       {"__tyna_string_promote_if_arena", void_ty, false, 1, {buf_ptr_ty}},

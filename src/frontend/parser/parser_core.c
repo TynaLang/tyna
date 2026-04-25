@@ -40,11 +40,12 @@ int parser_expect(Parser *p, TokenType type, const char *msg) {
 int parser_is(AstNode *node, AstKind kind) { return node && node->tag == kind; }
 
 void parser_sync(Parser *p) {
+  parser_token_advance(p);
+
   while (p->current_token.type != TOKEN_EOF) {
-    if (p->current_token.type == TOKEN_SEMI) {
-      parser_token_advance(p);
+    if (p->current_token.type == TOKEN_SEMI)
       return;
-    }
+
     switch (p->current_token.type) {
     case TOKEN_LET:
     case TOKEN_CONST:
