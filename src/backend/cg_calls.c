@@ -461,17 +461,9 @@ LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
 
   LLVMTypeRef ptr_ty =
       cg_type_get_llvm(cg, type_get_pointer(cg->type_ctx, target_type));
-  CgFunc *malloc_fn = cg_find_function(cg, sv_from_cstr("malloc"));
-  if (!malloc_fn)
-    panic("malloc not found for new expression");
-
-  LLVMValueRef size_arg = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
-                                       target_type->size, false);
-  LLVMValueRef malloc_args[] = {size_arg};
-  LLVMValueRef raw_ptr =
-      LLVMBuildCall2(cg->builder, malloc_fn->type, malloc_fn->value,
-                     malloc_args, 1, "malloc_res");
-  LLVMValueRef obj_ptr = cg_cast_value(cg, raw_ptr, NULL, ptr_ty);
+  LLVMTypeRef struct_ty = cg_type_get_llvm(cg, target_type);
+  LLVMValueRef obj_ptr = LLVMBuildAlloca(cg->builder, struct_ty, "new_obj");
+  LLVMBuildStore(cg->builder, LLVMConstNull(struct_ty), obj_ptr);
 
   if (node->new_expr.args.len > 0) {
     Symbol *constructor = cg_find_method(target_type, sv_from_cstr("init"));
@@ -503,11 +495,10 @@ LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
     if (param_types)
       free(param_types);
     free(args);
-    return obj_ptr;
+    return LLVMBuildLoad2(cg->builder, struct_ty, obj_ptr, "new_value");
   }
 
   if (node->new_expr.field_inits.len > 0) {
-    LLVMTypeRef struct_ty = cg_type_get_llvm(cg, target_type);
     for (size_t i = 0; i < node->new_expr.field_inits.len; i++) {
       AstNode *assign = node->new_expr.field_inits.items[i];
       if (assign->tag != NODE_ASSIGN_EXPR ||
@@ -529,7 +520,7 @@ LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
     }
   }
 
-  return obj_ptr;
+  return LLVMBuildLoad2(cg->builder, struct_ty, obj_ptr, "new_value");
 }
 
 LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {

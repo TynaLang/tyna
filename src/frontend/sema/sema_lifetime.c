@@ -4,6 +4,9 @@ static bool sema_type_needs_drop(Type *type, List *seen) {
   if (!type)
     return false;
 
+  if (type_is_slice_struct(type))
+    return false;
+
   for (size_t i = 0; i < seen->len; i++) {
     if (seen->items[i] == type)
       return false;

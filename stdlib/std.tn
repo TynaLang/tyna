@@ -1,36 +1,4 @@
-frozen struct Array<T> {
-    data: ptr<T>;
-    len:  i64;
-    cap:  i64;
-    rank: i64;
-    dims: ptr<i64>;
-}
-
-external fn __tyna_array_clone_dims(rank: i64, dims: ptr<i64>): ptr<i64>;
 external fn malloc(size: i64): ptr<void>;
 external fn panic(message: str): void;
-
-impl Array<T> {
-    pub fn slice(self: Array<T>, start: i64, end: i64): Array<T> {
-        if (start < 0 || end < start || end > self.len) {
-            panic("Array slice out of bounds");
-        }
-
-        let result: Array<T>;
-        result.data = self.data + start;
-        result.len = end - start;
-        result.cap = result.len;
-        result.rank = self.rank;
-        result.dims = __tyna_array_clone_dims(self.rank, self.dims);
-        if (result.dims) {
-            result.dims[0] = result.len;
-        }
-        return result;
-    }
-
-    pub fn as_slice(self: Array<T>, start: i64, end: i64): Array<T> {
-        return self.slice(start, end);
-    }
-}
 
 pub const VERSION = "0.1.0";

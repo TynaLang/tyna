@@ -11,8 +11,7 @@
 
 LLVMValueRef cg_extract_tagged_union_payload(Codegen *cg,
                                              LLVMValueRef union_val,
-                                             Type *union_t,
-                                             Type *variant_type);
+                                             Type *union_t, Type *variant_type);
 
 void cg_control_flow_statement(Codegen *cg, AstNode *node) {
   switch (node->tag) {
@@ -355,21 +354,43 @@ void cg_control_flow_statement(Codegen *cg, AstNode *node) {
                iter_type->data.instance.generic_args.len > 0 &&
                sv_eq(iter_type->data.instance.from_template->name,
                      sv_from_cstr("Array"))) {
-      LLVMTypeRef array_ty = cg_type_get_llvm(cg, iter_type);
       LLVMValueRef array_alloca =
           cg_alloca_in_entry(cg, iter_type, sv_from_cstr("for_in_array"));
       LLVMBuildStore(cg->builder, iterable_val, array_alloca);
-      LLVMValueRef len_ptr = LLVMBuildStructGEP2(cg->builder, array_ty,
-                                                 array_alloca, 1, "len_ptr");
-      len_val = LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
-                               len_ptr, "len_val");
-      LLVMValueRef data_ptr_ptr = LLVMBuildStructGEP2(
-          cg->builder, array_ty, array_alloca, 0, "data_ptr_ptr");
-      data_ptr = LLVMBuildLoad2(
-          cg->builder,
-          cg_type_get_llvm(
-              cg, type_get_member(iter_type, sv_from_cstr("data"))->type),
-          data_ptr_ptr, "data_ptr");
+
+      // Fixed arrays are lowered as LLVM [N x T], not as {data,len,cap}.
+      if (iter_type->fixed_array_len > 0) {
+        LLVMTypeRef llvm_array_ty = cg_type_get_llvm(cg, iter_type);
+
+        len_val = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                               iter_type->fixed_array_len, 0);
+
+        data_ptr = LLVMBuildInBoundsGEP2(
+            cg->builder, llvm_array_ty, array_alloca,
+            (LLVMValueRef[]){
+                LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
+                LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0)},
+            2, "data_ptr");
+      } else {
+        LLVMTypeRef array_ty = cg_type_get_llvm(cg, iter_type);
+        LLVMValueRef len_ptr = LLVMBuildStructGEP2(cg->builder, array_ty,
+                                                   array_alloca, 1, "len_ptr");
+        len_val =
+            LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
+                           len_ptr, "len_val");
+        LLVMValueRef data_ptr_ptr = LLVMBuildStructGEP2(
+            cg->builder, array_ty, array_alloca, 0, "data_ptr_ptr");
+        data_ptr = LLVMBuildLoad2(
+            cg->builder,
+            cg_type_get_llvm(
+                cg, type_get_member(iter_type, sv_from_cstr("data"))->type),
+            data_ptr_ptr, "data_ptr");
+      }
+    } else if (type_is_slice_struct(iter_type)) {
+      data_ptr =
+          LLVMBuildExtractValue(cg->builder, iterable_val, 0, "slice_data");
+      len_val =
+          LLVMBuildExtractValue(cg->builder, iterable_val, 1, "slice_len");
     }
 
     LLVMBuildBr(cg->builder, cond_bb);
@@ -512,6 +533,8 @@ void cg_control_flow_statement(Codegen *cg, AstNode *node) {
     cg_pop_scope(cg);
     break;
   }
+  case NODE_TYPE_ALIAS:
+    break;
   default:
     fprintf(stderr, "Codegen: Unhandled statement tag %d\n", node->tag);
     break;

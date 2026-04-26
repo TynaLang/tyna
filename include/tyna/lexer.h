@@ -51,6 +51,7 @@ typedef enum TokenType {
   TOKEN_FROZEN,
   TOKEN_STATIC,
   TOKEN_IMPL,
+  TOKEN_TYPE,
 
   // Identifiers
   TOKEN_IDENT,

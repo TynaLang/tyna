@@ -126,13 +126,47 @@ ExprInfo sema_check_assignment(Sema *s, AstNode *node) {
 
 ExprInfo sema_check_cast(Sema *s, AstNode *node) {
   Type *expr_type = sema_check_expr(s, node->cast_expr.expr).type;
-  if (expr_type && node->cast_expr.target_type &&
-      type_equals(expr_type, node->cast_expr.target_type)) {
-    sema_warning(s, node, "Redundant cast to %s",
-                 type_to_name(node->cast_expr.target_type));
+  Type *target_type = node->cast_expr.target_type;
+
+  if (!expr_type || !target_type) {
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+        .category = VAL_RVALUE,
+    };
   }
+
+  if (type_equals(expr_type, target_type)) {
+    sema_warning(s, node, "Redundant cast to %s",
+                 type_to_name(target_type));
+    return (ExprInfo){.type = target_type, .category = VAL_RVALUE};
+  }
+
+  bool src_ptr = expr_type->kind == KIND_POINTER;
+  bool dst_ptr = target_type->kind == KIND_POINTER;
+
+  // Pointer-to-pointer cast is a bitcast/reinterpret cast.
+  if (src_ptr && dst_ptr) {
+    return (ExprInfo){.type = target_type, .category = VAL_RVALUE};
+  }
+
+  // Keep explicit numeric casts permissive in both widening/narrowing directions.
+  if (type_is_numeric(expr_type) && type_is_numeric(target_type)) {
+    return (ExprInfo){.type = target_type, .category = VAL_RVALUE};
+  }
+
+  // Otherwise require a known conversion relation.
+  if (!type_can_implicitly_cast(target_type, expr_type) &&
+      !type_can_implicitly_cast(expr_type, target_type)) {
+    sema_error(s, node, "Invalid cast from %s to %s", type_to_name(expr_type),
+               type_to_name(target_type));
+    return (ExprInfo){
+        .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+        .category = VAL_RVALUE,
+    };
+  }
+
   return (ExprInfo){
-      .type = node->cast_expr.target_type,
+      .type = target_type,
       .category = VAL_RVALUE,
   };
 }

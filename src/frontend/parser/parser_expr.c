@@ -203,6 +203,21 @@ AstNode *parser_parse_expression(Parser *p, int min_bp) {
       continue;
     }
 
+    // Support `expr as Type` casts as zero-cost reinterpret/convert nodes.
+    if (op.type == TOKEN_AS) {
+      const int cast_bp = 17;
+      if (cast_bp < min_bp)
+        break;
+      parser_token_advance(p);
+      Type *target_type = parser_parse_type_full(p);
+      if (!target_type) {
+        ErrorHandler_report(p->eh, op.loc, "Expected type after 'as'");
+        return NULL;
+      }
+      left = AstNode_new_cast_expr(left, target_type, op.loc);
+      continue;
+    }
+
     if (!is_binary_operator(op.type))
       break;
 

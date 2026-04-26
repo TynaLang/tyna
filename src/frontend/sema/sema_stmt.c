@@ -83,6 +83,11 @@ void sema_check_stmt(Sema *s, AstNode *node) {
     break;
   }
 
+  case NODE_TYPE_ALIAS: {
+    node->resolved_type = node->type_alias_decl.target_type;
+    break;
+  }
+
   case NODE_PRINT_STMT: {
     for (size_t i = 0; i < node->print_stmt.values.len; i++) {
       sema_check_expr(s, node->print_stmt.values.items[i]);

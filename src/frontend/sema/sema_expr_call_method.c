@@ -62,10 +62,18 @@ static Symbol *sema_resolve_module_path_symbol(Sema *s, AstNode *node) {
 }
 
 static bool sema_try_resolve_struct_method(Sema *s, AstNode *node,
-                                           AstNode *field_node, Type *obj_type,
+                                           AstNode *field_node,
+                                           Type *lookup_type,
+                                           Type *concrete_obj_type,
                                            Type *orig_obj_type) {
-  for (size_t i = 0; i < obj_type->methods.len; i++) {
-    Symbol *method = obj_type->methods.items[i];
+  if (!lookup_type)
+    return false;
+
+  if (!concrete_obj_type)
+    concrete_obj_type = lookup_type;
+
+  for (size_t i = 0; i < lookup_type->methods.len; i++) {
+    Symbol *method = lookup_type->methods.items[i];
     if (!method)
       continue;
 
@@ -78,8 +86,8 @@ static bool sema_try_resolve_struct_method(Sema *s, AstNode *node,
       continue;
     }
 
-    Symbol *concrete_method =
-        sema_instantiate_method_symbol(s, obj_type, method, field_node);
+    Symbol *concrete_method = sema_instantiate_method_symbol(
+        s, concrete_obj_type, method, field_node);
     if (!concrete_method)
       continue;
 
@@ -110,8 +118,14 @@ static bool sema_try_resolve_struct_method(Sema *s, AstNode *node,
 
 static bool sema_try_resolve_static_method(Sema *s, AstNode *node, AstNode *sm,
                                            Type *parent_type) {
-  for (size_t i = 0; i < parent_type->methods.len; i++) {
-    Symbol *method = parent_type->methods.items[i];
+  Type *lookup_type = parent_type;
+  if (lookup_type && lookup_type->kind == KIND_STRUCT &&
+      lookup_type->data.instance.from_template) {
+    lookup_type = lookup_type->data.instance.from_template;
+  }
+
+  for (size_t i = 0; i < lookup_type->methods.len; i++) {
+    Symbol *method = lookup_type->methods.items[i];
     if (!method || method->kind != SYM_STATIC_METHOD)
       continue;
 
@@ -122,16 +136,85 @@ static bool sema_try_resolve_static_method(Sema *s, AstNode *node, AstNode *sm,
       continue;
     }
 
-    if (!sema_resolve(s, method->name)) {
-      Symbol *alias = sema_define(s, method->name, method->type, true, sm->loc);
+    Symbol *resolved_method =
+        sema_instantiate_method_symbol(s, parent_type, method, sm);
+    if (!resolved_method)
+      continue;
+
+    if (!sema_resolve(s, resolved_method->name)) {
+      Symbol *alias = sema_define(s, resolved_method->name,
+                                  resolved_method->type, true, sm->loc);
       if (alias) {
-        alias->original_name = method->original_name;
-        alias->value = method->value;
-        alias->kind = method->kind;
+        alias->original_name = resolved_method->original_name;
+        alias->value = resolved_method->value;
+        alias->kind = resolved_method->kind;
         alias->is_export = false;
       }
     }
-    node->call.func = AstNode_new_var(method->name, sm->loc);
+    node->call.func = AstNode_new_var(resolved_method->name, sm->loc);
+    return true;
+  }
+
+  // Fallback: method signatures are registered before impl bodies are checked,
+  // so static calls can be resolved even when lookup_type->methods is not
+  // populated yet.
+  StringView owner_candidates[2];
+  size_t owner_count = 0;
+  owner_candidates[owner_count++] = sv_from_cstr(type_to_name(lookup_type));
+
+  if (lookup_type->kind == KIND_TEMPLATE &&
+      lookup_type->data.template.placeholders.len > 0) {
+    size_t cap = lookup_type->name.len + 3;
+    for (size_t i = 0; i < lookup_type->data.template.placeholders.len; i++) {
+      StringView p =
+          *(StringView *)lookup_type->data.template.placeholders.items[i];
+      cap += p.len + 2;
+    }
+
+    char *owner_buf = xmalloc(cap);
+    size_t pos = 0;
+    memcpy(owner_buf + pos, lookup_type->name.data, lookup_type->name.len);
+    pos += lookup_type->name.len;
+    owner_buf[pos++] = '<';
+    for (size_t i = 0; i < lookup_type->data.template.placeholders.len; i++) {
+      if (i > 0) {
+        owner_buf[pos++] = ',';
+        owner_buf[pos++] = ' ';
+      }
+      StringView p =
+          *(StringView *)lookup_type->data.template.placeholders.items[i];
+      memcpy(owner_buf + pos, p.data, p.len);
+      pos += p.len;
+    }
+    owner_buf[pos++] = '>';
+    owner_buf[pos] = '\0';
+    owner_candidates[owner_count++] = sv_from_parts(owner_buf, pos);
+  }
+
+  for (size_t i = 0; i < owner_count; i++) {
+    StringView mangled =
+        sema_mangle_method_name(owner_candidates[i], sm->static_member.member);
+    Symbol *method = sema_resolve(s, mangled);
+    if (!method || method->kind != SYM_STATIC_METHOD)
+      continue;
+
+    Symbol *resolved_method =
+        sema_instantiate_method_symbol(s, parent_type, method, sm);
+    if (!resolved_method)
+      continue;
+
+    if (!sema_resolve(s, resolved_method->name)) {
+      Symbol *alias = sema_define(s, resolved_method->name,
+                                  resolved_method->type, true, sm->loc);
+      if (alias) {
+        alias->original_name = resolved_method->original_name;
+        alias->value = resolved_method->value;
+        alias->kind = resolved_method->kind;
+        alias->is_export = false;
+      }
+    }
+
+    node->call.func = AstNode_new_var(resolved_method->name, sm->loc);
     return true;
   }
 
@@ -169,7 +252,7 @@ bool sema_try_resolve_method_call(Sema *s, AstNode *node) {
         (obj_type->kind == KIND_PRIMITIVE &&
          obj_type->data.primitive == PRIM_STRING)) {
       if (sema_try_resolve_struct_method(s, node, field_node, obj_type,
-                                         orig_obj_type)) {
+                                         obj_type, orig_obj_type)) {
         return true;
       }
 
@@ -177,7 +260,7 @@ bool sema_try_resolve_method_call(Sema *s, AstNode *node) {
           obj_type->data.instance.from_template) {
         Type *template_type = obj_type->data.instance.from_template;
         if (sema_try_resolve_struct_method(s, node, field_node, template_type,
-                                           orig_obj_type)) {
+                                           obj_type, orig_obj_type)) {
           return true;
         }
       }

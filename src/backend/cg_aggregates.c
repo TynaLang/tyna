@@ -143,16 +143,28 @@ LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
     node->resolved_type = inst_type;
   }
 
-  size_t count = node->array_literal.items.len;
-  Member *data_mem = type_get_member(inst_type, sv_from_parts("data", 4));
-  if (!data_mem) {
-    panic("Internal error: array literal type '%s' has no data member",
-          type_to_name(inst_type));
-  }
-  Type *ptr_type = data_mem->type;
-  Type *elem_type = ptr_type->data.pointer_to;
+  if (inst_type->fixed_array_len > 0) {
+    if (inst_type->data.instance.generic_args.len == 0) {
+      panic("Internal error: fixed array literal missing element type");
+    }
+    Type *elem_type = inst_type->data.instance.generic_args.items[0];
+    LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
+    LLVMTypeRef llvm_array_ty = cg_type_get_llvm(cg, inst_type);
 
-  LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
+    LLVMValueRef array_val = LLVMGetUndef(llvm_array_ty);
+    for (size_t i = 0; i < node->array_literal.items.len; i++) {
+      AstNode *item = node->array_literal.items.items[i];
+      LLVMValueRef val = cg_expression(cg, item);
+      val = cg_cast_value(cg, val, item->resolved_type, llvm_elem_ty);
+      array_val = LLVMBuildInsertValue(cg->builder, array_val, val, (unsigned)i,
+                                       "array_lit_item");
+    }
+    return array_val;
+  }
+
+  size_t count = node->array_literal.items.len;
+  Type *element_type = inst_type->data.instance.generic_args.items[0];
+  LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, element_type);
   LLVMTypeRef array_ty = LLVMArrayType(llvm_elem_ty, count);
   LLVMValueRef raw_data_ptr =
       LLVMBuildAlloca(cg->builder, array_ty, "array_lit_storage");
@@ -162,9 +174,8 @@ LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
   for (size_t i = 0; i < count; i++) {
     AstNode *item = node->array_literal.items.items[i];
     LLVMValueRef val = cg_expression(cg, item);
-    if (!LLVMIsConstant(val)) {
+    if (!LLVMIsConstant(val))
       all_const = false;
-    }
     const_values[i] = val;
   }
 
@@ -187,8 +198,7 @@ LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
   LLVMTypeRef struct_ty = cg_type_get_llvm(cg, inst_type);
   LLVMValueRef array_struct = LLVMGetUndef(struct_ty);
   LLVMValueRef data_ptr_cast = LLVMBuildBitCast(
-      cg->builder, raw_data_ptr, cg_type_get_llvm(cg, ptr_type), "data_ptr");
-
+      cg->builder, raw_data_ptr, LLVMPointerType(llvm_elem_ty, 0), "data_ptr");
   array_struct = LLVMBuildInsertValue(cg->builder, array_struct, data_ptr_cast,
                                       0, "set_data");
   array_struct = LLVMBuildInsertValue(
@@ -199,106 +209,6 @@ LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
       cg->builder, array_struct,
       LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, 0), 2,
       "set_cap");
-
-  LLVMValueRef rank_val =
-      LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0);
-  LLVMValueRef dims_ptr = NULL;
-
-  if (type_is_array_struct(elem_type)) {
-    LLVMTypeRef inner_ty = cg_type_get_llvm(cg, elem_type);
-    LLVMTypeRef array_ty = LLVMArrayType(inner_ty, count);
-    LLVMValueRef first_elem_ptr = LLVMBuildGEP2(
-        cg->builder, array_ty, raw_data_ptr,
-        (LLVMValueRef[]){
-            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
-            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0)},
-        2, "first_elem_ptr");
-
-    LLVMValueRef inner_rank_ptr = LLVMBuildStructGEP2(
-        cg->builder, inner_ty, first_elem_ptr, 3, "inner_rank_ptr");
-    LLVMValueRef inner_rank =
-        LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
-                       inner_rank_ptr, "inner_rank");
-    rank_val = LLVMBuildAdd(
-        cg->builder, inner_rank,
-        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "outer_rank");
-
-    LLVMValueRef inner_dims_ptr_ptr = LLVMBuildStructGEP2(
-        cg->builder, inner_ty, first_elem_ptr, 4, "inner_dims_ptr_ptr");
-    LLVMValueRef inner_dims_ptr = LLVMBuildLoad2(
-        cg->builder, LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0),
-        inner_dims_ptr_ptr, "inner_dims_ptr");
-
-    LLVMValueRef dims_mem =
-        LLVMBuildArrayAlloca(cg->builder, LLVMInt64TypeInContext(cg->context),
-                             rank_val, "array_lit_dims");
-
-    LLVMValueRef d0_ptr = LLVMBuildGEP2(
-        cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 0),
-        dims_mem,
-        (LLVMValueRef[]){
-            LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
-            LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0)},
-        2, "d0_ptr");
-    LLVMBuildStore(cg->builder,
-                   LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, 0),
-                   d0_ptr);
-
-    LLVMValueRef one = LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0);
-    LLVMValueRef inner_dim_ptr = inner_dims_ptr;
-    LLVMValueRef target_ptr = NULL;
-    (void)one;
-    (void)inner_dim_ptr;
-    (void)target_ptr;
-
-    for (unsigned i = 1; i <= 1; i++) {
-      LLVMValueRef dst_ptr = LLVMBuildGEP2(
-          cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 0),
-          dims_mem,
-          (LLVMValueRef[]){
-              LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
-              LLVMConstInt(LLVMInt32TypeInContext(cg->context), i, 0)},
-          2, "dst_dim_ptr");
-      LLVMValueRef src_ptr = LLVMBuildGEP2(
-          cg->builder, LLVMInt64TypeInContext(cg->context), inner_dims_ptr,
-          (LLVMValueRef[]){
-              LLVMConstInt(LLVMInt32TypeInContext(cg->context), i - 1, 0)},
-          1, "src_dim_ptr");
-      LLVMValueRef src_val =
-          LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
-                         src_ptr, "src_dim_val");
-      LLVMBuildStore(cg->builder, src_val, dst_ptr);
-    }
-
-    dims_ptr = LLVMBuildBitCast(
-        cg->builder, dims_mem,
-        LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0), "dims_ptr");
-  } else {
-    array_struct = LLVMBuildInsertValue(
-        cg->builder, array_struct,
-        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), 3, "set_rank");
-
-    LLVMValueRef dims_alloca = LLVMBuildAlloca(
-        cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 1),
-        "array_lit_dims");
-    LLVMValueRef d_idx[] = {
-        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
-        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0)};
-    LLVMValueRef d0_ptr = LLVMBuildGEP2(
-        cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 1),
-        dims_alloca, d_idx, 2, "d0_ptr");
-    LLVMBuildStore(cg->builder,
-                   LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, 0),
-                   d0_ptr);
-    dims_ptr = LLVMBuildBitCast(
-        cg->builder, dims_alloca,
-        LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0), "dims_ptr");
-  }
-
-  array_struct =
-      LLVMBuildInsertValue(cg->builder, array_struct, rank_val, 3, "set_rank");
-  array_struct =
-      LLVMBuildInsertValue(cg->builder, array_struct, dims_ptr, 4, "set_dims");
 
   return array_struct;
 }
@@ -323,20 +233,42 @@ LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
     node->resolved_type = inst_type;
   }
 
+  if (inst_type->fixed_array_len > 0) {
+    if (inst_type->data.instance.generic_args.len == 0) {
+      panic("Internal error: fixed array repeat missing element type");
+    }
+    Type *elem_type = inst_type->data.instance.generic_args.items[0];
+    LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
+    LLVMTypeRef llvm_array_ty = cg_type_get_llvm(cg, inst_type);
+
+    uint64_t count = inst_type->fixed_array_len;
+    LLVMValueRef array_storage =
+        LLVMBuildAlloca(cg->builder, llvm_array_ty, "array_rep_storage_fixed");
+
+    for (uint64_t i = 0; i < count; i++) {
+      LLVMValueRef item_ptr = LLVMBuildGEP2(
+          cg->builder, llvm_array_ty, array_storage,
+          (LLVMValueRef[]){
+              LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+              LLVMConstInt(LLVMInt64TypeInContext(cg->context), i, 0)},
+          2, "array_rep_item_ptr");
+      LLVMValueRef val = cg_expression(cg, node->array_repeat.value);
+      val = cg_cast_value(cg, val, node->array_repeat.value->resolved_type,
+                          llvm_elem_ty);
+      LLVMBuildStore(cg->builder, val, item_ptr);
+    }
+
+    return LLVMBuildLoad2(cg->builder, llvm_array_ty, array_storage,
+                          "array_rep_fixed");
+  }
+
   LLVMValueRef count_val = cg_expression(cg, node->array_repeat.count);
   count_val =
       cg_cast_value(cg, count_val, node->array_repeat.count->resolved_type,
                     LLVMInt64TypeInContext(cg->context));
 
-  Member *data_mem = type_get_member(inst_type, sv_from_parts("data", 4));
-  if (!data_mem) {
-    panic("Internal error: array repeat type '%s' has no data member",
-          type_to_name(inst_type));
-  }
-  Type *ptr_type = data_mem->type;
-  Type *elem_type = ptr_type->data.pointer_to;
-
-  LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
+  Type *element_type = inst_type->data.instance.generic_args.items[0];
+  LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, element_type);
   LLVMValueRef raw_data_ptr = LLVMBuildArrayAlloca(
       cg->builder, llvm_elem_ty, count_val, "array_rep_storage");
 
@@ -382,106 +314,14 @@ LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
 
   LLVMTypeRef struct_ty = cg_type_get_llvm(cg, inst_type);
   LLVMValueRef array_struct = LLVMGetUndef(struct_ty);
-
-  array_struct = LLVMBuildInsertValue(cg->builder, array_struct, raw_data_ptr,
+  LLVMValueRef data_ptr_cast = LLVMBuildBitCast(
+      cg->builder, raw_data_ptr, LLVMPointerType(llvm_elem_ty, 0), "data_ptr");
+  array_struct = LLVMBuildInsertValue(cg->builder, array_struct, data_ptr_cast,
                                       0, "set_data");
   array_struct =
       LLVMBuildInsertValue(cg->builder, array_struct, count_val, 1, "set_len");
   array_struct =
       LLVMBuildInsertValue(cg->builder, array_struct, count_val, 2, "set_cap");
-
-  if (type_is_array_struct(elem_type)) {
-    LLVMValueRef inner_rank_ptr = LLVMBuildStructGEP2(
-        cg->builder, llvm_elem_ty, raw_data_ptr, 3, "inner_rank_ptr");
-    LLVMValueRef inner_rank =
-        LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
-                       inner_rank_ptr, "inner_rank");
-
-    LLVMValueRef outer_rank = LLVMBuildAdd(
-        cg->builder, inner_rank,
-        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "outer_rank");
-    array_struct = LLVMBuildInsertValue(cg->builder, array_struct, outer_rank,
-                                        3, "set_rank");
-
-    LLVMValueRef dims_mem =
-        LLVMBuildArrayAlloca(cg->builder, LLVMInt64TypeInContext(cg->context),
-                             outer_rank, "repeat_dims_mem");
-
-    LLVMValueRef d0_idx[] = {
-        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0)};
-    LLVMValueRef d0_ptr =
-        LLVMBuildGEP2(cg->builder, LLVMInt64TypeInContext(cg->context),
-                      dims_mem, d0_idx, 1, "d0_ptr");
-    LLVMBuildStore(cg->builder, count_val, d0_ptr);
-
-    LLVMValueRef inner_dims_ptr_ptr = LLVMBuildStructGEP2(
-        cg->builder, llvm_elem_ty, raw_data_ptr, 4, "inner_dims_ptr_ptr");
-    LLVMValueRef inner_dims = LLVMBuildLoad2(
-        cg->builder, LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0),
-        inner_dims_ptr_ptr, "inner_dims");
-
-    LLVMBasicBlockRef d_pre = LLVMGetInsertBlock(cg->builder);
-    LLVMBasicBlockRef d_loop = LLVMAppendBasicBlockInContext(
-        cg->context, cg->current_function, "copy_dims_loop");
-    LLVMBasicBlockRef d_end = LLVMAppendBasicBlockInContext(
-        cg->context, cg->current_function, "copy_dims_end");
-
-    LLVMBuildBr(cg->builder, d_loop);
-    LLVMPositionBuilderAtEnd(cg->builder, d_loop);
-    LLVMValueRef di_phi =
-        LLVMBuildPhi(cg->builder, LLVMInt64TypeInContext(cg->context), "di");
-    LLVMValueRef zero_di =
-        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0);
-    LLVMAddIncoming(di_phi, &zero_di, &d_pre, 1);
-
-    LLVMValueRef di_ptr =
-        LLVMBuildGEP2(cg->builder, LLVMInt64TypeInContext(cg->context),
-                      inner_dims, (LLVMValueRef[]){di_phi}, 1, "di_ptr");
-    LLVMValueRef dim_val = LLVMBuildLoad2(
-        cg->builder, LLVMInt64TypeInContext(cg->context), di_ptr, "dim_val");
-
-    LLVMValueRef di_plus_1 = LLVMBuildAdd(
-        cg->builder, di_phi,
-        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "di_plus_1");
-    LLVMValueRef out_di_ptr =
-        LLVMBuildGEP2(cg->builder, LLVMInt64TypeInContext(cg->context),
-                      dims_mem, (LLVMValueRef[]){di_plus_1}, 1, "out_di_ptr");
-    LLVMBuildStore(cg->builder, dim_val, out_di_ptr);
-
-    LLVMValueRef di_next = LLVMBuildAdd(
-        cg->builder, di_phi,
-        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "di_next");
-    LLVMValueRef d_more =
-        LLVMBuildICmp(cg->builder, LLVMIntULT, di_next, inner_rank, "d_more");
-    LLVMBasicBlockRef d_latch = LLVMGetInsertBlock(cg->builder);
-    LLVMAddIncoming(di_phi, &di_next, &d_latch, 1);
-    LLVMBuildCondBr(cg->builder, d_more, d_loop, d_end);
-
-    LLVMPositionBuilderAtEnd(cg->builder, d_end);
-    array_struct = LLVMBuildInsertValue(cg->builder, array_struct, dims_mem, 4,
-                                        "set_dims");
-
-  } else {
-    array_struct = LLVMBuildInsertValue(
-        cg->builder, array_struct,
-        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), 3, "set_rank");
-
-    LLVMValueRef dims_mem = LLVMBuildAlloca(
-        cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 1),
-        "repeat_dims_mem");
-    LLVMValueRef d_idx[] = {
-        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
-        LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0)};
-    LLVMValueRef d0_ptr = LLVMBuildGEP2(
-        cg->builder, LLVMArrayType(LLVMInt64TypeInContext(cg->context), 1),
-        dims_mem, d_idx, 2, "d0_ptr");
-    LLVMBuildStore(cg->builder, count_val, d0_ptr);
-    LLVMValueRef dims_ptr_cast = LLVMBuildBitCast(
-        cg->builder, dims_mem,
-        LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0), "dims_ptr");
-    array_struct = LLVMBuildInsertValue(cg->builder, array_struct,
-                                        dims_ptr_cast, 4, "set_dims");
-  }
 
   return array_struct;
 }

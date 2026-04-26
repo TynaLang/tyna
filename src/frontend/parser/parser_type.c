@@ -1,5 +1,55 @@
 #include "parser_internal.h"
 
+Type *parser_resolve_named_type(Parser *p, StringView name,
+                                bool create_if_missing) {
+  if (sv_eq_cstr(name, "String")) {
+    return type_get_string_buffer(p->type_ctx);
+  }
+
+  for (size_t i = 0; i < p->type_aliases.len; i++) {
+    ParserTypeAlias *entry = p->type_aliases.items[i];
+    if (entry && sv_eq(entry->alias, name)) {
+      return entry->target;
+    }
+  }
+
+  Type *resolved = type_get_named(p->type_ctx, name);
+  if (!resolved && create_if_missing) {
+    resolved = type_get_struct(p->type_ctx, name);
+  }
+  return resolved;
+}
+
+bool parser_add_type_alias(Parser *p, StringView alias, Type *target,
+                           Location loc) {
+  if (!target) {
+    ErrorHandler_report(p->eh, loc, "Cannot alias an unknown type");
+    return false;
+  }
+
+  for (size_t i = 0; i < p->type_aliases.len; i++) {
+    ParserTypeAlias *entry = p->type_aliases.items[i];
+    if (!entry || !sv_eq(entry->alias, alias))
+      continue;
+
+    if (entry->target != target) {
+      ErrorHandler_report(p->eh, loc,
+                          "Type alias '%.*s' already targets '%s'",
+                          (int)alias.len, alias.data,
+                          type_to_name(entry->target));
+      return false;
+    }
+
+    return true;
+  }
+
+  ParserTypeAlias *entry = xmalloc(sizeof(ParserTypeAlias));
+  entry->alias = alias;
+  entry->target = target;
+  List_push(&p->type_aliases, entry);
+  return true;
+}
+
 Type *parser_parse_type_full(Parser *p) {
   Type *res = NULL;
   int pointer_depth = 0;
@@ -115,7 +165,7 @@ Type *parser_parse_type_full(Parser *p) {
         } else {
           Type *template_type = type_get_template(p->type_ctx, name);
           if (!template_type) {
-            res = type_get_struct(p->type_ctx, name);
+            res = parser_resolve_named_type(p, name, true);
             if (!res)
               res = type_get_union(p->type_ctx, name);
           } else {
@@ -123,14 +173,10 @@ Type *parser_parse_type_full(Parser *p) {
           }
         }
       } else {
-        if (sv_eq_cstr(name, "String")) {
-          res = type_get_string_buffer(p->type_ctx);
-        } else if (sv_eq_cstr(name, "Error")) {
+        if (sv_eq_cstr(name, "Error")) {
           res = type_get_error_set_anonymous(p->type_ctx);
         } else {
-          res = type_get_named(p->type_ctx, name);
-          if (!res)
-            res = type_get_struct(p->type_ctx, name);
+          res = parser_resolve_named_type(p, name, true);
         }
       }
     }

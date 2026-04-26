@@ -115,6 +115,8 @@ void Ast_free(AstNode *node) {
   case NODE_CAST_EXPR:
     Ast_free(node->cast_expr.expr);
     break;
+  case NODE_SIZEOF_EXPR:
+    break;
   case NODE_ASSIGN_EXPR:
     Ast_free(node->assign_expr.target);
     Ast_free(node->assign_expr.value);
@@ -255,6 +257,9 @@ void Ast_free(AstNode *node) {
     }
     List_free(&node->impl_decl.members, 0);
     break;
+  case NODE_TYPE_ALIAS:
+    Ast_free(node->type_alias_decl.name);
+    break;
   case NODE_IMPORT:
     for (size_t i = 0; i < node->import.symbols.len; i++) {
       ImportSymbol *symbol = node->import.symbols.items[i];
@@ -362,6 +367,9 @@ AstNode *Ast_clone(AstNode *node) {
   case NODE_CAST_EXPR:
     copy->cast_expr.expr = Ast_clone(node->cast_expr.expr);
     copy->cast_expr.target_type = node->cast_expr.target_type;
+    break;
+  case NODE_SIZEOF_EXPR:
+    copy->sizeof_expr.target_type = node->sizeof_expr.target_type;
     break;
 
   case NODE_ASSIGN_EXPR:
@@ -509,6 +517,12 @@ AstNode *Ast_clone(AstNode *node) {
     for (size_t i = 0; i < node->impl_decl.members.len; i++)
       List_push(&copy->impl_decl.members,
                 Ast_clone(node->impl_decl.members.items[i]));
+    break;
+
+  case NODE_TYPE_ALIAS:
+    copy->type_alias_decl.name = Ast_clone(node->type_alias_decl.name);
+    copy->type_alias_decl.target_type = node->type_alias_decl.target_type;
+    copy->type_alias_decl.is_export = node->type_alias_decl.is_export;
     break;
 
   case NODE_IMPORT:
@@ -732,6 +746,9 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
   case NODE_CAST_EXPR:
     printf("CAST TO %s\n", type_to_name(node->cast_expr.target_type));
     Ast_print(node->cast_expr.expr, indent + 1);
+    break;
+  case NODE_SIZEOF_EXPR:
+    printf("SIZEOF_EXPR: %s\n", type_to_name(node->sizeof_expr.target_type));
     break;
   case NODE_CALL:
     printf("CALL:\n");
@@ -1020,6 +1037,10 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
     for (size_t i = 0; i < node->impl_decl.members.len; i++) {
       Ast_print(node->impl_decl.members.items[i], indent + 2);
     }
+    break;
+  case NODE_TYPE_ALIAS:
+    printf("TYPE_ALIAS: %s\n", type_to_name(node->type_alias_decl.target_type));
+    Ast_print(node->type_alias_decl.name, indent + 1);
     break;
   case NODE_BREAK:
     printf("BREAK\n");

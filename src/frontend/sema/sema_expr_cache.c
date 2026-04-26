@@ -137,6 +137,16 @@ ExprInfo sema_check_expr_cache(Sema *s, AstNode *node) {
   case NODE_CAST_EXPR:
     info = sema_check_cast(s, node);
     break;
+  case NODE_SIZEOF_EXPR: {
+    Type *target = node->sizeof_expr.target_type;
+    if (!target) {
+      sema_error(s, node, "sizeof requires a valid type");
+      info = ExprInfo_rvalue(type_get_primitive(s->types, PRIM_UNKNOWN));
+      break;
+    }
+    info = ExprInfo_rvalue(type_get_primitive(s->types, PRIM_I64));
+    break;
+  }
   case NODE_TERNARY:
     info = sema_check_ternary(s, node);
     break;

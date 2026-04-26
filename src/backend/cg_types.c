@@ -104,6 +104,16 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
     return LLVMInt8TypeInContext(cg->context);
   }
 
+  if (t->kind == KIND_STRUCT && type_is_array_struct(t) &&
+      t->fixed_array_len > 0) {
+    if (t->data.instance.generic_args.len == 0) {
+      panic("Fixed array type is missing element type");
+    }
+    Type *elem_t = t->data.instance.generic_args.items[0];
+    LLVMTypeRef elem_ty = cg_type_get_llvm(cg, elem_t);
+    return LLVMArrayType(elem_ty, (unsigned)t->fixed_array_len);
+  }
+
   if (t->kind == KIND_UNION) {
     char buf[256];
     if (t->name.len > 0) {

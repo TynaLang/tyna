@@ -336,86 +336,41 @@ int32_t __tyna_compare_arrays(const FatPtr *a, const FatPtr *b,
   return (int32_t)memcmp(a->data, b->data, a_len * elem_size);
 }
 
-void __tyna_str_to_array(FatPtr *out, const String *str) {
-  if (!out || !str) {
-    if (out) {
-      *out = (FatPtr){0, NULL, NULL};
-    }
+typedef struct {
+  void *data;
+  int64_t len;
+  int64_t cap;
+} TynaArrayBuf;
+
+void __tyna_str_to_array(TynaArrayBuf *out, const char *src, int64_t len) {
+  if (!out) {
     return;
   }
 
-  int64_t str_len = tyna_str_real_len(*str);
-  if (str_len <= 0) {
-    *out = (FatPtr){0, NULL, NULL};
+  if (!src || len <= 0) {
+    *out = (TynaArrayBuf){NULL, 0, 0};
     return;
   }
 
-  char tmp[TYNA_SSO_MAX_LEN + 1];
-  const char *str_data = tyna_str_data(*str, tmp);
-  void *new_data = malloc(str_len + 1);
-  if (!new_data) {
-    *out = (FatPtr){0, NULL, NULL};
+  void *data = malloc((size_t)len);
+  if (!data) {
+    *out = (TynaArrayBuf){NULL, 0, 0};
     return;
   }
-  memcpy(new_data, str_data, (size_t)str_len);
-  ((char *)new_data)[str_len] = '\0';
 
-  int64_t *new_dims = malloc(sizeof(int64_t) * 2);
-  if (!new_dims) {
-    free(new_data);
-    *out = (FatPtr){0, NULL, NULL};
-    return;
-  }
-  new_dims[0] = str_len;
-  new_dims[1] = 1;
-
-  *out = (FatPtr){1, new_data, new_dims};
+  memcpy(data, src, (size_t)len);
+  *out = (TynaArrayBuf){data, len, len};
 }
 
-void __tyna_array_init_fixed(void *arr, int64_t elem_size, int64_t fixed_len) {
-  if (!arr || fixed_len <= 0 || elem_size <= 0)
-    return;
-
-  // Array layout: data, len, cap, rank, dims
-  void **data_ptr = (void **)arr;
-  int64_t *len_ptr = (int64_t *)((char *)arr + 8);
-  int64_t *cap_ptr = (int64_t *)((char *)arr + 16);
-  int64_t *rank_ptr = (int64_t *)((char *)arr + 24);
-  int64_t **dims_ptr = (int64_t **)((char *)arr + 32);
-
-  if (*data_ptr)
-    return;
-
-  *data_ptr = malloc(elem_size * fixed_len);
-  *len_ptr = 0;
-  *cap_ptr = fixed_len;
-  *rank_ptr = 1;
-  *dims_ptr = malloc(sizeof(int64_t) * 1);
-  if (*dims_ptr)
-    (*dims_ptr)[0] = fixed_len;
-}
-
-int64_t *__tyna_array_clone_dims(int64_t rank, const int64_t *dims) {
-  if (rank <= 0 || !dims)
-    return NULL;
-
-  int64_t *copy = malloc(sizeof(int64_t) * (size_t)rank);
-  if (!copy)
-    return NULL;
-
-  memcpy(copy, dims, sizeof(int64_t) * (size_t)rank);
-  return copy;
-}
-
-void __tyna_array_to_str(String *out, const FatPtr *arr) {
-  if (!out || !arr || !arr->data || arr->rank <= 0 || !arr->dims) {
+void __tyna_array_to_str(String *out, const TynaArrayBuf *arr) {
+  if (!out || !arr || !arr->data) {
     if (out) {
       *out = (String){NULL, 0};
     }
     return;
   }
 
-  int64_t arr_len = arr->dims[0];
+  int64_t arr_len = arr->len;
   if (arr_len <= 0) {
     *out = (String){NULL, 0};
     return;

@@ -9,12 +9,19 @@
 
 typedef struct Parser Parser;
 typedef struct BindingPower BindingPower;
+typedef struct ParserTypeAlias ParserTypeAlias;
+
+struct ParserTypeAlias {
+  StringView alias;
+  Type *target;
+};
 
 struct Parser {
   Lexer *lexer;
   Token current_token;
   ErrorHandler *eh;
   TypeContext *type_ctx;
+  List type_aliases;            // List<ParserTypeAlias*>
   List type_placeholders;       // active generic placeholder types
   List placeholder_scope_stack; // stack of placeholder list lengths for nested
                                 // scopes

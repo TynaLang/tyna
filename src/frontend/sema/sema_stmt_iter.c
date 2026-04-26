@@ -21,6 +21,11 @@ void sema_check_for_in_stmt(Sema *s, AstNode *node) {
       elem_type = iter_type->data.instance.generic_args.items[0];
       is_valid_iterable = true;
     }
+  } else if (type_is_slice_struct(iter_type)) {
+    if (iter_type->data.instance.generic_args.len > 0) {
+      elem_type = iter_type->data.instance.generic_args.items[0];
+      is_valid_iterable = true;
+    }
   }
 
   if (!is_valid_iterable) {

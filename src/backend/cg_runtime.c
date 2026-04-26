@@ -31,9 +31,14 @@ void cg_register_runtime_functions(Codegen *cg) {
   LLVMTypeRef i64_ty = LLVMInt64TypeInContext(cg->context);
   LLVMTypeRef f64_ty = LLVMDoubleTypeInContext(cg->context);
   LLVMTypeRef str_ty = cg_get_string_llvm_type(cg);
+  LLVMTypeRef str_ptr_ty = LLVMPointerType(str_ty, 0);
   LLVMTypeRef buf_ty =
       cg_type_get_llvm(cg, type_get_string_buffer(cg->type_ctx));
   LLVMTypeRef buf_ptr_ty = LLVMPointerType(buf_ty, 0);
+  LLVMTypeRef array_u8_ty = cg_type_get_llvm(
+      cg, type_get_array(cg->type_ctx,
+                         type_get_primitive(cg->type_ctx, PRIM_U8), 0));
+  LLVMTypeRef array_u8_ptr_ty = LLVMPointerType(array_u8_ty, 0);
 
   RuntimeBinding bindings[] = {
       // C Standard Library
@@ -44,13 +49,20 @@ void cg_register_runtime_functions(Codegen *cg) {
       {"malloc", i8_ptr, false, 1, {i64_ty}},
 
       // Array Runtime
-      {"__tyna_array_init_fixed", void_ty, false, 3, {i8_ptr, i64_ty, i64_ty}},
-      {"__tyna_array_clone_dims",
-       i8_ptr,
-       false,
-       2,
-       {i64_ty, LLVMPointerType(i64_ty, 0)}},
       {"__tyna_compare_arrays", i32_ty, false, 3, {i8_ptr, i8_ptr, i64_ty}},
+      {"__tyna_array_new", void_ty, false, 2, {i8_ptr, i64_ty}},
+      {"__tyna_array_with_capacity",
+       void_ty,
+       false,
+       3,
+       {i8_ptr, i64_ty, i64_ty}},
+      {"__tyna_array_push", void_ty, false, 3, {i8_ptr, i8_ptr, i64_ty}},
+      {"__tyna_array_from_stack",
+       void_ty,
+       false,
+       4,
+       {i8_ptr, i8_ptr, i64_ty, i64_ty}},
+      {"__tyna_array_free", void_ty, false, 1, {i8_ptr}},
 
       // String Runtime (Pass str_ty, buf_ptr_ty, i8_ptr directly)
       {"__tyna_str_equals", i32_ty, false, 2, {str_ty, str_ty}},
@@ -58,6 +70,13 @@ void cg_register_runtime_functions(Codegen *cg) {
       {"__tyna_as_c_ptr", i8_ptr, false, 1, {str_ty}},
       {"__tyna_str_len", i64_ty, false, 1, {str_ty}},
       {"__tyna_str_slice", str_ty, false, 3, {str_ty, i64_ty, i64_ty}},
+
+      {"__tyna_str_to_array",
+       void_ty,
+       false,
+       3,
+       {array_u8_ptr_ty, i8_ptr, i64_ty}},
+      {"__tyna_array_to_str", void_ty, false, 2, {str_ptr_ty, array_u8_ptr_ty}},
 
       {"__tyna_string_new", void_ty, false, 1, {buf_ptr_ty}},
       {"__tyna_string_with_capacity", void_ty, false, 2, {buf_ptr_ty, i64_ty}},

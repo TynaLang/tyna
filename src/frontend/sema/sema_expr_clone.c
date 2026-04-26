@@ -75,6 +75,9 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
     copy->string.value = node->string.value;
     break;
 
+  case NODE_NULL:
+    break;
+
   case NODE_VAR:
     copy->var.value = node->var.value;
     break;
@@ -96,6 +99,20 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
       copy->binary_logical.op = node->binary_logical.op;
     break;
 
+  case NODE_BINARY_IS:
+    copy->binary_is.left =
+        ast_clone_node(node->binary_is.left, ctx, template_type, args);
+    copy->binary_is.right =
+        ast_clone_node(node->binary_is.right, ctx, template_type, args);
+    break;
+
+  case NODE_BINARY_ELSE:
+    copy->binary_else.left =
+        ast_clone_node(node->binary_else.left, ctx, template_type, args);
+    copy->binary_else.right =
+        ast_clone_node(node->binary_else.right, ctx, template_type, args);
+    break;
+
   case NODE_UNARY:
     copy->unary.op = node->unary.op;
     copy->unary.expr =
@@ -107,6 +124,11 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
         ast_clone_node(node->cast_expr.expr, ctx, template_type, args);
     copy->cast_expr.target_type = ast_substitute_type(
         node->cast_expr.target_type, ctx, template_type, args);
+    break;
+
+  case NODE_SIZEOF_EXPR:
+    copy->sizeof_expr.target_type = ast_substitute_type(
+        node->sizeof_expr.target_type, ctx, template_type, args);
     break;
 
   case NODE_ASSIGN_EXPR:
@@ -134,6 +156,21 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
     copy->call.func = ast_clone_node(node->call.func, ctx, template_type, args);
     copy->call.args =
         ast_clone_node_list(&node->call.args, ctx, template_type, args);
+    List_init(&copy->call.generic_args);
+    for (size_t i = 0; i < node->call.generic_args.len; i++) {
+      Type *generic_arg = node->call.generic_args.items[i];
+      List_push(&copy->call.generic_args,
+                ast_substitute_type(generic_arg, ctx, template_type, args));
+    }
+    break;
+
+  case NODE_NEW_EXPR:
+    copy->new_expr.target_type = ast_substitute_type(node->new_expr.target_type,
+                                                     ctx, template_type, args);
+    copy->new_expr.args =
+        ast_clone_node_list(&node->new_expr.args, ctx, template_type, args);
+    copy->new_expr.field_inits = ast_clone_node_list(
+        &node->new_expr.field_inits, ctx, template_type, args);
     break;
 
   case NODE_RETURN_STMT:
@@ -199,6 +236,23 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
     copy->struct_decl.is_export = node->struct_decl.is_export;
     break;
 
+  case NODE_ERROR_DECL:
+    copy->error_decl.name =
+        ast_clone_node(node->error_decl.name, ctx, template_type, args);
+    copy->error_decl.members = ast_clone_node_list(&node->error_decl.members,
+                                                   ctx, template_type, args);
+    copy->error_decl.message = node->error_decl.message;
+    copy->error_decl.is_export = node->error_decl.is_export;
+    break;
+
+  case NODE_ERROR_SET_DECL:
+    copy->error_set_decl.name =
+        ast_clone_node(node->error_set_decl.name, ctx, template_type, args);
+    copy->error_set_decl.members = ast_clone_node_list(
+        &node->error_set_decl.members, ctx, template_type, args);
+    copy->error_set_decl.is_export = node->error_set_decl.is_export;
+    break;
+
   case NODE_UNION_DECL:
     copy->union_decl.name =
         ast_clone_node(node->union_decl.name, ctx, template_type, args);
@@ -218,6 +272,28 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
         ast_substitute_type(node->impl_decl.type, ctx, template_type, args);
     copy->impl_decl.members =
         ast_clone_node_list(&node->impl_decl.members, ctx, template_type, args);
+    break;
+
+  case NODE_TYPE_ALIAS:
+    copy->type_alias_decl.name =
+        ast_clone_node(node->type_alias_decl.name, ctx, template_type, args);
+    copy->type_alias_decl.target_type = ast_substitute_type(
+        node->type_alias_decl.target_type, ctx, template_type, args);
+    copy->type_alias_decl.is_export = node->type_alias_decl.is_export;
+    break;
+
+  case NODE_IMPORT:
+    copy->import.mode = node->import.mode;
+    copy->import.path = node->import.path;
+    copy->import.alias = node->import.alias;
+    List_init(&copy->import.symbols);
+    for (size_t i = 0; i < node->import.symbols.len; i++) {
+      ImportSymbol *src = node->import.symbols.items[i];
+      ImportSymbol *dst = xmalloc(sizeof(ImportSymbol));
+      dst->name = src->name;
+      dst->alias = src->alias;
+      List_push(&copy->import.symbols, dst);
+    }
     break;
 
   case NODE_ARRAY_LITERAL:
@@ -284,6 +360,10 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
         ast_clone_node(node->for_in_stmt.body, ctx, template_type, args);
     break;
 
+  case NODE_BREAK:
+  case NODE_CONTINUE:
+    break;
+
   case NODE_ARRAY_REPEAT:
     copy->array_repeat.value =
         ast_clone_node(node->array_repeat.value, ctx, template_type, args);
@@ -342,6 +422,10 @@ Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
                        obj_type->data.instance.generic_args);
     if (concrete_fn->func_decl.name)
       concrete_fn->func_decl.name->var.value = concrete_name;
+
+    if (s->pass == SEMA_PASS_BODIES) {
+      sema_check_func_decl(s, concrete_fn);
+    }
 
     alias->value = concrete_fn;
     List_push(&s->types->instantiated_functions, concrete_fn);

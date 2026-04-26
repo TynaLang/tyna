@@ -57,6 +57,7 @@ void parser_sync(Parser *p) {
     case TOKEN_WHILE:
     case TOKEN_FOR:
     case TOKEN_IMPL:
+    case TOKEN_TYPE:
       return;
     default:
       parser_token_advance(p);
@@ -115,6 +116,7 @@ AstNode *parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
   p.eh = eh;
   p.type_ctx = type_ctx;
   p.current_token = Token_advance(lexer);
+  List_init(&p.type_aliases);
   List_init(&p.type_placeholders);
   List_init(&p.placeholder_scope_stack);
   p.placeholder_mode = false;
@@ -135,6 +137,7 @@ AstNode *parser_process(Lexer *lexer, ErrorHandler *eh, TypeContext *type_ctx) {
     List_push(&ast_root->ast_root.children, stmt);
   }
 
+  List_free(&p.type_aliases, 1);
   List_free(&p.type_placeholders, 0);
   List_free(&p.placeholder_scope_stack, 1);
 

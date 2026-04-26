@@ -1,5 +1,4 @@
 #include <llvm-c/Core.h>
-#include <llvm-c/Target.h>
 #include <llvm-c/Types.h>
 
 #include "cg_internal.h"
@@ -94,7 +93,18 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     if (sym->is_direct_value) {
       LLVMValueRef direct_alloca =
           cg_alloca_in_entry_uninitialized(cg, sym->type, sym->name);
-      LLVMBuildStore(cg->builder, sym->value, direct_alloca);
+
+      LLVMBuilderRef tmp_builder = LLVMCreateBuilderInContext(cg->context);
+      LLVMValueRef next = LLVMGetNextInstruction(direct_alloca);
+      if (next) {
+        LLVMPositionBuilderBefore(tmp_builder, next);
+      } else {
+        LLVMPositionBuilderAtEnd(tmp_builder,
+                                 LLVMGetEntryBasicBlock(cg->current_function));
+      }
+      LLVMBuildStore(tmp_builder, sym->value, direct_alloca);
+      LLVMDisposeBuilder(tmp_builder);
+
       sym->value = direct_alloca;
       sym->is_direct_value = false;
       return direct_alloca;
@@ -189,85 +199,105 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
       panic("Internal error: indexed expression has no resolved type");
     }
 
-    if (array_type->kind == KIND_POINTER) {
-      LLVMTypeRef array_ty = cg_type_get_llvm(cg, array_type);
-      LLVMValueRef array_ptr =
-          LLVMBuildLoad2(cg->builder, array_ty, array_ptr_addr, "pointer_load");
-      LLVMValueRef index_val = cg_expression(cg, node->index.index);
-      LLVMValueRef index_i64 =
-          cg_cast_value(cg, index_val, node->index.index->resolved_type,
-                        LLVMInt64TypeInContext(cg->context));
-      LLVMTypeRef elem_ty = cg_type_get_llvm(cg, array_type->data.pointer_to);
-      return LLVMBuildGEP2(cg->builder, elem_ty, array_ptr,
-                           (LLVMValueRef[]){index_i64}, 1, "ptr_index");
-    }
-
-    LLVMValueRef array_struct_ptr = array_ptr_addr;
-    LLVMTypeRef array_struct_ty = cg_type_get_llvm(cg, array_type);
-
-    // 1. Load rank
-    LLVMValueRef rank_ptr = LLVMBuildStructGEP2(
-        cg->builder, array_struct_ty, array_struct_ptr, 3, "rank_ptr");
-    LLVMValueRef rank_val = LLVMBuildLoad2(
-        cg->builder, LLVMInt64TypeInContext(cg->context), rank_ptr, "rank_val");
-
-    LLVMValueRef dim0_val = NULL;
-    LLVMValueRef dims_ptr = NULL;
-    if (array_type->fixed_array_len > 0) {
-      dim0_val = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
-                              array_type->fixed_array_len, 0);
-    } else {
-      // 2. Load dims pointer
-      LLVMValueRef dims_ptr_ptr = LLVMBuildStructGEP2(
-          cg->builder, array_struct_ty, array_struct_ptr, 4, "dims_ptr_ptr");
-      dims_ptr = LLVMBuildLoad2(
-          cg->builder, LLVMPointerType(LLVMInt64TypeInContext(cg->context), 0),
-          dims_ptr_ptr, "dims_ptr");
-      if (!dims_ptr) {
-        panic("Internal error: array dims pointer is NULL");
-      }
-      dim0_val =
-          LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
-                         dims_ptr, "dim0_val");
-    }
-
-    // 3. Current index
     LLVMValueRef index_val = cg_expression(cg, node->index.index);
     LLVMValueRef index_i64 =
         cg_cast_value(cg, index_val, node->index.index->resolved_type,
                       LLVMInt64TypeInContext(cg->context));
 
-    // If this array has a fixed compile-time length, ensure its runtime
-    // metadata is initialized before accessing data.
-    if (array_type->fixed_array_len > 0) {
-      Type *elem_type = array_type->data.instance.generic_args.items[0];
-      CgFunc *init_fixed =
-          cg_find_function(cg, sv_from_cstr("__tyna_array_init_fixed"));
-      if (!init_fixed) {
-        panic("Internal error: fixed array init function missing");
-      }
-      LLVMTypeRef void_ptr_ty =
-          LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
-      LLVMValueRef array_struct_ptr_i8 = LLVMBuildBitCast(
-          cg->builder, array_struct_ptr, void_ptr_ty, "fixed_array_ptr");
-      LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
-      const char *data_layout = LLVMGetDataLayout(cg->module);
-      LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
-      unsigned long long elem_size_bytes = LLVMABISizeOfType(td, llvm_elem_ty);
-      LLVMDisposeTargetData(td);
-      LLVMValueRef elem_size =
-          LLVMConstInt(LLVMInt64TypeInContext(cg->context), elem_size_bytes, 0);
-      LLVMValueRef fixed_len = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
-                                            array_type->fixed_array_len, 0);
-      LLVMBuildCall2(
-          cg->builder, init_fixed->type, init_fixed->value,
-          (LLVMValueRef[]){array_struct_ptr_i8, elem_size, fixed_len}, 3, "");
+    if (array_type->kind == KIND_POINTER) {
+      LLVMTypeRef array_ty = cg_type_get_llvm(cg, array_type);
+      LLVMValueRef array_ptr =
+          LLVMBuildLoad2(cg->builder, array_ty, array_ptr_addr, "pointer_load");
+      LLVMTypeRef elem_ty = cg_type_get_llvm(cg, array_type->data.pointer_to);
+      return LLVMBuildGEP2(cg->builder, elem_ty, array_ptr,
+                           (LLVMValueRef[]){index_i64}, 1, "ptr_index");
     }
 
-    // 4. Bounds check: index_i64 < dim0
-    if (!dim0_val) {
-      panic("Internal error: fixed array bounds value not set");
+    if (type_is_array_struct(array_type) && array_type->fixed_array_len > 0) {
+      if (array_type->data.instance.generic_args.len == 0) {
+        panic("Internal error: fixed array index missing element type");
+      }
+
+      LLVMValueRef len_i64 = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                                          array_type->fixed_array_len, 0);
+
+      LLVMValueRef in_bounds = LLVMBuildICmp(cg->builder, LLVMIntULT, index_i64,
+                                             len_i64, "in_bounds");
+
+      LLVMBasicBlockRef fail_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "bounds_fail");
+      LLVMBasicBlockRef ok_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "bounds_ok");
+
+      LLVMBuildCondBr(cg->builder, in_bounds, ok_bb, fail_bb);
+      LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
+      CgFunc *panic_fn = cg_find_system_function(cg, sv_from_parts("panic", 5));
+      if (!panic_fn) {
+        panic("Internal error: system panic helper missing");
+      }
+      LLVMValueRef msg_ptr = LLVMBuildGlobalStringPtr(
+          cg->builder, "Panic: Array Index Out of Bounds", "bounds_err_msg");
+      LLVMBuildCall2(cg->builder, panic_fn->type, panic_fn->value,
+                     (LLVMValueRef[]){msg_ptr}, 1, "");
+      LLVMBuildUnreachable(cg->builder);
+      LLVMPositionBuilderAtEnd(cg->builder, ok_bb);
+
+      LLVMTypeRef fixed_array_ty = cg_type_get_llvm(cg, array_type);
+      return LLVMBuildGEP2(
+          cg->builder, fixed_array_ty, array_ptr_addr,
+          (LLVMValueRef[]){
+              LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+              index_i64},
+          2, "fixed_index_ptr");
     }
+
+    if (type_is_slice_struct(array_type)) {
+      LLVMTypeRef slice_ty = cg_type_get_llvm(cg, array_type);
+      LLVMValueRef len_ptr = LLVMBuildStructGEP2(cg->builder, slice_ty,
+                                                 array_ptr_addr, 1, "len_ptr");
+      LLVMValueRef len_val = LLVMBuildLoad2(
+          cg->builder, LLVMInt64TypeInContext(cg->context), len_ptr, "len_val");
+
+      LLVMValueRef in_bounds = LLVMBuildICmp(cg->builder, LLVMIntULT, index_i64,
+                                             len_val, "in_bounds");
+
+      LLVMBasicBlockRef fail_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "bounds_fail");
+      LLVMBasicBlockRef ok_bb = LLVMAppendBasicBlockInContext(
+          cg->context, cg->current_function, "bounds_ok");
+
+      LLVMBuildCondBr(cg->builder, in_bounds, ok_bb, fail_bb);
+      LLVMPositionBuilderAtEnd(cg->builder, fail_bb);
+      CgFunc *panic_fn = cg_find_system_function(cg, sv_from_parts("panic", 5));
+      if (!panic_fn) {
+        panic("Internal error: system panic helper missing");
+      }
+      LLVMValueRef msg_ptr = LLVMBuildGlobalStringPtr(
+          cg->builder, "Panic: Array Index Out of Bounds", "bounds_err_msg");
+      LLVMBuildCall2(cg->builder, panic_fn->type, panic_fn->value,
+                     (LLVMValueRef[]){msg_ptr}, 1, "");
+      LLVMBuildUnreachable(cg->builder);
+      LLVMPositionBuilderAtEnd(cg->builder, ok_bb);
+
+      LLVMValueRef data_ptr_gep = LLVMBuildStructGEP2(
+          cg->builder, slice_ty, array_ptr_addr, 0, "data_field_ptr");
+      LLVMTypeRef elem_ptr_ty = cg_type_get_llvm(
+          cg, type_get_pointer(cg->type_ctx, node->resolved_type));
+      LLVMValueRef actual_data_ptr = LLVMBuildLoad2(
+          cg->builder, elem_ptr_ty, data_ptr_gep, "load_data_ptr");
+      return LLVMBuildGEP2(
+          cg->builder, cg_type_get_llvm(cg, node->resolved_type),
+          actual_data_ptr, (LLVMValueRef[]){index_i64}, 1, "element_ptr");
+    }
+
+    LLVMValueRef array_struct_ptr = array_ptr_addr;
+    LLVMTypeRef array_struct_ty = cg_type_get_llvm(cg, array_type);
+
+    // Dynamic arrays use their runtime length field for bounds checks.
+    LLVMValueRef len_ptr = LLVMBuildStructGEP2(cg->builder, array_struct_ty,
+                                               array_struct_ptr, 1, "len_ptr");
+    LLVMValueRef dim0_val = LLVMBuildLoad2(
+        cg->builder, LLVMInt64TypeInContext(cg->context), len_ptr, "len_val");
 
     LLVMValueRef in_bounds = LLVMBuildICmp(cg->builder, LLVMIntULT, index_i64,
                                            dim0_val, "in_bounds");
@@ -290,12 +320,6 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     LLVMBuildUnreachable(cg->builder);
     LLVMPositionBuilderAtEnd(cg->builder, ok_bb);
 
-    // 5. If this is a multi-dimensional access, we need to adjust the child's
-    // metadata.
-    // However, Node Index in Tyna seems to only handle one level at a time.
-    // If we have arr[i][j], the inner `arr[i]` returns an Array struct.
-    // We must ensure the returned Array struct has rank-1 and shifted dims.
-
     LLVMValueRef data_ptr_gep = LLVMBuildStructGEP2(
         cg->builder, array_struct_ty, array_struct_ptr, 0, "data_field_ptr");
     LLVMTypeRef elem_ptr_ty = cg_type_get_llvm(
@@ -306,12 +330,6 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     LLVMValueRef element_addr = LLVMBuildGEP2(
         cg->builder, cg_type_get_llvm(cg, node->resolved_type), actual_data_ptr,
         (LLVMValueRef[]){index_i64}, 1, "element_ptr");
-
-    // If the element is itself an array struct, we can return its address
-    // directly. The load path will adjust rank/dims if needed.
-    if (type_is_array_struct(node->resolved_type)) {
-      return element_addr;
-    }
 
     return element_addr;
   }

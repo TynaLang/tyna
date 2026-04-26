@@ -29,6 +29,7 @@ AstNode *sema_coerce(Sema *s, AstNode *expr, Type *target);
 ExprInfo sema_check_expr(Sema *s, AstNode *node);
 bool sema_is_writable_address(Sema *s, AstNode *node);
 bool type_is_array_struct(Type *type);
+bool type_is_slice_struct(Type *type);
 bool error_set_contains(Type *set, Type *error);
 Type *sema_find_type_by_name(Sema *s, StringView name);
 Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,

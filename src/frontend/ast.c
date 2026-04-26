@@ -146,6 +146,12 @@ AstNode *AstNode_new_cast_expr(AstNode *expr, Type *type, Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_sizeof_expr(Type *target_type, Location loc) {
+  AstNode *node = AstNode_new(NODE_SIZEOF_EXPR, loc);
+  node->sizeof_expr.target_type = target_type;
+  return node;
+}
+
 AstNode *AstNode_new_assign_expr(AstNode *target, AstNode *value,
                                  Location loc) {
   AstNode *node = AstNode_new(NODE_ASSIGN_EXPR, loc);
@@ -336,6 +342,15 @@ AstNode *AstNode_new_impl_decl(Type *type, List members, Location loc) {
   AstNode *node = AstNode_new(NODE_IMPL_DECL, loc);
   node->impl_decl.type = type;
   node->impl_decl.members = members;
+  return node;
+}
+
+AstNode *AstNode_new_type_alias(AstNode *name, Type *target_type, bool is_export,
+                                Location loc) {
+  AstNode *node = AstNode_new(NODE_TYPE_ALIAS, loc);
+  node->type_alias_decl.name = name;
+  node->type_alias_decl.target_type = target_type;
+  node->type_alias_decl.is_export = is_export;
   return node;
 }
 

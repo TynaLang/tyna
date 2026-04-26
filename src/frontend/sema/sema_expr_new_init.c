@@ -10,6 +10,24 @@ ExprInfo sema_check_new_expr(Sema *s, AstNode *node) {
     };
   }
 
+  if (target_type->kind == KIND_TEMPLATE && s->generic_context_type &&
+      sv_eq(target_type->name, s->generic_context_type->name)) {
+    target_type = s->generic_context_type;
+    node->new_expr.target_type = target_type;
+  }
+
+  if (target_type->kind == KIND_TEMPLATE && s->generic_context_type &&
+      s->generic_context_type->kind == KIND_STRUCT &&
+      s->generic_context_type->data.instance.generic_args.len > 0) {
+    Type *resolved_target =
+        type_get_instance(s->types, target_type,
+                          s->generic_context_type->data.instance.generic_args);
+    if (resolved_target) {
+      target_type = resolved_target;
+      node->new_expr.target_type = target_type;
+    }
+  }
+
   if (target_type->kind == KIND_ERROR) {
     return sema_check_new_error_expr(s, node);
   }
@@ -50,7 +68,7 @@ ExprInfo sema_check_new_expr(Sema *s, AstNode *node) {
       sema_error(s, node, "Type '%s' has no constructor 'init' available",
                  type_to_name(target_type));
       return (ExprInfo){
-          .type = type_get_pointer(s->types, target_type),
+          .type = target_type,
           .category = VAL_RVALUE,
       };
     }
@@ -61,7 +79,7 @@ ExprInfo sema_check_new_expr(Sema *s, AstNode *node) {
       sema_error(s, node, "Constructor 'init' on '%s' has no self parameter",
                  type_to_name(target_type));
       return (ExprInfo){
-          .type = type_get_pointer(s->types, target_type),
+          .type = target_type,
           .category = VAL_RVALUE,
       };
     }
@@ -71,7 +89,7 @@ ExprInfo sema_check_new_expr(Sema *s, AstNode *node) {
       sema_error(s, node, "Constructor '%s' expects %zu arguments, got %zu",
                  type_to_name(target_type), param_count - 1, provided_args);
       return (ExprInfo){
-          .type = type_get_pointer(s->types, target_type),
+          .type = target_type,
           .category = VAL_RVALUE,
       };
     }
@@ -100,7 +118,7 @@ ExprInfo sema_check_new_expr(Sema *s, AstNode *node) {
       }
     }
     return (ExprInfo){
-        .type = type_get_pointer(s->types, target_type),
+        .type = target_type,
         .category = VAL_RVALUE,
     };
   } else {

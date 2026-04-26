@@ -59,6 +59,7 @@ enum AstKind {
   NODE_UNARY,
 
   NODE_CAST_EXPR,
+  NODE_SIZEOF_EXPR,
   NODE_ASSIGN_EXPR,
   NODE_EXPR_STMT,
 
@@ -78,6 +79,7 @@ enum AstKind {
   NODE_ERROR_DECL,
   NODE_ERROR_SET_DECL,
   NODE_IMPL_DECL,
+  NODE_TYPE_ALIAS,
   NODE_IMPORT,
   NODE_NEW_EXPR,
 
@@ -155,6 +157,12 @@ struct AstNode {
 
     struct {
       AstNode *name;
+      Type *target_type;
+      bool is_export;
+    } type_alias_decl;
+
+    struct {
+      AstNode *name;
       List params;
       AstNode *body;
       Type *return_type;
@@ -174,6 +182,10 @@ struct AstNode {
       AstNode *expr;
       Type *target_type;
     } cast_expr;
+
+    struct {
+      Type *target_type;
+    } sizeof_expr;
 
     struct {
       AstNode *name;
@@ -393,6 +405,7 @@ AstNode *AstNode_new_binary_logical(AstNode *left, AstNode *right, LogicalOp op,
 AstNode *AstNode_new_unary(UnaryOp op, AstNode *expr, Location loc);
 
 AstNode *AstNode_new_cast_expr(AstNode *expr, Type *type, Location loc);
+AstNode *AstNode_new_sizeof_expr(Type *target_type, Location loc);
 AstNode *AstNode_new_assign_expr(AstNode *target, AstNode *value, Location loc);
 AstNode *AstNode_new_expr_stmt(AstNode *expr, Location loc);
 
@@ -438,6 +451,7 @@ AstNode *AstNode_new_error_decl(AstNode *name, List members, StringView message,
 AstNode *AstNode_new_error_set_decl(AstNode *name, List members, bool is_export,
                                     Location loc);
 AstNode *AstNode_new_impl_decl(Type *type, List members, Location loc);
+AstNode *AstNode_new_type_alias(AstNode *name, Type *target_type, bool is_export, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
 AstNode *AstNode_new_binary_is(AstNode *left, AstNode *right, Location loc);
 AstNode *AstNode_new_binary_else(AstNode *left, AstNode *right, Location loc);

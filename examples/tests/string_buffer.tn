@@ -1,4 +1,4 @@
-import std.str.*;
+import std.string.*;
 external fn puts(c: *const char): i32;
 
 // Test functions

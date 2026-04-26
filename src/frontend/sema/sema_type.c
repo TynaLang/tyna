@@ -11,6 +11,17 @@ bool type_is_array_struct(Type *type) {
   return false;
 }
 
+bool type_is_slice_struct(Type *type) {
+  if (type->kind != KIND_STRUCT)
+    return false;
+  if (sv_eq(type->name, sv_from_parts("Slice", 5)))
+    return true;
+  if (type->data.instance.from_template &&
+      sv_eq(type->data.instance.from_template->name, sv_from_parts("Slice", 5)))
+    return true;
+  return false;
+}
+
 bool error_set_contains(Type *set, Type *error) {
   if (!set || set->kind != KIND_ERROR_SET || !error ||
       error->kind != KIND_ERROR)

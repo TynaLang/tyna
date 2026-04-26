@@ -96,6 +96,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_STATIC;
   else if (sv_eq_cstr(text, "impl"))
     t.type = TOKEN_IMPL;
+  else if (sv_eq_cstr(text, "type"))
+    t.type = TOKEN_TYPE;
   else if (sv_eq_cstr(text, "new"))
     t.type = TOKEN_NEW;
   else if (sv_eq_cstr(text, "import"))

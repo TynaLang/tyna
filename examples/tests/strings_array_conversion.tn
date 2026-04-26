@@ -1,5 +1,8 @@
+import std.string;
+import std.array;
+
 let s: str = "Hello";
-let arr: [char] = s.to_array();
+let arr: Array<u8> = s.to_array();
 print("arr is of type: ", typeof(arr));
 let restored: str = str::from_array(arr);
 print(restored);

@@ -2,12 +2,19 @@
 #include "tyna/ast.h"
 #include "tyna/codegen.h"
 #include "tyna/sema.h"
+#include <llvm-c/Target.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static bool cg_type_needs_drop(Type *type, List *seen) {
   if (!type)
+    return false;
+
+  if (type_is_array_struct(type))
+    return type->fixed_array_len == 0;
+
+  if (type_is_slice_struct(type))
     return false;
 
   for (size_t i = 0; i < seen->len; i++) {
@@ -72,6 +79,22 @@ static void cg_emit_drop_for_value(Codegen *cg, Type *type,
     }
     LLVMBuildCall2(cg->builder, drop_func->type, drop_func->value, &value_ptr,
                    1, "");
+    return;
+  }
+
+  if (type_is_array_struct(type)) {
+    if (type->fixed_array_len == 0) {
+      CgFunc *free_func =
+          cg_find_system_function(cg, sv_from_cstr("__tyna_array_free"));
+      if (!free_func || !free_func->value || !free_func->type) {
+        fprintf(
+            stderr,
+            "Internal Error: Missing array free function for dynamic array\n");
+        exit(1);
+      }
+      LLVMBuildCall2(cg->builder, free_func->type, free_func->value, &value_ptr,
+                     1, "");
+    }
     return;
   }
 
@@ -160,6 +183,33 @@ static bool cg_type_requires_zero_init(Type *t) {
   }
 }
 
+static bool cg_is_fixed_to_dynamic_array_conversion(Type *to, Type *from) {
+  if (!to || !from)
+    return false;
+  if (!type_is_array_struct(to) || !type_is_array_struct(from))
+    return false;
+
+  if (to->fixed_array_len != 0 || from->fixed_array_len == 0)
+    return false;
+
+  if (!to->data.instance.from_template || !from->data.instance.from_template)
+    return false;
+  if (to->data.instance.from_template != from->data.instance.from_template)
+    return false;
+
+  if (to->data.instance.generic_args.len == 0 ||
+      from->data.instance.generic_args.len == 0)
+    return false;
+
+  return type_equals(to->data.instance.generic_args.items[0],
+                     from->data.instance.generic_args.items[0]);
+}
+
+static bool cg_is_dynamic_array_target(Type *t) {
+  return t && type_is_array_struct(t) && t->fixed_array_len == 0 &&
+         t->data.instance.generic_args.len > 0;
+}
+
 void cg_var_decl(Codegen *cg, AstNode *node) {
   bool is_global_decl =
       cg->current_function_ref &&
@@ -194,14 +244,69 @@ void cg_var_decl(Codegen *cg, AstNode *node) {
   if (node->var_decl.value) {
     LLVMValueRef init_val = cg_expression(cg, node->var_decl.value);
     Type *target_type = node->var_decl.declared_type;
+    Type *source_type = node->var_decl.value->resolved_type;
     LLVMTypeRef target_ty = cg_type_get_llvm(cg, target_type);
+    LLVMTypeRef init_ty = LLVMTypeOf(init_val);
+
+    bool needs_array_from_stack =
+        cg_is_fixed_to_dynamic_array_conversion(target_type, source_type) ||
+        (cg_is_dynamic_array_target(target_type) &&
+         LLVMGetTypeKind(init_ty) == LLVMArrayTypeKind);
+
+    if (needs_array_from_stack) {
+      CgFunc *from_stack_fn =
+          cg_find_system_function(cg, sv_from_cstr("__tyna_array_from_stack"));
+      if (!from_stack_fn) {
+        panic(
+            "Internal error: __tyna_array_from_stack runtime function missing");
+      }
+
+      // Keep destination in a known state even if runtime conversion exits
+      // early for invalid inputs.
+      LLVMBuildStore(cg->builder, LLVMConstNull(target_ty), ptr);
+
+      LLVMTypeRef source_ty = init_ty;
+      LLVMValueRef stack_tmp =
+          LLVMBuildAlloca(cg->builder, source_ty, "fixed_array_stack_tmp");
+      LLVMBuildStore(cg->builder, init_val, stack_tmp);
+
+      LLVMTypeRef i8_ptr =
+          LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+      LLVMValueRef out_ptr_i8 =
+          LLVMBuildBitCast(cg->builder, ptr, i8_ptr, "array_from_stack_out");
+      LLVMValueRef stack_ptr_i8 = LLVMBuildBitCast(
+          cg->builder, stack_tmp, i8_ptr, "array_from_stack_src");
+
+      Type *elem_type = target_type->data.instance.generic_args.items[0];
+      uint64_t fixed_count = 0;
+      if (source_type && source_type->fixed_array_len > 0) {
+        fixed_count = source_type->fixed_array_len;
+      } else if (LLVMGetTypeKind(init_ty) == LLVMArrayTypeKind) {
+        fixed_count = (uint64_t)LLVMGetArrayLength(init_ty);
+      } else {
+        panic("Internal error: array-from-stack source is not fixed-size");
+      }
+      LLVMValueRef count =
+          LLVMConstInt(LLVMInt64TypeInContext(cg->context), fixed_count, 0);
+      LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
+      const char *data_layout = LLVMGetDataLayout(cg->module);
+      LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+      unsigned long long elem_size_bytes = LLVMABISizeOfType(td, llvm_elem_ty);
+      LLVMDisposeTargetData(td);
+      LLVMValueRef elem_size =
+          LLVMConstInt(LLVMInt64TypeInContext(cg->context), elem_size_bytes, 0);
+
+      LLVMBuildCall2(
+          cg->builder, from_stack_fn->type, from_stack_fn->value,
+          (LLVMValueRef[]){out_ptr_i8, stack_ptr_i8, count, elem_size}, 4, "");
+      return;
+    }
+
     if (target_type->kind == KIND_UNION && target_type->is_tagged_union) {
-      init_val = cg_make_tagged_union(
-          cg, init_val, node->var_decl.value->resolved_type, target_type);
+      init_val = cg_make_tagged_union(cg, init_val, source_type, target_type);
     }
     if (LLVMTypeOf(init_val) != target_ty) {
-      init_val = cg_cast_value(cg, init_val,
-                               node->var_decl.value->resolved_type, target_ty);
+      init_val = cg_cast_value(cg, init_val, source_type, target_ty);
     }
 
     if (is_global_decl) {
@@ -513,6 +618,7 @@ void cg_statement(Codegen *cg, AstNode *node) {
   case NODE_UNION_DECL:
   case NODE_ERROR_DECL:
   case NODE_ERROR_SET_DECL:
+  case NODE_TYPE_ALIAS:
   case NODE_IMPORT:
     break;
   case NODE_DEFER: {

@@ -46,19 +46,24 @@ void sema_check_struct_decl(Sema *s, AstNode *node) {
     t = existing->type;
   } else {
     if (node->struct_decl.placeholders.len > 0) {
-      t = xcalloc(1, sizeof(Type));
-      t->kind = KIND_TEMPLATE;
-      t->name = name;
-      List_init(&t->members);
-      List_init(&t->methods);
-      List_init(&t->data.template.placeholders);
-      List_init(&t->data.template.fields);
-
-      for (size_t i = 0; i < node->struct_decl.placeholders.len; i++) {
-        List_push(&t->data.template.placeholders,
-                  node->struct_decl.placeholders.items[i]);
+      t = type_get_template(s->types, name);
+      if (!t) {
+        t = xcalloc(1, sizeof(Type));
+        t->kind = KIND_TEMPLATE;
+        t->name = name;
+        List_init(&t->members);
+        List_init(&t->methods);
+        List_init(&t->data.template.placeholders);
+        List_init(&t->data.template.fields);
+        List_push(&s->types->templates, t);
       }
-      List_push(&s->types->templates, t);
+
+      if (t->data.template.placeholders.len == 0) {
+        for (size_t i = 0; i < node->struct_decl.placeholders.len; i++) {
+          List_push(&t->data.template.placeholders,
+                    node->struct_decl.placeholders.items[i]);
+        }
+      }
     } else {
       t = type_get_struct(s->types, name);
       if (!t) {

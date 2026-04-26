@@ -296,6 +296,8 @@ AstNode *parser_parse_statement(Parser *p) {
     return parser_parse_error_set_decl(p, is_export);
   case TOKEN_IMPL:
     return parser_parse_impl_decl(p);
+  case TOKEN_TYPE:
+    return parser_parse_type_alias(p, is_export);
   case TOKEN_FROZEN: {
     parser_token_advance(p);
     if (p->current_token.type != TOKEN_STRUCT &&

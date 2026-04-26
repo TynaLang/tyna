@@ -76,7 +76,7 @@ ExprInfo sema_check_index(Sema *s, AstNode *node) {
     };
   }
 
-  if (!type_is_array_struct(array_type)) {
+  if (!type_is_array_struct(array_type) && !type_is_slice_struct(array_type)) {
     sema_error(s, array_node, "Indexing only allowed on arrays, got %s",
                type_to_name(array_type));
     return (ExprInfo){
@@ -108,6 +108,12 @@ ExprInfo sema_check_index(Sema *s, AstNode *node) {
 
   Type *element_type = NULL;
   if (array_type->data.instance.generic_args.len > 0) {
+    element_type = array_type->data.instance.generic_args.items[0];
+    return (ExprInfo){.type = element_type, .category = VAL_LVALUE};
+  }
+
+  if (type_is_slice_struct(array_type) &&
+      array_type->data.instance.generic_args.len > 0) {
     element_type = array_type->data.instance.generic_args.items[0];
     return (ExprInfo){.type = element_type, .category = VAL_LVALUE};
   }

@@ -60,6 +60,31 @@ AstNode *parser_parse_var_decl(Parser *p, bool is_export) {
   }
 }
 
+AstNode *parser_parse_type_alias(Parser *p, bool is_export) {
+  Location loc = p->current_token.loc;
+  parser_token_advance(p); // consume 'type'
+
+  Token alias_token = p->current_token;
+  if (!parser_expect(p, TOKEN_IDENT, "Expected alias name after 'type'"))
+    return NULL;
+
+  if (!parser_expect(p, TOKEN_ASSIGN, "Expected '=' in type alias declaration"))
+    return NULL;
+
+  Type *target_type = parser_parse_type_full(p);
+  if (!target_type)
+    return NULL;
+
+  if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after type alias declaration"))
+    return NULL;
+
+  if (!parser_add_type_alias(p, alias_token.text, target_type, alias_token.loc))
+    return NULL;
+
+  AstNode *name_node = AstNode_new_var(alias_token.text, alias_token.loc);
+  return AstNode_new_type_alias(name_node, target_type, is_export, loc);
+}
+
 AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
                               bool is_pub_module, bool is_external) {
   parser_token_advance(p); // consume 'fn'
@@ -594,7 +619,7 @@ AstNode *parser_parse_impl_decl(Parser *p) {
       impl_type = type_get_instance(p->type_ctx, template_type, args);
       List_free(&args, 0);
     } else {
-      impl_type = type_get_named(p->type_ctx, owner_name);
+      impl_type = parser_resolve_named_type(p, owner_name, false);
       if (!impl_type)
         impl_type = type_get_struct(p->type_ctx, owner_name);
       if (!impl_type)

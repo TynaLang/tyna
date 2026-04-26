@@ -85,16 +85,30 @@ AstNode *parser_parse_primary(Parser *p) {
   case TOKEN_CHAR:
     return AstNode_new_char(t.text.data[0], t.loc);
   case TOKEN_IDENT:
+    if (sv_eq_cstr(t.text, "sizeof") && p->current_token.type == TOKEN_LPAREN) {
+      parser_token_advance(p); // consume '('
+      Type *target_type = parser_parse_type_full(p);
+      if (!target_type)
+        return NULL;
+      if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after sizeof type"))
+        return NULL;
+      return AstNode_new_sizeof_expr(target_type, t.loc);
+    }
+
     if (p->current_token.type == TOKEN_COLON_COLON) {
       parser_token_advance(p);
       Token member = p->current_token;
-      if (!parser_expect(p, TOKEN_IDENT, "Expected member name after '::'"))
+      if (member.type == TOKEN_IDENT || member.type == TOKEN_NEW) {
+        parser_token_advance(p);
+      } else {
+        ErrorHandler_report(p->eh, member.loc, "Expected member name after '::'");
         return NULL;
+      }
       return AstNode_new_static_member(t.text, member.text, t.loc);
     }
 
     if (p->current_token.type == TOKEN_LBRACE) {
-      Type *target_type = type_get_named(p->type_ctx, t.text);
+      Type *target_type = parser_resolve_named_type(p, t.text, false);
       if (!target_type)
         target_type = type_get_struct(p->type_ctx, t.text);
       if (!target_type)

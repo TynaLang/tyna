@@ -1,0 +1,46 @@
+// Dynamic owner
+pub struct Array<T> {
+    data: ptr<T>;
+    len: i64;
+    cap: i64;
+}
+
+// Non-owning view
+pub struct Slice<T> {
+    data: ptr<T>;
+    len: i64;
+}
+
+external fn __tyna_array_new(out: ptr<Array<u8>>, elem_size: i64): void;
+external fn __tyna_array_with_capacity(out: ptr<Array<u8>>, cap: i64, elem_size: i64): void;
+external fn __tyna_array_push(arr: ptr<Array<u8>>, element: ptr<void>, elem_size: i64): void;
+external fn __tyna_array_free(arr: ptr<Array<u8>>): void;
+external fn __tyna_array_from_stack(out: ptr<Array<u8>>, stack_ptr: ptr<void>, count: i64, elem_size: i64): void;
+
+impl Array<T> {
+    pub static fn new(): Array<T> {
+        let result: Array<T>;
+        __tyna_array_new(&result as ptr<Array<u8>>, sizeof(T));
+        return result;
+    }
+
+    pub static fn with_capacity(cap: i64): Array<T> {
+        let result: Array<T>;
+        __tyna_array_with_capacity(&result as ptr<Array<u8>>, cap, sizeof(T));
+        return result;
+    }
+
+    pub fn push(self: ptr<Array<T>>, val: T): void {
+        __tyna_array_push(self as ptr<Array<u8>>, &val as ptr<void>, sizeof(T));
+    }
+
+    pub fn slice(self: Array<T>, start: i64, end: i64): Slice<T> {
+        if (start < 0 || end > self.len || start > end) {
+            panic("Slice out of bounds");
+        }
+        return Slice {
+            data: self.data + start,
+            len: end - start
+        };
+    }
+}

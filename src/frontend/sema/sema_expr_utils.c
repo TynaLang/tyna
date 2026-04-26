@@ -16,6 +16,12 @@ Type *sema_find_type_by_name(Sema *s, StringView name) {
       return t;
   }
 
+  for (size_t i = 0; i < s->types->templates.len; i++) {
+    Type *t = s->types->templates.items[i];
+    if (sv_eq(t->name, name) || sv_eq_cstr(name, type_to_name(t)))
+      return t;
+  }
+
   for (int i = 0; i <= PRIM_UNKNOWN; i++) {
     Type *t = s->types->primitives[i];
     if (!t)
@@ -76,7 +82,8 @@ bool sema_is_writable_address(Sema *s, AstNode *node) {
         arr_type->data.primitive == PRIM_STRING) {
       return false;
     }
-    return arr_type->kind == KIND_POINTER || type_is_array_struct(arr_type);
+        return arr_type->kind == KIND_POINTER || type_is_array_struct(arr_type) ||
+          type_is_slice_struct(arr_type);
   }
 
   case NODE_UNARY:

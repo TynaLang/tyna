@@ -134,5 +134,6 @@ LLVMValueRef cg_equality_expr(Codegen *cg, LLVMValueRef lhs, LLVMValueRef rhs,
                               EqualityOp op, Type *left_ty, Type *right_ty);
 
 bool type_is_array_struct(Type *type);
+bool type_is_slice_struct(Type *type);
 
 #endif

@@ -29,13 +29,8 @@ void sema_prime_types(Sema *s) {
                     8);
     type_add_member(array_tpl, "cap", type_get_primitive(s->types, PRIM_I64),
                     16);
-    type_add_member(array_tpl, "rank", type_get_primitive(s->types, PRIM_I64),
-                    24);
-    type_add_member(
-        array_tpl, "dims",
-        type_get_pointer(s->types, type_get_primitive(s->types, PRIM_I64)), 32);
 
-    array_tpl->size = 40;
+    array_tpl->size = 24;
     List_push(&s->types->templates, array_tpl);
   }
 

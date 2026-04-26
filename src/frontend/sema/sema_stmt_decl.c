@@ -1,6 +1,53 @@
 #include "sema_internal.h"
 #include <ctype.h>
 
+static void sema_try_bind_static_call_from_decl_type(Sema *s, AstNode *value,
+                                                      Type *decl_type) {
+  if (!value || !decl_type || value->tag != NODE_CALL || !value->call.func)
+    return;
+  if (value->call.func->tag != NODE_STATIC_MEMBER)
+    return;
+  if (decl_type->kind != KIND_STRUCT || !decl_type->data.instance.from_template)
+    return;
+
+  AstNode *sm = value->call.func;
+  Type *template_type = decl_type->data.instance.from_template;
+  if (!sm->static_member.parent.data || !template_type->name.data)
+    return;
+  if (!sv_eq(sm->static_member.parent, template_type->name))
+    return;
+
+  for (size_t i = 0; i < template_type->methods.len; i++) {
+    Symbol *method = template_type->methods.items[i];
+    if (!method || method->kind != SYM_STATIC_METHOD)
+      continue;
+
+    StringView lookup_name =
+        method->original_name.len ? method->original_name : method->name;
+    if (!sm->static_member.member.data ||
+        !sv_eq(lookup_name, sm->static_member.member)) {
+      continue;
+    }
+
+    Symbol *concrete = sema_instantiate_method_symbol(s, decl_type, method, sm);
+    if (!concrete)
+      return;
+
+    if (!sema_resolve(s, concrete->name)) {
+      Symbol *alias = sema_define(s, concrete->name, concrete->type, true, sm->loc);
+      if (alias) {
+        alias->original_name = concrete->original_name;
+        alias->value = concrete->value;
+        alias->kind = concrete->kind;
+        alias->is_export = false;
+      }
+    }
+
+    value->call.func = AstNode_new_var(concrete->name, sm->loc);
+    return;
+  }
+}
+
 static bool sema_error_message_validate(Sema *s, AstNode *node, StringView msg,
                                         size_t field_count) {
   bool valid = true;
@@ -63,6 +110,7 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
   }
 
   if (node->var_decl.value) {
+    sema_try_bind_static_call_from_decl_type(s, node->var_decl.value, decl_type);
     node->var_decl.value = sema_coerce(s, node->var_decl.value, decl_type);
     Type *actual_type = node->var_decl.value
                             ? node->var_decl.value->resolved_type

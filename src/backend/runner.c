@@ -68,7 +68,7 @@ void Runner_link_executable(const char *obj, const char *out) {
 
   snprintf(cmd, sizeof(cmd),
            "clang -Iinclude %s src/shared/alloc.c src/shared/utils.c "
-           "src/shared/runtime.c -o %s -lm",
+           "src/shared/runtime.c src/shared/array.c -o %s -lm",
            obj, out);
 
   int res = system(cmd);

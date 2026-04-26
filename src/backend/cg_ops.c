@@ -6,6 +6,7 @@
 #include "tyna/codegen.h"
 #include "tyna/utils.h"
 #include "llvm-c/Types.h"
+#include <llvm-c/Target.h>
 
 LLVMValueRef cg_const_expr(Codegen *cg, AstNode *node);
 LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node);
@@ -21,6 +22,33 @@ LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node);
 LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node);
 LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node);
 LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node);
+
+static bool cg_is_fixed_to_dynamic_array_conversion(Type *to, Type *from) {
+  if (!to || !from)
+    return false;
+  if (!type_is_array_struct(to) || !type_is_array_struct(from))
+    return false;
+
+  if (to->fixed_array_len != 0 || from->fixed_array_len == 0)
+    return false;
+
+  if (!to->data.instance.from_template || !from->data.instance.from_template)
+    return false;
+  if (to->data.instance.from_template != from->data.instance.from_template)
+    return false;
+
+  if (to->data.instance.generic_args.len == 0 ||
+      from->data.instance.generic_args.len == 0)
+    return false;
+
+  return type_equals(to->data.instance.generic_args.items[0],
+                     from->data.instance.generic_args.items[0]);
+}
+
+static bool cg_is_dynamic_array_target(Type *t) {
+  return t && type_is_array_struct(t) && t->fixed_array_len == 0 &&
+         t->data.instance.generic_args.len > 0;
+}
 
 static LLVMValueRef cg_block_expr(Codegen *cg, AstNode *node) {
   if (!node || node->tag != NODE_BLOCK)
@@ -335,13 +363,13 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
       LLVMBuildICmp(cg->builder, LLVMIntNE, tag, LLVMConstInt(tag_ty, 0, false),
                     "result_is_error");
 
-    if (!node->binary_else.right) {
+  if (!node->binary_else.right) {
     LLVMBasicBlockRef error_bb = LLVMAppendBasicBlockInContext(
-      cg->context, cg->current_function, "question_error");
+        cg->context, cg->current_function, "question_error");
     LLVMBasicBlockRef success_bb = LLVMAppendBasicBlockInContext(
-      cg->context, cg->current_function, "question_success");
+        cg->context, cg->current_function, "question_success");
     LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(
-      cg->context, cg->current_function, "question_merge");
+        cg->context, cg->current_function, "question_merge");
 
     LLVMBuildCondBr(cg->builder, is_error, error_bb, success_bb);
 
@@ -350,19 +378,18 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
 
     LLVMPositionBuilderAtEnd(cg->builder, success_bb);
     LLVMValueRef success_raw =
-      LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+        LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
     LLVMValueRef success_val =
-      cg_cast_value(cg, success_raw, left_type->data.result.success,
-              cg_type_get_llvm(cg, node->resolved_type));
+        cg_cast_value(cg, success_raw, left_type->data.result.success,
+                      cg_type_get_llvm(cg, node->resolved_type));
     LLVMBuildBr(cg->builder, merge_bb);
 
     LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
-    LLVMValueRef phi = LLVMBuildPhi(cg->builder,
-                    cg_type_get_llvm(cg, node->resolved_type),
-                    "question_val");
+    LLVMValueRef phi = LLVMBuildPhi(
+        cg->builder, cg_type_get_llvm(cg, node->resolved_type), "question_val");
     LLVMAddIncoming(phi, &success_val, &success_bb, 1);
     return phi;
-    }
+  }
 
   if (node->binary_else.right &&
       node->binary_else.right->tag == NODE_RETURN_STMT) {
@@ -414,9 +441,9 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
         LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder)) != NULL;
     if (!error_terminated) {
       if (block_val && node->resolved_type) {
-        block_val = cg_cast_value(cg, block_val,
-                                  node->binary_else.right->resolved_type,
-                                  cg_type_get_llvm(cg, node->resolved_type));
+        block_val =
+            cg_cast_value(cg, block_val, node->binary_else.right->resolved_type,
+                          cg_type_get_llvm(cg, node->resolved_type));
       }
       if (!block_val && node->resolved_type) {
         block_val = LLVMConstNull(cg_type_get_llvm(cg, node->resolved_type));
@@ -612,25 +639,76 @@ LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   if (!node->assign_expr.value->resolved_type) {
     panic("Assignment RHS has no resolved type");
   }
+  Type *source_type = node->assign_expr.value->resolved_type;
   LLVMTypeRef target_ty = cg_type_get_llvm(cg, target_type);
-  if (target_type->kind == KIND_UNION && target_type->is_tagged_union) {
-    int variant_index = cg_tagged_union_variant_index(
-        target_type, node->assign_expr.value->resolved_type);
-    if (variant_index >= 0) {
-      val = cg_make_tagged_union(
-          cg, val, node->assign_expr.value->resolved_type, target_type);
+  LLVMTypeRef source_llvm_ty = LLVMTypeOf(val);
+
+  bool needs_array_from_stack =
+      cg_is_fixed_to_dynamic_array_conversion(target_type, source_type) ||
+      (cg_is_dynamic_array_target(target_type) &&
+       LLVMGetTypeKind(source_llvm_ty) == LLVMArrayTypeKind);
+
+  if (needs_array_from_stack) {
+    CgFunc *from_stack_fn =
+        cg_find_system_function(cg, sv_from_cstr("__tyna_array_from_stack"));
+    if (!from_stack_fn) {
+      panic("Internal error: __tyna_array_from_stack runtime function missing");
+    }
+
+    // Keep destination in a known state even if runtime conversion exits early.
+    LLVMBuildStore(cg->builder, LLVMConstNull(target_ty), ptr);
+
+    LLVMTypeRef source_ty = source_llvm_ty;
+    LLVMValueRef stack_tmp =
+        LLVMBuildAlloca(cg->builder, source_ty, "fixed_array_assign_stack_tmp");
+    LLVMBuildStore(cg->builder, val, stack_tmp);
+
+    LLVMTypeRef i8_ptr = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+    LLVMValueRef out_ptr_i8 = LLVMBuildBitCast(cg->builder, ptr, i8_ptr,
+                                               "array_assign_from_stack_out");
+    LLVMValueRef stack_ptr_i8 = LLVMBuildBitCast(cg->builder, stack_tmp, i8_ptr,
+                                                 "array_assign_from_stack_src");
+
+    Type *elem_type = target_type->data.instance.generic_args.items[0];
+    uint64_t fixed_count = 0;
+    if (source_type && source_type->fixed_array_len > 0) {
+      fixed_count = source_type->fixed_array_len;
+    } else if (LLVMGetTypeKind(source_llvm_ty) == LLVMArrayTypeKind) {
+      fixed_count = (uint64_t)LLVMGetArrayLength(source_llvm_ty);
     } else {
-      val = cg_cast_value(cg, val, node->assign_expr.value->resolved_type,
-                          target_ty);
+      panic("Internal error: array-from-stack assignment source is not "
+            "fixed-size");
+    }
+    LLVMValueRef count =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), fixed_count, 0);
+    LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
+    const char *data_layout = LLVMGetDataLayout(cg->module);
+    LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+    unsigned long long elem_size_bytes = LLVMABISizeOfType(td, llvm_elem_ty);
+    LLVMDisposeTargetData(td);
+    LLVMValueRef elem_size =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), elem_size_bytes, 0);
+
+    LLVMBuildCall2(cg->builder, from_stack_fn->type, from_stack_fn->value,
+                   (LLVMValueRef[]){out_ptr_i8, stack_ptr_i8, count, elem_size},
+                   4, "");
+    return LLVMBuildLoad2(cg->builder, target_ty, ptr, "array_assign_conv_val");
+  }
+
+  if (target_type->kind == KIND_UNION && target_type->is_tagged_union) {
+    int variant_index = cg_tagged_union_variant_index(target_type, source_type);
+    if (variant_index >= 0) {
+      val = cg_make_tagged_union(cg, val, source_type, target_type);
+    } else {
+      val = cg_cast_value(cg, val, source_type, target_ty);
     }
   } else {
-    val = cg_cast_value(cg, val, node->assign_expr.value->resolved_type,
-                        target_ty);
+    val = cg_cast_value(cg, val, source_type, target_ty);
   }
 
   if (node->assign_expr.target->tag == NODE_INDEX) {
     Type *array_type = node->assign_expr.target->index.array->resolved_type;
-    if (type_is_array_struct(array_type)) {
+    if (type_is_array_struct(array_type) && array_type->fixed_array_len == 0) {
       LLVMValueRef array_struct_ptr =
           cg_get_address(cg, node->assign_expr.target->index.array);
       if (!array_struct_ptr)
@@ -681,6 +759,60 @@ LLVMValueRef cg_cast_expr(Codegen *cg, AstNode *node) {
   Type *expr_type = node->cast_expr.expr->resolved_type;
   Type *target_type = node->cast_expr.target_type;
   LLVMTypeRef target_ty = cg_type_get_llvm(cg, target_type);
+  LLVMTypeRef source_llvm_ty = LLVMTypeOf(val);
+
+  bool needs_array_from_stack =
+      cg_is_fixed_to_dynamic_array_conversion(target_type, expr_type) ||
+      (cg_is_dynamic_array_target(target_type) &&
+       LLVMGetTypeKind(source_llvm_ty) == LLVMArrayTypeKind);
+
+  if (needs_array_from_stack) {
+    CgFunc *from_stack_fn =
+        cg_find_system_function(cg, sv_from_cstr("__tyna_array_from_stack"));
+    if (!from_stack_fn) {
+      panic("Internal error: __tyna_array_from_stack runtime function missing");
+    }
+
+    LLVMValueRef out_tmp =
+        LLVMBuildAlloca(cg->builder, target_ty, "fixed_to_dynamic_cast_out");
+    LLVMBuildStore(cg->builder, LLVMConstNull(target_ty), out_tmp);
+
+    LLVMTypeRef source_ty = source_llvm_ty;
+    LLVMValueRef stack_tmp =
+        LLVMBuildAlloca(cg->builder, source_ty, "fixed_to_dynamic_cast_src");
+    LLVMBuildStore(cg->builder, val, stack_tmp);
+
+    LLVMTypeRef i8_ptr = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+    LLVMValueRef out_ptr_i8 =
+        LLVMBuildBitCast(cg->builder, out_tmp, i8_ptr, "cast_array_out");
+    LLVMValueRef stack_ptr_i8 =
+        LLVMBuildBitCast(cg->builder, stack_tmp, i8_ptr, "cast_array_src");
+
+    Type *elem_type = target_type->data.instance.generic_args.items[0];
+    uint64_t fixed_count = 0;
+    if (expr_type && expr_type->fixed_array_len > 0) {
+      fixed_count = expr_type->fixed_array_len;
+    } else if (LLVMGetTypeKind(source_llvm_ty) == LLVMArrayTypeKind) {
+      fixed_count = (uint64_t)LLVMGetArrayLength(source_llvm_ty);
+    } else {
+      panic("Internal error: array-from-stack cast source is not fixed-size");
+    }
+    LLVMValueRef count =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), fixed_count, 0);
+    LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, elem_type);
+    const char *data_layout = LLVMGetDataLayout(cg->module);
+    LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+    unsigned long long elem_size_bytes = LLVMABISizeOfType(td, llvm_elem_ty);
+    LLVMDisposeTargetData(td);
+    LLVMValueRef elem_size =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), elem_size_bytes, 0);
+
+    LLVMBuildCall2(cg->builder, from_stack_fn->type, from_stack_fn->value,
+                   (LLVMValueRef[]){out_ptr_i8, stack_ptr_i8, count, elem_size},
+                   4, "");
+    return LLVMBuildLoad2(cg->builder, target_ty, out_tmp,
+                          "fixed_to_dynamic_cast_val");
+  }
 
   if (expr_type && expr_type->kind == KIND_UNION &&
       expr_type->is_tagged_union) {
@@ -743,6 +875,14 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
     return cg_assign_expr(cg, node);
   case NODE_CAST_EXPR:
     return cg_cast_expr(cg, node);
+  case NODE_SIZEOF_EXPR: {
+    Type *target = node->sizeof_expr.target_type;
+    if (!target) {
+      panic("sizeof target type is missing");
+    }
+    return LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                        (uint64_t)target->size, false);
+  }
   case NODE_CALL:
     return cg_call_expr(cg, node);
   case NODE_NEW_EXPR:

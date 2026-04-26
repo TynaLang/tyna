@@ -1,6 +1,8 @@
+import std.array;
+
 fn main() {
     let arr: Array<i32> = [10, 20, 30, 40, 50];
-    let sub: Array<i32> = arr.slice(1, 4);
+    let sub: Slice<i32> = arr.slice(1, 4);
     print(sub.len, " ", sub[0], " ", sub[1], " ", sub[2]);
 
     let row1: [i32; 2] = [1, 2];

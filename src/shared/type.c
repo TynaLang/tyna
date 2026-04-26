@@ -187,16 +187,40 @@ static void register_array_template(TypeContext *ctx) {
   // cap: i64
   type_add_member(array_tmpl, "cap", type_get_primitive(ctx, PRIM_I64), 16);
 
-  // rank: i64
-  type_add_member(array_tmpl, "rank", type_get_primitive(ctx, PRIM_I64), 24);
-
-  // dims: ptr<i64>
-  type_add_member(array_tmpl, "dims",
-                  type_get_pointer(ctx, type_get_primitive(ctx, PRIM_I64)), 32);
-
-  array_tmpl->size = 40;
+  array_tmpl->size = 24;
 
   List_push(&ctx->templates, array_tmpl);
+}
+
+static void register_slice_template(TypeContext *ctx) {
+  Type *slice_tmpl = xcalloc(1, sizeof(Type));
+  slice_tmpl->kind = KIND_TEMPLATE;
+  slice_tmpl->name = sv_from_parts("Slice", 5);
+
+  type_init_common(slice_tmpl);
+  List_init(&slice_tmpl->data.template.placeholders);
+  List_init(&slice_tmpl->data.template.fields);
+
+  StringView *t_sv = xmalloc(sizeof(StringView));
+  *t_sv = sv_from_parts("T", 1);
+  List_push(&slice_tmpl->data.template.placeholders, t_sv);
+
+  Type *t_type = xcalloc(1, sizeof(Type));
+  t_type->kind = KIND_TEMPLATE;
+  t_type->name = *t_sv;
+  type_init_common(t_type);
+
+  Type *ptr_t = xcalloc(1, sizeof(Type));
+  ptr_t->kind = KIND_POINTER;
+  ptr_t->data.pointer_to = t_type;
+  ptr_t->size = 8;
+  type_init_common(ptr_t);
+  type_add_member(slice_tmpl, "data", ptr_t, 0);
+  type_add_member(slice_tmpl, "len", type_get_primitive(ctx, PRIM_I64), 8);
+
+  slice_tmpl->size = 16;
+
+  List_push(&ctx->templates, slice_tmpl);
 }
 
 Type *type_get_string_buffer(TypeContext *ctx) { return ctx->string_buffer; }
@@ -223,6 +247,7 @@ TypeContext *type_context_create() {
   List_init(&ctx->instantiated_functions);
 
   register_array_template(ctx);
+  register_slice_template(ctx);
 
   Type *sb = xcalloc(1, sizeof(Type));
   sb->kind = KIND_STRING_BUFFER;
@@ -280,6 +305,11 @@ Type *type_get_pointer(TypeContext *ctx, Type *to) {
 Type *type_get_named(TypeContext *ctx, StringView name) {
   for (size_t i = 0; i < ctx->structs.len; i++) {
     Type *t = ctx->structs.items[i];
+    if (sv_eq(t->name, name))
+      return t;
+  }
+  for (size_t i = 0; i < ctx->templates.len; i++) {
+    Type *t = ctx->templates.items[i];
     if (sv_eq(t->name, name))
       return t;
   }

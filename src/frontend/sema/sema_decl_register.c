@@ -26,7 +26,7 @@ void sema_register_func_signature(Sema *s, AstNode *node) {
 
   StringView actual_name = name;
   if (node->func_decl.is_export && !node->func_decl.is_external &&
-      s->current_module) {
+      s->current_module && !sv_eq_cstr(name, "main")) {
     actual_name = sema_mangle_module_symbol(s->current_module->name, name);
   }
 
