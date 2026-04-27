@@ -156,6 +156,20 @@ ExprInfo sema_check_static_member(Sema *s, AstNode *node) {
   }
 
   Symbol *parent = sema_resolve(s, node->static_member.parent);
+  if (parent && parent->kind == SYM_MODULE) {
+    Symbol *target_sym =
+        module_lookup_export(parent->module, node->static_member.member);
+    if (!target_sym) {
+      sema_error(s, node, "Module '" SV_FMT "' has no symbol '" SV_FMT "'",
+                 SV_ARG(parent->name), SV_ARG(node->static_member.member));
+      return (ExprInfo){
+          .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+          .category = VAL_RVALUE,
+      };
+    }
+    return (ExprInfo){.type = target_sym->type, .category = VAL_RVALUE};
+  }
+
   Type *type = NULL;
   if (parent) {
     type = parent->type;

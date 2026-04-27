@@ -1,0 +1,30 @@
+external fn __tyna_path_join(base: str, segment: str): str;
+external fn __tyna_path_dir(path: str): str;
+external fn __tyna_path_filename(path: str): str;
+external fn __tyna_path_extension(path: str): str;
+external fn __tyna_path_with_extension(path: str, new_ext: str): str;
+external fn __tyna_path_is_absolute(path: str): i32;
+
+pub fn join(base: str, segment: str): str {
+    return __tyna_path_join(base, segment);
+}
+
+pub fn dir(path: str): str {
+    return __tyna_path_dir(path);
+}
+
+pub fn filename(path: str): str {
+    return __tyna_path_filename(path);
+}
+
+pub fn extension(path: str): str {
+    return __tyna_path_extension(path);
+}
+
+pub fn with_extension(path: str, new_ext: str): str {
+    return __tyna_path_with_extension(path, new_ext);
+}
+
+pub fn is_absolute(path: str): bool {
+    return __tyna_path_is_absolute(path) == 1;
+}

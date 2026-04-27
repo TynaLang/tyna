@@ -524,9 +524,23 @@ LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
 }
 
 LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
-  if (node->call.func->tag != NODE_VAR)
+  char static_member_name_buf[512] = {0};
+  StringView fn_name = {0};
+  if (node->call.func->tag == NODE_VAR) {
+    fn_name = node->call.func->var.value;
+  } else if (node->call.func->tag == NODE_STATIC_MEMBER) {
+    // Module namespace calls can survive to codegen as static members.
+    // Resolve them using the same mangling convention as sema.
+    snprintf(static_member_name_buf, sizeof(static_member_name_buf),
+             "_TM_%.*s_F_%.*s", (int)node->call.func->static_member.parent.len,
+             node->call.func->static_member.parent.data,
+             (int)node->call.func->static_member.member.len,
+             node->call.func->static_member.member.data);
+    fn_name = sv_from_cstr(static_member_name_buf);
+  } else {
     panic("Function calls must be by name");
-  StringView fn_name = node->call.func->var.value;
+  }
+
   if (sv_eq(fn_name, sv_from_cstr("typeof"))) {
     Type *arg_type = NULL;
     if (node->call.args.len > 0) {
@@ -543,6 +557,29 @@ LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
   }
 
   CgFunc *fn = cg_find_function(cg, fn_name);
+  if (!fn && cg->current_function_ref &&
+      cg->current_function_ref->name.len > 7 &&
+      memcmp(cg->current_function_ref->name.data, "_TM_", 4) == 0) {
+    size_t module_len = 0;
+    for (size_t i = 4; i + 2 < cg->current_function_ref->name.len; i++) {
+      if (cg->current_function_ref->name.data[i] == '_' &&
+          cg->current_function_ref->name.data[i + 1] == 'F' &&
+          cg->current_function_ref->name.data[i + 2] == '_') {
+        module_len = i - 4;
+        break;
+      }
+    }
+
+    if (module_len > 0) {
+      char module_local_name_buf[512] = {0};
+      snprintf(module_local_name_buf, sizeof(module_local_name_buf),
+               "_TM_%.*s_F_%.*s", (int)module_len,
+               cg->current_function_ref->name.data + 4, (int)fn_name.len,
+               fn_name.data);
+      fn = cg_find_function(cg, sv_from_cstr(module_local_name_buf));
+    }
+  }
+
   if (!fn)
     panic("Call to undefined function '" SV_FMT "'", SV_ARG(fn_name));
 

@@ -1,13 +1,113 @@
-import { IOError } from std.error;
+import std.path;
 
-pub fn open(path: str): *void ! Error {
-    let handle: *void = null;
-    if (handle == null) {
-        return IOError {
-            code: 1,
-            message: "File not found",
-            path: path,
-        };
+pub error FsError {
+    code: i32;
+    path: str;
+}
+
+pub struct Metadata {
+    size: i64;
+    is_file: bool;
+    is_dir: bool;
+    modified_secs: i64;
+}
+
+const WRITE_TRUNC: i32 = 0;
+const WRITE_APPEND: i32 = 1;
+const WRITE_CREATE_NEW: i32 = 2;
+const READ_BUF_SIZE: i64 = 8192;
+
+external fn __tyna_fs_exists(path: str): i32;
+external fn __tyna_fs_metadata(path: str, size_out: ptr<i64>, is_file_out: ptr<i32>, is_dir_out: ptr<i32>, modified_out: ptr<i64>, err_out: ptr<i32>): void;
+external fn __tyna_fs_read(path: str, buf: ptr<char>, cap: i64, err_out: ptr<i32>): i64;
+external fn __tyna_fs_read_all(path: str, err_out: ptr<i32>): str;
+external fn __tyna_fs_write_all(path: str, data: str, mode: i32, err_out: ptr<i32>): i32;
+external fn __tyna_fs_write_atomic(path: str, data: str, err_out: ptr<i32>): i32;
+external fn __tyna_fs_remove(path: str): i32;
+external fn __tyna_fs_rename(frm: str, to: str): i32;
+external fn __tyna_fs_create_dir_all(path: str): i32;
+
+pub fn exists(path: str): bool {
+    return __tyna_fs_exists(path) == 1;
+}
+
+pub fn metadata(path: str): Metadata ! FsError {
+    let size: i64 = -1;
+    let is_file: i32 = 0;
+    let is_dir: i32 = 0;
+    let modified_secs: i64 = 0;
+    let err: i32 = 0;
+
+    __tyna_fs_metadata(path, &size, &is_file, &is_dir, &modified_secs, &err);
+    if (err != 0) {
+        return FsError { code: err, path: path };
     }
-    return handle;
+
+    return Metadata {
+        size: size,
+        is_file: is_file == 1,
+        is_dir: is_dir == 1,
+        modified_secs: modified_secs,
+    };
+}
+
+pub fn read_to_string(path: str): str ! FsError {
+    let err: i32 = 0;
+    let result: str = __tyna_fs_read_all(path, &err);
+    if (err != 0) {
+        return FsError { code: err, path: path };
+    }
+    return result;
+}
+
+pub fn write_string(path: str, data: str): void ! FsError {
+    let err: i32 = 0;
+    if (__tyna_fs_write_all(path, data, WRITE_TRUNC, &err) != 0) {
+        return FsError { code: err, path: path };
+    }
+}
+
+pub fn append_string(path: str, data: str): void ! FsError {
+    let err: i32 = 0;
+    if (__tyna_fs_write_all(path, data, WRITE_APPEND, &err) != 0) {
+        return FsError { code: err, path: path };
+    }
+}
+
+pub fn write_new(path: str, data: str): void ! FsError {
+    let err: i32 = 0;
+    if (__tyna_fs_write_all(path, data, WRITE_CREATE_NEW, &err) != 0) {
+        return FsError { code: err, path: path };
+    }
+}
+
+pub fn create_dir_all(path: str): void ! FsError {
+    let err = __tyna_fs_create_dir_all(path);
+    if (err != 0) {
+        return FsError { code: err, path: path };
+    }
+}
+
+pub fn remove_file(path: str): void ! FsError {
+    let err = __tyna_fs_remove(path);
+    if (err != 0) {
+        return FsError { code: err, path: path };
+    }
+}
+
+pub fn rename(frm: str, to: str): void ! FsError {
+    let err = __tyna_fs_rename(frm, to);
+    if (err != 0) {
+        return FsError { code: err, path: frm };
+    }
+}
+
+pub fn write_atomic(target_path: str, content: str): void ! FsError {
+    let dir = path::dir(target_path);
+    create_dir_all(dir)?;
+
+    let err: i32 = 0;
+    if (__tyna_fs_write_atomic(target_path, content, &err) != 0) {
+        return FsError { code: err, path: target_path };
+    }
 }

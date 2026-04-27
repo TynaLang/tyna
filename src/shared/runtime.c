@@ -15,12 +15,23 @@ typedef struct {
   int64_t len;
 } String;
 
-typedef struct TynaStringArena {
+typedef struct TynaStringArenaBlock {
   char *base;
   int64_t cap;
   int64_t used;
+  struct TynaStringArenaBlock *next;
+} TynaStringArenaBlock;
+
+typedef struct TynaStringArena {
+  TynaStringArenaBlock *block;
   struct TynaStringArena *parent;
 } TynaStringArena;
+
+typedef struct TynaSimpleArena {
+  char *base;
+  int64_t cap;
+  int64_t used;
+} TynaSimpleArena;
 
 static _Thread_local TynaStringArena *tyna_current_arena = NULL;
 static int64_t tyna_string_alloc_count = 0;
@@ -41,31 +52,46 @@ static void *tyna_string_arena_alloc(int64_t size) {
     return ptr;
   }
 
-  if (!tyna_current_arena->base) {
+  TynaStringArenaBlock *block = tyna_current_arena->block;
+  if (!block) {
     int64_t initial = 4096;
     if (initial < size)
       initial = size;
-    tyna_current_arena->base = malloc((size_t)initial);
-    if (!tyna_current_arena->base)
+    block = malloc(sizeof(TynaStringArenaBlock));
+    if (!block)
       return NULL;
-    tyna_current_arena->cap = initial;
-    tyna_current_arena->used = 0;
+    block->base = malloc((size_t)initial);
+    if (!block->base) {
+      free(block);
+      return NULL;
+    }
+    block->cap = initial;
+    block->used = 0;
+    block->next = NULL;
+    tyna_current_arena->block = block;
   }
 
-  int64_t needed = tyna_current_arena->used + size;
-  if (needed > tyna_current_arena->cap) {
-    int64_t new_cap = tyna_current_arena->cap;
-    while (new_cap < needed)
+  if (size > block->cap - block->used) {
+    int64_t new_cap = block->cap;
+    while (new_cap - block->used < size)
       new_cap *= 2;
-    char *new_base = realloc(tyna_current_arena->base, (size_t)new_cap);
-    if (!new_base)
+    TynaStringArenaBlock *new_block = malloc(sizeof(TynaStringArenaBlock));
+    if (!new_block)
       return NULL;
-    tyna_current_arena->base = new_base;
-    tyna_current_arena->cap = new_cap;
+    new_block->base = malloc((size_t)new_cap);
+    if (!new_block->base) {
+      free(new_block);
+      return NULL;
+    }
+    new_block->cap = new_cap;
+    new_block->used = 0;
+    new_block->next = block;
+    tyna_current_arena->block = new_block;
+    block = new_block;
   }
 
-  void *result = tyna_current_arena->base + tyna_current_arena->used;
-  tyna_current_arena->used += size;
+  void *result = block->base + block->used;
+  block->used += size;
   return result;
 }
 
@@ -76,12 +102,13 @@ static int tyna_string_arena_owns(const void *ptr) {
   const char *cptr = (const char *)ptr;
   TynaStringArena *arena = tyna_current_arena;
   while (arena) {
-    if (arena->base) {
-      const char *base = arena->base;
-      int owns = (cptr >= base && cptr < base + arena->cap);
-      if (owns) {
+    TynaStringArenaBlock *block = arena->block;
+    while (block) {
+      const char *base = block->base;
+      if (cptr >= base && cptr < base + block->cap) {
         return 1;
       }
+      block = block->next;
     }
     arena = arena->parent;
   }
@@ -93,9 +120,7 @@ void __tyna_string_arena_push(void) {
   TynaStringArena *arena = malloc(sizeof(TynaStringArena));
   if (!arena)
     return;
-  arena->base = NULL;
-  arena->cap = 0;
-  arena->used = 0;
+  arena->block = NULL;
   arena->parent = tyna_current_arena;
   tyna_current_arena = arena;
 }
@@ -106,7 +131,14 @@ void __tyna_string_arena_pop(void) {
 
   TynaStringArena *arena = tyna_current_arena;
   tyna_current_arena = arena->parent;
-  free(arena->base);
+
+  TynaStringArenaBlock *block = arena->block;
+  while (block) {
+    TynaStringArenaBlock *next = block->next;
+    free(block->base);
+    free(block);
+    block = next;
+  }
   free(arena);
 }
 
@@ -214,7 +246,7 @@ static struct {
   int count;
 } intern_pool = {0};
 
-static TynaStringArena global_intern_arena = {NULL, 0, 0, NULL};
+static TynaSimpleArena global_intern_arena = {NULL, 0, 0};
 
 static void *tyna_intern_arena_alloc(int64_t size) {
   if (size <= 0)
@@ -399,11 +431,15 @@ typedef struct {
   int64_t cap;
 } TynaStringBuf;
 
-static void *__tyna_string_alloc_buffer(int64_t size) {
-  void *ptr = tyna_string_arena_alloc(size);
+void *__tyna_string_alloc_buffer(int64_t size) {
+  void *ptr = tyna_string_arena_alloc(size + 1);
   if (!ptr)
     return NULL;
   return ptr;
+}
+
+int32_t __tyna_string_arena_active(void) {
+  return tyna_current_arena != NULL ? 1 : 0;
 }
 
 void __tyna_string_new(TynaStringBuf *out) {
@@ -520,7 +556,7 @@ void __tyna_string_push(TynaStringBuf *buf, String piece) {
         return;
       memcpy(nd, buf->data, (size_t)buf->len);
     } else {
-      nd = realloc(buf->data, (size_t)ncap);
+      nd = realloc(buf->data, (size_t)ncap + 1);
       if (!nd)
         return;
     }

@@ -2,6 +2,7 @@
 #include "tyna/ast.h"
 #include "tyna/codegen.h"
 #include "tyna/sema.h"
+#include "tyna/utils.h"
 #include <llvm-c/Target.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -503,8 +504,11 @@ LLVMValueRef cg_build_result_value(Codegen *cg, AstNode *expr,
   if (expr_type->kind == KIND_ERROR) {
     int idx = cg_result_error_tag_index(result_type, expr_type);
     if (idx <= 0) {
-      panic("error type '%s' not in function result error set",
-            type_to_name(expr_type));
+      panic("error type '%s' not in function result error set in "
+            "function " SV_FMT " with result type '%s'",
+            type_to_name(expr_type),
+            SV_ARG(cg->current_function_ref->decl->func_decl.name->var.value),
+            type_to_name(result_type));
     }
     tag = LLVMConstInt(tag_ty, (unsigned)idx, false);
   }

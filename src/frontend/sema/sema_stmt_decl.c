@@ -2,7 +2,7 @@
 #include <ctype.h>
 
 static void sema_try_bind_static_call_from_decl_type(Sema *s, AstNode *value,
-                                                      Type *decl_type) {
+                                                     Type *decl_type) {
   if (!value || !decl_type || value->tag != NODE_CALL || !value->call.func)
     return;
   if (value->call.func->tag != NODE_STATIC_MEMBER)
@@ -34,7 +34,8 @@ static void sema_try_bind_static_call_from_decl_type(Sema *s, AstNode *value,
       return;
 
     if (!sema_resolve(s, concrete->name)) {
-      Symbol *alias = sema_define(s, concrete->name, concrete->type, true, sm->loc);
+      Symbol *alias =
+          sema_define(s, concrete->name, concrete->type, true, sm->loc);
       if (alias) {
         alias->original_name = concrete->original_name;
         alias->value = concrete->value;
@@ -89,6 +90,27 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
   }
 
   Type *decl_type = node->var_decl.declared_type;
+
+  // First, check the RHS to infer type if needed
+  Type *actual_type = type_get_primitive(s->types, PRIM_UNKNOWN);
+  if (node->var_decl.value) {
+    // Check the expression first to get its type
+    ExprInfo rhs_info = sema_check_expr(s, node->var_decl.value);
+    actual_type = rhs_info.type;
+
+    // Handle result type unwrapping for let bindings with ? operator
+    if (actual_type && actual_type->kind == KIND_RESULT &&
+        actual_type->data.result.success) {
+      actual_type = actual_type->data.result.success;
+    }
+  }
+
+  // If no explicit type, use inferred type
+  if (type_needs_inference(decl_type) && actual_type &&
+      type_is_concrete(actual_type)) {
+    decl_type = actual_type;
+  }
+
   Symbol *sym =
       sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
   if (sym) {
@@ -96,33 +118,10 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
     sym->is_export = node->var_decl.is_export;
   }
 
-  if (node->var_decl.value && node->var_decl.value->tag == NODE_BINARY_ELSE &&
-      decl_type && type_needs_inference(decl_type)) {
-    Type *left_type =
-        sema_check_expr(s, node->var_decl.value->binary_else.left).type;
-    if (left_type && left_type->kind == KIND_RESULT &&
-        left_type->data.result.success) {
-      decl_type = left_type->data.result.success;
-      if (sym) {
-        sym->type = decl_type;
-      }
-    }
-  }
-
   if (node->var_decl.value) {
-    sema_try_bind_static_call_from_decl_type(s, node->var_decl.value, decl_type);
+    sema_try_bind_static_call_from_decl_type(s, node->var_decl.value,
+                                             decl_type);
     node->var_decl.value = sema_coerce(s, node->var_decl.value, decl_type);
-    Type *actual_type = node->var_decl.value
-                            ? node->var_decl.value->resolved_type
-                            : type_get_primitive(s->types, PRIM_UNKNOWN);
-
-    if (type_needs_inference(decl_type)) {
-      decl_type = actual_type;
-    } else if (!type_is_concrete(decl_type) ||
-               (decl_type->kind == KIND_STRUCT &&
-                decl_type->data.instance.from_template == NULL)) {
-      decl_type = actual_type;
-    }
 
     if (decl_type && decl_type->kind == KIND_STRING_BUFFER) {
       AstNode *rhs_var = NULL;

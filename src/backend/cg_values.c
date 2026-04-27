@@ -438,10 +438,31 @@ int cg_result_error_tag_index(Type *result_type, Type *error_type) {
   if (!result_type || result_type->kind != KIND_RESULT ||
       !result_type->data.result.error_set)
     return 0;
-  Type *error_set = result_type->data.result.error_set;
+
+  Type *error_desc = result_type->data.result.error_set;
+  if (error_desc->kind == KIND_ERROR) {
+    if (type_equals(error_desc, error_type))
+      return 1;
+    if (error_type && error_type->kind == KIND_ERROR &&
+        error_desc->name.len > 0 && sv_eq(error_desc->name, error_type->name))
+      return 1;
+    return 0;
+  }
+
+  if (error_desc->kind != KIND_ERROR_SET)
+    return 0;
+
+  Type *error_set = error_desc;
   for (size_t i = 0; i < error_set->members.len; i++) {
     Member *m = error_set->members.items[i];
     if (type_equals(m->type, error_type))
+      return (int)(i + 1);
+
+    // Some equivalent error types can come from distinct instances across
+    // module/import boundaries. Fall back to matching named error identity.
+    if (m && m->type && error_type && m->type->kind == KIND_ERROR &&
+        error_type->kind == KIND_ERROR && m->type->name.len > 0 &&
+        sv_eq(m->type->name, error_type->name))
       return (int)(i + 1);
   }
   return 0;

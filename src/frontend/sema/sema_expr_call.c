@@ -36,6 +36,7 @@ ExprInfo sema_check_call(Sema *s, AstNode *node) {
   }
 
   bool consumes = false;
+  AstNode *fn_decl = NULL;
   if (node->call.func->tag == NODE_VAR) {
     StringView name = node->call.func->var.value;
     Symbol *symbol = sema_resolve(s, name);
@@ -49,7 +50,7 @@ ExprInfo sema_check_call(Sema *s, AstNode *node) {
     }
 
     if (symbol->value && symbol->value->tag == NODE_FUNC_DECL) {
-      AstNode *fn_decl = symbol->value;
+      fn_decl = symbol->value;
       node->call.func->var.value = fn_decl->func_decl.name->var.value;
       size_t param_count = fn_decl->func_decl.params.len;
       if (node->call.args.len > param_count) {
@@ -125,21 +126,25 @@ ExprInfo sema_check_call(Sema *s, AstNode *node) {
       sema_mark_current_function_consumes_string_arg(s);
     }
 
-    if (symbol->type && symbol->type->kind == KIND_PRIMITIVE &&
-        symbol->type->data.primitive == PRIM_STRING) {
+    Type *return_type = fn_decl ? fn_decl->func_decl.return_type : symbol->type;
+    if (return_type && return_type->kind == KIND_PRIMITIVE &&
+        return_type->data.primitive == PRIM_STRING) {
       if (s->scope) {
         s->scope->has_computed_str = true;
       }
     }
 
-    return (ExprInfo){.type = symbol->type, .category = VAL_RVALUE};
+    return (ExprInfo){.type = return_type, .category = VAL_RVALUE};
   } else {
+    // For non-var calls (e.g., NODE_STATIC_MEMBER), get return type from
+    // checked expr
+    Type *call_return_type = func_type;
     if (func_type && func_type->kind == KIND_PRIMITIVE &&
         func_type->data.primitive == PRIM_STRING) {
       if (s->scope) {
         s->scope->has_computed_str = true;
       }
     }
-    return (ExprInfo){.type = func_type, .category = VAL_RVALUE};
+    return (ExprInfo){.type = call_return_type, .category = VAL_RVALUE};
   }
 }

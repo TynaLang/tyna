@@ -357,6 +357,10 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
   if (!left_type || left_type->kind != KIND_RESULT)
     return NULL;
 
+  bool out_is_void = node->resolved_type &&
+                     node->resolved_type->kind == KIND_PRIMITIVE &&
+                     node->resolved_type->data.primitive == PRIM_VOID;
+
   LLVMValueRef tag = LLVMBuildExtractValue(cg->builder, left, 1, "result_tag");
   LLVMTypeRef tag_ty = LLVMInt16TypeInContext(cg->context);
   LLVMValueRef is_error =
@@ -377,18 +381,25 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
     LLVMBuildRet(cg->builder, left);
 
     LLVMPositionBuilderAtEnd(cg->builder, success_bb);
-    LLVMValueRef success_raw =
-        LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
-    LLVMValueRef success_val =
-        cg_cast_value(cg, success_raw, left_type->data.result.success,
-                      cg_type_get_llvm(cg, node->resolved_type));
-    LLVMBuildBr(cg->builder, merge_bb);
+    if (!out_is_void) {
+      LLVMValueRef success_raw =
+          LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+      LLVMValueRef success_val =
+          cg_cast_value(cg, success_raw, left_type->data.result.success,
+                        cg_type_get_llvm(cg, node->resolved_type));
+      LLVMBuildBr(cg->builder, merge_bb);
 
+      LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+      LLVMValueRef phi =
+          LLVMBuildPhi(cg->builder, cg_type_get_llvm(cg, node->resolved_type),
+                       "question_val");
+      LLVMAddIncoming(phi, &success_val, &success_bb, 1);
+      return phi;
+    }
+
+    LLVMBuildBr(cg->builder, merge_bb);
     LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
-    LLVMValueRef phi = LLVMBuildPhi(
-        cg->builder, cg_type_get_llvm(cg, node->resolved_type), "question_val");
-    LLVMAddIncoming(phi, &success_val, &success_bb, 1);
-    return phi;
+    return NULL;
   }
 
   if (node->binary_else.right &&
@@ -411,18 +422,24 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
     }
 
     LLVMPositionBuilderAtEnd(cg->builder, success_bb);
-    LLVMValueRef success_raw =
-        LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
-    LLVMValueRef success_val =
-        cg_cast_value(cg, success_raw, left_type->data.result.success,
-                      cg_type_get_llvm(cg, node->resolved_type));
-    LLVMBuildBr(cg->builder, merge_bb);
+    if (!out_is_void) {
+      LLVMValueRef success_raw =
+          LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+      LLVMValueRef success_val =
+          cg_cast_value(cg, success_raw, left_type->data.result.success,
+                        cg_type_get_llvm(cg, node->resolved_type));
+      LLVMBuildBr(cg->builder, merge_bb);
 
+      LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+      LLVMValueRef phi = LLVMBuildPhi(
+          cg->builder, cg_type_get_llvm(cg, node->resolved_type), "else_val");
+      LLVMAddIncoming(phi, &success_val, &success_bb, 1);
+      return phi;
+    }
+
+    LLVMBuildBr(cg->builder, merge_bb);
     LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
-    LLVMValueRef phi = LLVMBuildPhi(
-        cg->builder, cg_type_get_llvm(cg, node->resolved_type), "else_val");
-    LLVMAddIncoming(phi, &success_val, &success_bb, 1);
-    return phi;
+    return NULL;
   }
 
   if (node->binary_else.right && node->binary_else.right->tag == NODE_BLOCK) {
@@ -452,21 +469,27 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
     }
 
     LLVMPositionBuilderAtEnd(cg->builder, success_bb);
-    LLVMValueRef success_raw =
-        LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
-    LLVMValueRef success_val =
-        cg_cast_value(cg, success_raw, left_type->data.result.success,
-                      cg_type_get_llvm(cg, node->resolved_type));
-    LLVMBuildBr(cg->builder, merge_bb);
+    if (!out_is_void) {
+      LLVMValueRef success_raw =
+          LLVMBuildExtractValue(cg->builder, left, 0, "result_success");
+      LLVMValueRef success_val =
+          cg_cast_value(cg, success_raw, left_type->data.result.success,
+                        cg_type_get_llvm(cg, node->resolved_type));
+      LLVMBuildBr(cg->builder, merge_bb);
 
-    LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
-    LLVMTypeRef out_ty = cg_type_get_llvm(cg, node->resolved_type);
-    LLVMValueRef phi = LLVMBuildPhi(cg->builder, out_ty, "else_val_block");
-    if (!error_terminated) {
-      LLVMAddIncoming(phi, &block_val, &error_bb, 1);
+      LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+      LLVMTypeRef out_ty = cg_type_get_llvm(cg, node->resolved_type);
+      LLVMValueRef phi = LLVMBuildPhi(cg->builder, out_ty, "else_val_block");
+      if (!error_terminated) {
+        LLVMAddIncoming(phi, &block_val, &error_bb, 1);
+      }
+      LLVMAddIncoming(phi, &success_val, &success_bb, 1);
+      return phi;
     }
-    LLVMAddIncoming(phi, &success_val, &success_bb, 1);
-    return phi;
+
+    LLVMBuildBr(cg->builder, merge_bb);
+    LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+    return NULL;
   }
 
   LLVMValueRef right = cg_expression(cg, node->binary_else.right);
