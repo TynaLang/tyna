@@ -117,8 +117,9 @@ ExprInfo sema_check_new_expr(Sema *s, AstNode *node) {
             s, param_node->param.default_value, param_node->param.type);
       }
     }
+    Type *ptr_type = type_get_pointer(s->types, target_type);
     return (ExprInfo){
-        .type = target_type,
+        .type = ptr_type,
         .category = VAL_RVALUE,
     };
   } else {

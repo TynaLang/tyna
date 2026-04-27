@@ -964,7 +964,35 @@ bool type_is_concrete(Type *t) {
     return type_is_concrete(t->data.pointer_to);
   case KIND_STRUCT:
   case KIND_UNION:
+    if (t->data.instance.from_template == NULL)
+      return t->members.len > 0;
+    for (size_t i = 0; i < t->data.instance.generic_args.len; i++) {
+      Type *arg = t->data.instance.generic_args.items[i];
+      if (!type_is_concrete(arg))
+        return false;
+    }
+    for (size_t i = 0; i < t->members.len; i++) {
+      Member *m = t->members.items[i];
+      if (!type_is_concrete(m->type))
+        return false;
+    }
+    return true;
+
   case KIND_ERROR:
+    if (t->data.instance.from_template == NULL)
+      return true;
+    for (size_t i = 0; i < t->data.instance.generic_args.len; i++) {
+      Type *arg = t->data.instance.generic_args.items[i];
+      if (!type_is_concrete(arg))
+        return false;
+    }
+    for (size_t i = 0; i < t->members.len; i++) {
+      Member *m = t->members.items[i];
+      if (!type_is_concrete(m->type))
+        return false;
+    }
+    return true;
+
   case KIND_ERROR_SET:
     if (t->data.instance.from_template == NULL)
       return t->members.len > 0;

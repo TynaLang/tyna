@@ -1,4 +1,5 @@
 #include "parser_internal.h"
+#include <stdio.h>
 
 static AstNode *parser_parse_case_stmt(Parser *p) {
   Location loc = p->current_token.loc;

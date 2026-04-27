@@ -125,6 +125,9 @@ ExprInfo sema_check_expr_cache(Sema *s, AstNode *node) {
   case NODE_NEW_EXPR:
     info = sema_check_new_expr(s, node);
     break;
+  case NODE_IF_STMT:
+    info = sema_check_if_expr(s, node);
+    break;
   case NODE_ARRAY_LITERAL:
     info = sema_check_array_expr(s, node);
     break;

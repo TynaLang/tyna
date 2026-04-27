@@ -8,3 +8,5 @@ flake.lock
 .clangd
 
 output*
+
+**/_*

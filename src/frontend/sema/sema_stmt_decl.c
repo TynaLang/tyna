@@ -91,18 +91,40 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
 
   Type *decl_type = node->var_decl.declared_type;
 
+  bool needs_predefine = false;
+  if (node->var_decl.value && node->var_decl.value->tag == NODE_BINARY_ELSE &&
+      node->var_decl.value->binary_else.right &&
+      node->var_decl.value->binary_else.right->tag == NODE_BLOCK) {
+    needs_predefine = true;
+  }
+
+  if (needs_predefine && type_needs_inference(decl_type)) {
+    AstNode *left = node->var_decl.value->binary_else.left;
+    if (left) {
+      ExprInfo left_info = sema_check_expr(s, left);
+      if (left_info.type && left_info.type->kind == KIND_RESULT &&
+          left_info.type->data.result.success &&
+          type_is_concrete(left_info.type->data.result.success)) {
+        decl_type = left_info.type->data.result.success;
+      }
+    }
+  }
+
+  Symbol *sym = NULL;
+  if (needs_predefine) {
+    sym = sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
+    if (sym) {
+      sym->value = node->var_decl.value;
+      sym->is_export = node->var_decl.is_export;
+    }
+  }
+
   // First, check the RHS to infer type if needed
   Type *actual_type = type_get_primitive(s->types, PRIM_UNKNOWN);
   if (node->var_decl.value) {
     // Check the expression first to get its type
     ExprInfo rhs_info = sema_check_expr(s, node->var_decl.value);
     actual_type = rhs_info.type;
-
-    // Handle result type unwrapping for let bindings with ? operator
-    if (actual_type && actual_type->kind == KIND_RESULT &&
-        actual_type->data.result.success) {
-      actual_type = actual_type->data.result.success;
-    }
   }
 
   // If no explicit type, use inferred type
@@ -111,11 +133,12 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
     decl_type = actual_type;
   }
 
-  Symbol *sym =
-      sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
-  if (sym) {
-    sym->value = node->var_decl.value;
-    sym->is_export = node->var_decl.is_export;
+  if (!sym) {
+    sym = sema_define(s, name, decl_type, node->var_decl.is_const, node->loc);
+    if (sym) {
+      sym->value = node->var_decl.value;
+      sym->is_export = node->var_decl.is_export;
+    }
   }
 
   if (node->var_decl.value) {

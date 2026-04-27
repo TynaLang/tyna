@@ -58,6 +58,7 @@ ExprInfo sema_check_new_error_expr(Sema *s, AstNode *node);
 ExprInfo sema_check_new_struct_expr(Sema *s, AstNode *node);
 ExprInfo sema_check_binary_is(Sema *s, AstNode *node);
 ExprInfo sema_check_binary_else(Sema *s, AstNode *node);
+ExprInfo sema_check_if_expr(Sema *s, AstNode *node);
 ExprInfo sema_check_expr_cache(Sema *s, AstNode *node);
 bool sema_fn_decl_can_use_arena(AstNode *fn_decl);
 

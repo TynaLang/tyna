@@ -128,8 +128,7 @@ ExprInfo sema_check_binary_else(Sema *s, AstNode *node) {
                         .category = VAL_RVALUE};
     }
 
-    if (node->binary_else.right && node->binary_else.right->tag == NODE_BLOCK &&
-        sema_block_has_return(node->binary_else.right)) {
+    if (node->binary_else.right && node->binary_else.right->tag == NODE_BLOCK) {
       sema_check_stmt(s, node->binary_else.right);
       return (ExprInfo){.type = left->data.result.success,
                         .category = VAL_RVALUE};

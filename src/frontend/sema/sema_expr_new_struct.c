@@ -21,8 +21,9 @@ ExprInfo sema_check_new_struct_expr(Sema *s, AstNode *node) {
         sema_coerce(s, assign->assign_expr.value, member->type);
   }
 
+  Type *ptr_type = type_get_pointer(s->types, target_type);
   return (ExprInfo){
-      .type = target_type,
+      .type = ptr_type,
       .category = VAL_RVALUE,
   };
 }
