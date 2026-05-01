@@ -6,8 +6,9 @@ static bool sema_result_error_set_is_wildcard(Type *error_set) {
 }
 
 ExprInfo sema_check_binary_is(Sema *s, AstNode *node) {
+  AstNode *right_node = node->binary_is.right;
   Type *left = sema_check_expr(s, node->binary_is.left).type;
-  Type *right = sema_check_expr(s, node->binary_is.right).type;
+  Type *right = sema_check_expr(s, right_node).type;
   Type *result = type_get_primitive(s->types, PRIM_BOOL);
 
   if (!left || !right) {
@@ -63,10 +64,72 @@ ExprInfo sema_check_binary_is(Sema *s, AstNode *node) {
                  type_to_name(left), type_to_name(right));
     }
   } else {
-    sema_error(s, node,
-               "The 'is' operator requires a result or error type on the left, "
-               "got '%s'",
-               type_to_name(left));
+    Type *union_type = left;
+    if (left->kind == KIND_POINTER && left->data.pointer_to &&
+        left->data.pointer_to->kind == KIND_UNION &&
+        left->data.pointer_to->is_tagged_union) {
+      union_type = left->data.pointer_to;
+    }
+
+    if (union_type && union_type->kind == KIND_UNION &&
+        union_type->is_tagged_union) {
+      Type *target_type = NULL;
+      Member *variant = NULL;
+
+      if (right_node->tag == NODE_STATIC_MEMBER) {
+        target_type =
+            sema_find_type_by_name(s, right_node->static_member.parent);
+        if (target_type && type_equals(target_type, union_type)) {
+          variant =
+              type_get_member(target_type, right_node->static_member.member);
+        }
+      } else if (right_node->tag == NODE_CALL &&
+                 right_node->call.func->tag == NODE_STATIC_MEMBER) {
+        target_type = sema_find_type_by_name(
+            s, right_node->call.func->static_member.parent);
+        if (target_type && type_equals(target_type, union_type)) {
+          variant = type_get_member(
+              target_type, right_node->call.func->static_member.member);
+        }
+      } else {
+        target_type = right;
+      }
+
+      if (variant) {
+        if (right_node->tag == NODE_CALL && right_node->call.args.len == 0) {
+          Type *payload_type = variant->type;
+          if (payload_type->kind != KIND_PRIMITIVE ||
+              payload_type->data.primitive != PRIM_VOID) {
+            sema_error(s, node, "Enum variant '%.*s' requires a payload",
+                       (int)right_node->call.func->static_member.member.len,
+                       right_node->call.func->static_member.member.data);
+          }
+        }
+      } else if (target_type) {
+        bool found_variant = false;
+        for (size_t i = 0; i < union_type->members.len; i++) {
+          Member *m = union_type->members.items[i];
+          if (type_equals(m->type, target_type)) {
+            found_variant = true;
+            break;
+          }
+        }
+        if (!found_variant) {
+          sema_error(s, node, "Type '%s' is not a variant of tagged union '%s'",
+                     type_to_name(right), type_to_name(union_type));
+        }
+      } else {
+        sema_error(s, node,
+                   "Cannot compare tagged union '%s' with '%s' using 'is'",
+                   type_to_name(union_type), type_to_name(right));
+      }
+    } else {
+      sema_error(
+          s, node,
+          "The 'is' operator requires a result or error type on the left, "
+          "got '%s'",
+          type_to_name(left));
+    }
   }
 
   return (ExprInfo){.type = result, .category = VAL_RVALUE};

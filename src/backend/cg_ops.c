@@ -23,10 +23,20 @@ LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node);
 LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node);
 LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node);
 
+static bool cg_is_list_struct(Type *t) {
+  if (!t || t->kind != KIND_STRUCT)
+    return false;
+  if (t->data.instance.from_template &&
+      sv_eq(t->data.instance.from_template->name, sv_from_parts("List", 4)))
+    return true;
+  return false;
+}
+
 static bool cg_is_fixed_to_dynamic_array_conversion(Type *to, Type *from) {
   if (!to || !from)
     return false;
-  if (!type_is_array_struct(to) || !type_is_array_struct(from))
+  if ((!type_is_array_struct(to) && !cg_is_list_struct(to)) ||
+      (!type_is_array_struct(from) && !cg_is_list_struct(from)))
     return false;
 
   if (to->fixed_array_len != 0 || from->fixed_array_len == 0)
@@ -46,8 +56,9 @@ static bool cg_is_fixed_to_dynamic_array_conversion(Type *to, Type *from) {
 }
 
 static bool cg_is_dynamic_array_target(Type *t) {
-  return t && type_is_array_struct(t) && t->fixed_array_len == 0 &&
-         t->data.instance.generic_args.len > 0;
+  if (!t || t->fixed_array_len != 0 || t->data.instance.generic_args.len == 0)
+    return false;
+  return type_is_array_struct(t) || cg_is_list_struct(t);
 }
 
 static LLVMValueRef cg_block_expr(Codegen *cg, AstNode *node) {
@@ -343,6 +354,60 @@ LLVMValueRef cg_binary_is_expr(Codegen *cg, AstNode *node) {
     if (right_type && right_type->kind == KIND_ERROR) {
       LLVMValueRef right = cg_expression(cg, node->binary_is.right);
       return cg_equality_expr(cg, left, right, OP_EQ, left_type, right_type);
+    }
+  }
+
+  if (left_type && left_type->kind == KIND_POINTER &&
+      left_type->data.pointer_to &&
+      left_type->data.pointer_to->kind == KIND_UNION &&
+      left_type->data.pointer_to->is_tagged_union) {
+    LLVMTypeRef ptr_ty = LLVMTypeOf(left);
+    LLVMTypeRef union_ty = cg_type_get_llvm(cg, left_type->data.pointer_to);
+    left = LLVMBuildLoad2(cg->builder, union_ty, left, "deref_tagged_union");
+    left_type = left_type->data.pointer_to;
+  }
+
+  if (left_type && left_type->kind == KIND_UNION &&
+      left_type->is_tagged_union) {
+    AstNode *right_node = node->binary_is.right;
+    AstNode *static_member = NULL;
+    if (right_node->tag == NODE_STATIC_MEMBER) {
+      static_member = right_node;
+    } else if (right_node->tag == NODE_CALL && right_node->call.func &&
+               right_node->call.func->tag == NODE_STATIC_MEMBER) {
+      static_member = right_node->call.func;
+    }
+
+    if (static_member) {
+      Type *parent_type =
+          type_get_named(cg->type_ctx, static_member->static_member.parent);
+      if (parent_type && parent_type->kind == KIND_UNION &&
+          parent_type->is_tagged_union && type_equals(parent_type, left_type)) {
+        Member *variant =
+            type_get_member(parent_type, static_member->static_member.member);
+        if (variant) {
+          LLVMValueRef tag =
+              LLVMBuildExtractValue(cg->builder, left, 0, "tagged_union_tag");
+          int variant_index =
+              cg_tagged_union_variant_index_by_member(parent_type, variant);
+          if (variant_index >= 0) {
+            LLVMTypeRef tag_ty = LLVMTypeOf(tag);
+            return LLVMBuildICmp(cg->builder, LLVMIntEQ, tag,
+                                 LLVMConstInt(tag_ty, variant_index, 0),
+                                 "tagged_union_is");
+          }
+        }
+      }
+    } else if (right_type) {
+      int variant_index = cg_tagged_union_variant_index(left_type, right_type);
+      if (variant_index >= 0) {
+        LLVMValueRef tag =
+            LLVMBuildExtractValue(cg->builder, left, 0, "tagged_union_tag");
+        LLVMTypeRef tag_ty = LLVMTypeOf(tag);
+        return LLVMBuildICmp(cg->builder, LLVMIntEQ, tag,
+                             LLVMConstInt(tag_ty, variant_index, 0),
+                             "tagged_union_is");
+      }
     }
   }
 
@@ -865,11 +930,43 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
   case NODE_BOOL:
   case NODE_STRING:
   case NODE_NULL:
+  case NODE_NONE:
     return cg_const_expr(cg, node);
   case NODE_VAR:
     return cg_var_expr(cg, node);
   case NODE_FIELD:
     return cg_field_expr(cg, node);
+  case NODE_STATIC_MEMBER: {
+    Type *parent_type =
+        type_get_named(cg->type_ctx, node->static_member.parent);
+    if (parent_type && parent_type->kind == KIND_UNION &&
+        parent_type->is_tagged_union) {
+      Member *variant =
+          type_get_member(parent_type, node->static_member.member);
+      if (variant) {
+        LLVMTypeRef union_ty = cg_type_get_llvm(cg, parent_type);
+        LLVMValueRef tmp =
+            LLVMBuildAlloca(cg->builder, union_ty, "tagged_union_tmp");
+        LLVMValueRef tag_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp,
+                                                   0, "tagged_union_tag_ptr");
+        int variant_index = -1;
+        for (size_t i = 0; i < parent_type->members.len; i++) {
+          if (parent_type->members.items[i] == variant) {
+            variant_index = (int)i;
+            break;
+          }
+        }
+        if (variant_index < 0)
+          variant_index = 0;
+        LLVMBuildStore(
+            cg->builder,
+            LLVMConstInt(LLVMInt64TypeInContext(cg->context), variant_index, 0),
+            tag_ptr);
+        return LLVMBuildLoad2(cg->builder, union_ty, tmp, "tagged_union_val");
+      }
+    }
+    return cg_var_expr(cg, node);
+  }
   case NODE_INDEX: {
     if (!node->resolved_type) {
       panic("Internal error: indexed expression has no resolved type");

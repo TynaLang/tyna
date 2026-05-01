@@ -184,10 +184,20 @@ static bool cg_type_requires_zero_init(Type *t) {
   }
 }
 
+static bool cg_is_list_struct(Type *t) {
+  if (!t || t->kind != KIND_STRUCT)
+    return false;
+  if (t->data.instance.from_template &&
+      sv_eq(t->data.instance.from_template->name, sv_from_parts("List", 4)))
+    return true;
+  return false;
+}
+
 static bool cg_is_fixed_to_dynamic_array_conversion(Type *to, Type *from) {
   if (!to || !from)
     return false;
-  if (!type_is_array_struct(to) || !type_is_array_struct(from))
+  if ((!type_is_array_struct(to) && !cg_is_list_struct(to)) ||
+      (!type_is_array_struct(from) && !cg_is_list_struct(from)))
     return false;
 
   if (to->fixed_array_len != 0 || from->fixed_array_len == 0)
@@ -207,8 +217,9 @@ static bool cg_is_fixed_to_dynamic_array_conversion(Type *to, Type *from) {
 }
 
 static bool cg_is_dynamic_array_target(Type *t) {
-  return t && type_is_array_struct(t) && t->fixed_array_len == 0 &&
-         t->data.instance.generic_args.len > 0;
+  if (!t || t->fixed_array_len != 0 || t->data.instance.generic_args.len == 0)
+    return false;
+  return type_is_array_struct(t) || cg_is_list_struct(t);
 }
 
 void cg_var_decl(Codegen *cg, AstNode *node) {
@@ -620,8 +631,10 @@ void cg_statement(Codegen *cg, AstNode *node) {
   }
   case NODE_STRUCT_DECL:
   case NODE_UNION_DECL:
+  case NODE_ENUM_DECL:
   case NODE_ERROR_DECL:
   case NODE_ERROR_SET_DECL:
+  case NODE_IMPL_DECL:
   case NODE_TYPE_ALIAS:
   case NODE_IMPORT:
     break;

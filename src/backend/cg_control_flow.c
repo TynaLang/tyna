@@ -13,6 +13,39 @@ LLVMValueRef cg_extract_tagged_union_payload(Codegen *cg,
                                              LLVMValueRef union_val,
                                              Type *union_t, Type *variant_type);
 
+static bool cg_if_is_pattern_binder(AstNode *cond, StringView *out_name,
+                                    Type **out_type, TypeContext *type_ctx) {
+  if (!cond || cond->tag != NODE_BINARY_IS || !out_name || !out_type)
+    return false;
+  AstNode *right = cond->binary_is.right;
+  if (!right || right->tag != NODE_CALL)
+    return false;
+  if (!right->call.func || right->call.func->tag != NODE_STATIC_MEMBER)
+    return false;
+
+  Type *parent_type =
+      type_get_named(type_ctx, right->call.func->static_member.parent);
+  if (!parent_type || parent_type->kind != KIND_UNION ||
+      !parent_type->is_tagged_union)
+    return false;
+
+  Member *variant =
+      type_get_member(parent_type, right->call.func->static_member.member);
+  if (!variant)
+    return false;
+
+  if (right->call.args.len != 1)
+    return false;
+
+  AstNode *arg_node = right->call.args.items[0];
+  if (!arg_node || arg_node->tag != NODE_VAR)
+    return false;
+
+  *out_name = arg_node->var.value;
+  *out_type = variant->type;
+  return true;
+}
+
 void cg_control_flow_statement(Codegen *cg, AstNode *node) {
   switch (node->tag) {
   case NODE_BLOCK: {
@@ -44,7 +77,38 @@ void cg_control_flow_statement(Codegen *cg, AstNode *node) {
     LLVMBuildCondBr(cg->builder, cond, then_bb, else_bb ? else_bb : merge_bb);
 
     LLVMPositionBuilderAtEnd(cg->builder, then_bb);
-    cg_statement(cg, node->if_stmt.then_branch);
+    StringView binder_name = sv_from_parts("", 0);
+    Type *binder_type = NULL;
+    if (cg_if_is_pattern_binder(node->if_stmt.condition, &binder_name,
+                                &binder_type, cg->type_ctx)) {
+      cg_push_scope(cg);
+      AstNode *left = node->if_stmt.condition->binary_is.left;
+      LLVMValueRef left_val = cg_expression(cg, left);
+      Type *left_type = left->resolved_type;
+      Type *union_type = left_type;
+      if (left_type && left_type->kind == KIND_POINTER &&
+          left_type->data.pointer_to &&
+          left_type->data.pointer_to->kind == KIND_UNION &&
+          left_type->data.pointer_to->is_tagged_union) {
+        union_type = left_type->data.pointer_to;
+      }
+      LLVMValueRef union_val = left_val;
+      if (left_type && left_type->kind == KIND_POINTER && union_type &&
+          union_type->kind == KIND_UNION) {
+        union_val =
+            LLVMBuildLoad2(cg->builder, cg_type_get_llvm(cg, union_type),
+                           left_val, "deref_tagged_union");
+      }
+      LLVMValueRef payload = cg_extract_tagged_union_payload(
+          cg, union_val, union_type, binder_type);
+      LLVMValueRef local_ptr = cg_alloca_in_entry(cg, binder_type, binder_name);
+      LLVMBuildStore(cg->builder, payload, local_ptr);
+      CGSymbolTable_add(cg->current_scope, binder_name, binder_type, local_ptr);
+      cg_statement(cg, node->if_stmt.then_branch);
+      cg_pop_scope(cg);
+    } else {
+      cg_statement(cg, node->if_stmt.then_branch);
+    }
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder))) {
       LLVMBuildBr(cg->builder, merge_bb);
     }

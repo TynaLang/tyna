@@ -98,6 +98,22 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
     return LLVMPointerType(pointee, 0);
   }
 
+  if (t->kind == KIND_STRUCT && type_is_heap_or_ref(t)) {
+    Type *inner = t->data.instance.generic_args.items[0];
+    LLVMTypeRef pointee = cg_type_get_llvm(cg, inner);
+    if (!pointee || LLVMGetTypeKind(pointee) == LLVMVoidTypeKind) {
+      pointee = LLVMInt8TypeInContext(cg->context);
+    }
+    return LLVMPointerType(pointee, 0);
+  }
+
+  if (t->kind == KIND_STRUCT && t->is_transparent && type_is_option(t)) {
+    Type *payload = type_get_option_payload(t);
+    if (!payload)
+      panic("Transparent Option without payload");
+    return cg_type_get_llvm(cg, payload);
+  }
+
   if (t->kind == KIND_TEMPLATE) {
     // Generic placeholders do not have a concrete LLVM type yet.
     // Lower them to a byte-sized placeholder type for codegen safety.
@@ -131,9 +147,9 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
     if (LLVMIsOpaqueStruct(union_ty)) {
       if (t->is_tagged_union) {
         LLVMTypeRef tag_ty = LLVMInt64TypeInContext(cg->context);
-        LLVMTypeRef payload =
-            LLVMArrayType(LLVMInt8TypeInContext(cg->context),
-                          (unsigned)(t->size > 0 ? t->size : 1));
+        size_t payload_size = t->size > 8 ? t->size - 8 : 0;
+        LLVMTypeRef payload = LLVMArrayType(LLVMInt8TypeInContext(cg->context),
+                                            (unsigned)payload_size);
         LLVMTypeRef fields[2] = {tag_ty, payload};
         LLVMStructSetBody(union_ty, fields, 2, false);
       } else {

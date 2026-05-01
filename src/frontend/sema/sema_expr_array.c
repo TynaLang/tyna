@@ -63,7 +63,6 @@ ExprInfo sema_check_array_expr(Sema *s, AstNode *node) {
 
   if (node->tag == NODE_ARRAY_LITERAL) {
     if (node->array_literal.items.len == 0) {
-      sema_error(s, node, "Empty array literals are not yet supported");
       return (ExprInfo){
           .type = type_get_primitive(s->types, PRIM_UNKNOWN),
           .category = VAL_RVALUE,

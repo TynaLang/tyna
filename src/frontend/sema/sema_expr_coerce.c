@@ -25,6 +25,37 @@ AstNode *sema_coerce(Sema *s, AstNode *expr, Type *target) {
   bool target_is_tagged_union =
       target && target->kind == KIND_UNION && target->is_tagged_union;
 
+  if (expr->tag == NODE_NONE && target && type_is_option(target)) {
+    expr->resolved_type = target;
+    return expr;
+  }
+
+  if (expr->tag == NODE_ARRAY_LITERAL && target &&
+      target->kind == KIND_STRUCT && target->data.instance.from_template &&
+      sv_eq(target->data.instance.from_template->name, sv_from_cstr("List"))) {
+    if (target->data.instance.generic_args.len == 1) {
+      Type *element_type = target->data.instance.generic_args.items[0];
+      for (size_t i = 0; i < expr->array_literal.items.len; i++) {
+        AstNode *item = expr->array_literal.items.items[i];
+        if (!type_can_implicitly_cast(element_type, item->resolved_type)) {
+          sema_error(s, item, "List element type mismatch: expected %s, got %s",
+                     type_to_name(element_type),
+                     type_to_name(item->resolved_type));
+        }
+        sema_check_literal_bounds(s, item, element_type);
+      }
+    }
+    expr->resolved_type = target;
+    return expr;
+  }
+
+  if (expr->tag == NODE_ARRAY_LITERAL && expr->array_literal.items.len == 0 &&
+      target && target->kind == KIND_STRUCT &&
+      target->data.instance.from_template && type_is_array_struct(target)) {
+    expr->resolved_type = target;
+    return expr;
+  }
+
   if (expr->tag == NODE_NUMBER || expr->tag == NODE_CHAR) {
     sema_check_literal_bounds(s, expr, target);
 

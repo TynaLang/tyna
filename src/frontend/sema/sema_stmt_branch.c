@@ -18,6 +18,44 @@ static Type *get_if_is_narrow_type(Sema *s, AstNode *cond) {
   return NULL;
 }
 
+static bool get_if_is_pattern_binder(Sema *s, AstNode *cond,
+                                     StringView *out_name, Type **out_type) {
+  if (!cond || cond->tag != NODE_BINARY_IS || !out_name || !out_type)
+    return false;
+
+  AstNode *right = cond->binary_is.right;
+  if (!right || right->tag != NODE_CALL)
+    return false;
+  if (right->call.func->tag != NODE_STATIC_MEMBER)
+    return false;
+
+  Type *parent_type =
+      sema_find_type_by_name(s, right->call.func->static_member.parent);
+  if (!parent_type || parent_type->kind != KIND_UNION ||
+      !parent_type->is_tagged_union)
+    return false;
+
+  Member *variant =
+      type_get_member(parent_type, right->call.func->static_member.member);
+  if (!variant)
+    return false;
+
+  if (right->call.args.len != 1)
+    return false;
+
+  AstNode *arg_node = right->call.args.items[0];
+  if (!arg_node || arg_node->tag != NODE_VAR)
+    return false;
+
+  Symbol *symbol = sema_resolve(s, arg_node->var.value);
+  if (symbol)
+    return false;
+
+  *out_name = arg_node->var.value;
+  *out_type = variant->type;
+  return true;
+}
+
 void sema_check_if_stmt(Sema *s, AstNode *node) {
   Type *cond = sema_check_expr(s, node->if_stmt.condition).type;
 
@@ -28,6 +66,10 @@ void sema_check_if_stmt(Sema *s, AstNode *node) {
   }
 
   Type *narrow_type = get_if_is_narrow_type(s, node->if_stmt.condition);
+  StringView binder_name = sv_from_parts("", 0);
+  Type *binder_type = NULL;
+  bool has_binder = get_if_is_pattern_binder(s, node->if_stmt.condition,
+                                             &binder_name, &binder_type);
   if (node->if_stmt.then_branch &&
       node->if_stmt.then_branch->tag != NODE_BLOCK) {
     AstNode *block = AstNode_new_block(node->if_stmt.then_branch->loc);
@@ -43,10 +85,16 @@ void sema_check_if_stmt(Sema *s, AstNode *node) {
     node->if_stmt.else_branch = block;
   }
 
-  if (narrow_type) {
-    AstNode *left = node->if_stmt.condition->binary_is.left;
+  if (narrow_type || has_binder) {
     sema_scope_push(s);
-    sema_define(s, left->var.value, narrow_type, false, left->loc);
+    if (narrow_type) {
+      AstNode *left = node->if_stmt.condition->binary_is.left;
+      sema_define(s, left->var.value, narrow_type, false, left->loc);
+    }
+    if (has_binder) {
+      sema_define(s, binder_name, binder_type, false,
+                  node->if_stmt.condition->binary_is.right->loc);
+    }
     sema_check_stmt(s, node->if_stmt.then_branch);
     sema_scope_pop(s);
   } else {
@@ -67,13 +115,23 @@ ExprInfo sema_check_if_expr(Sema *s, AstNode *node) {
   }
 
   Type *narrow_type = get_if_is_narrow_type(s, node->if_stmt.condition);
+  StringView binder_name = sv_from_parts("", 0);
+  Type *binder_type = NULL;
+  bool has_binder = get_if_is_pattern_binder(s, node->if_stmt.condition,
+                                             &binder_name, &binder_type);
   ExprInfo then_info;
   ExprInfo else_info;
 
-  if (narrow_type) {
-    AstNode *left = node->if_stmt.condition->binary_is.left;
+  if (narrow_type || has_binder) {
     sema_scope_push(s);
-    sema_define(s, left->var.value, narrow_type, false, left->loc);
+    if (narrow_type) {
+      AstNode *left = node->if_stmt.condition->binary_is.left;
+      sema_define(s, left->var.value, narrow_type, false, left->loc);
+    }
+    if (has_binder) {
+      sema_define(s, binder_name, binder_type, false,
+                  node->if_stmt.condition->binary_is.right->loc);
+    }
     then_info = sema_check_expr(s, node->if_stmt.then_branch);
     sema_scope_pop(s);
   } else {

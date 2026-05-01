@@ -65,6 +65,58 @@ Type *sema_check_builtin_call(Sema *s, AstNode *node) {
     }
     return type_get_primitive(s->types, PRIM_VOID);
 
+  case BUILTIN_SOME: {
+    if (node->call.args.len != 1) {
+      sema_error(s, node, "Some() expects 1 argument, got %zu",
+                 node->call.args.len);
+      return type_get_primitive(s->types, PRIM_UNKNOWN);
+    }
+    Type *arg_ty = sema_check_expr(s, node->call.args.items[0]).type;
+    if (!arg_ty) {
+      return type_get_primitive(s->types, PRIM_UNKNOWN);
+    }
+    Type *option_tpl = type_get_template(s->types, sv_from_parts("Option", 6));
+    if (!option_tpl) {
+      sema_error(s, node, "Internal error: Option type unavailable");
+      return type_get_primitive(s->types, PRIM_UNKNOWN);
+    }
+    List args;
+    List_init(&args);
+    List_push(&args, arg_ty);
+    Type *option_type = type_get_instance(s->types, option_tpl, args);
+    List_free(&args, 0);
+    return option_type;
+  }
+
+  case BUILTIN_HEAP:
+  case BUILTIN_REF: {
+    if (node->call.args.len != 1) {
+      sema_error(s, node, "%.*s() expects 1 argument, got %zu",
+                 (int)node->call.func->var.value.len,
+                 node->call.func->var.value.data, node->call.args.len);
+      return type_get_primitive(s->types, PRIM_UNKNOWN);
+    }
+    Type *arg_ty = sema_check_expr(s, node->call.args.items[0]).type;
+    if (!arg_ty) {
+      return type_get_primitive(s->types, PRIM_UNKNOWN);
+    }
+
+    Type *template_type =
+        type_get_template(s->types, node->call.func->var.value);
+    if (!template_type) {
+      sema_error(s, node, "Internal error: %.*s type unavailable",
+                 (int)node->call.func->var.value.len,
+                 node->call.func->var.value.data);
+      return type_get_primitive(s->types, PRIM_UNKNOWN);
+    }
+    List args;
+    List_init(&args);
+    List_push(&args, arg_ty);
+    Type *result_type = type_get_instance(s->types, template_type, args);
+    List_free(&args, 0);
+    return result_type;
+  }
+
   default:
     return type_get_primitive(s->types, PRIM_UNKNOWN);
   }

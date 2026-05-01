@@ -180,13 +180,22 @@ ExprInfo sema_check_static_member(Sema *s, AstNode *node) {
   if (!type || (type->kind != KIND_STRUCT && type->kind != KIND_TEMPLATE &&
                 type->kind != KIND_STRING_BUFFER &&
                 !(type->kind == KIND_PRIMITIVE &&
-                  type->data.primitive == PRIM_STRING))) {
+                  type->data.primitive == PRIM_STRING) &&
+                !(type->kind == KIND_UNION && type->is_tagged_union))) {
     sema_error(s, node, "Undefined type '" SV_FMT "'",
                SV_ARG(node->static_member.parent));
     return (ExprInfo){
         .type = type_get_primitive(s->types, PRIM_UNKNOWN),
         .category = VAL_RVALUE,
     };
+  }
+
+  if (type->kind == KIND_UNION && type->is_tagged_union) {
+    Member *variant = type_get_member(type, node->static_member.member);
+    if (variant) {
+      node->resolved_type = type;
+      return (ExprInfo){.type = type, .category = VAL_RVALUE};
+    }
   }
 
   for (size_t i = 0; i < type->methods.len; i++) {

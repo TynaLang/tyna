@@ -196,10 +196,15 @@ AstNode *parser_parse_expression(Parser *p, int min_bp) {
   while (1) {
     Token op = p->current_token;
 
-    if (parser_is_postfix(p)) {
+    if (parser_is_postfix(p) ||
+        (op.type == TOKEN_LBRACE && left &&
+         (left->tag == NODE_STATIC_MEMBER || left->tag == NODE_FIELD))) {
       if (100 < min_bp)
         break;
-      left = parser_make_postfix(p, left);
+      AstNode *next = parser_make_postfix(p, left);
+      if (next == left)
+        break;
+      left = next;
       continue;
     }
 

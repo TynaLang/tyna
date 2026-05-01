@@ -97,6 +97,8 @@ LLVMValueRef cg_extract_tagged_union(Codegen *cg, LLVMValueRef union_val,
                                      Type *union_t, Type *target_t,
                                      LLVMTypeRef target_ty);
 int cg_tagged_union_variant_index(Type *union_type, Type *variant);
+int cg_tagged_union_variant_index_by_member(Type *union_type,
+                                            Member *variant);
 int cg_tagged_union_variant_index_llvm(Codegen *cg, Type *union_type,
                                        LLVMTypeRef llvm_ty);
 int cg_result_error_tag_index(Type *result_type, Type *error_type);

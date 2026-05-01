@@ -103,6 +103,11 @@ int main(int argc, char **argv) {
 
   TypeContext *type_ctx = type_context_create();
 
+  Sema sema_temp;
+  sema_init(&sema_temp, NULL, type_ctx);
+  sema_prime_types(&sema_temp);
+  sema_finish(&sema_temp);
+
   const char *std_path = "stdlib/std.tn";
   const char *std_src = read_file(std_path);
   AstNode *std_ast = NULL;

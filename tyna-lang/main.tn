@@ -1,0 +1,5 @@
+import frontend.ast;
+
+fn main() {
+    print("Hello, Tyna!");
+}

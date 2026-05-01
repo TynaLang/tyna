@@ -12,6 +12,80 @@ static void skip_to_next_param(Parser *p) {
     parser_token_advance(p);
 }
 
+static Type *parser_parse_alias_variant_payload_struct(Parser *p) {
+  parser_token_advance(p); // consume '{'
+
+  Type *payload_struct = xcalloc(1, sizeof(Type));
+  payload_struct->kind = KIND_STRUCT;
+  payload_struct->name = sv_from_parts("", 0);
+  payload_struct->needs_drop = false;
+  payload_struct->drop_fn = NULL;
+  List_init(&payload_struct->members);
+  List_init(&payload_struct->field_drops);
+  List_init(&payload_struct->methods);
+  List_init(&payload_struct->impls);
+  payload_struct->alignment = 0;
+  payload_struct->size = 0;
+  payload_struct->is_frozen = true;
+  payload_struct->is_intrinsic = false;
+
+  size_t current_offset = 0;
+  size_t max_align = 1;
+
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    if (p->current_token.type != TOKEN_IDENT &&
+        p->current_token.type != TOKEN_TYPE) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected field name in variant payload");
+      parser_sync(p);
+      break;
+    }
+
+    StringView field_name = p->current_token.text;
+    parser_token_advance(p);
+
+    if (!parser_expect(p, TOKEN_COLON,
+                       "Expected ':' after variant field name")) {
+      parser_sync(p);
+      continue;
+    }
+
+    Type *field_type = parser_parse_type_full(p);
+    if (!field_type) {
+      parser_sync(p);
+      continue;
+    }
+
+    size_t align =
+        field_type->alignment ? field_type->alignment : field_type->size;
+    if (align == 0)
+      align = 1;
+    current_offset = align_to(current_offset, align);
+
+    char *field_cname = sv_to_cstr(field_name);
+    type_add_member(payload_struct, field_cname, field_type, current_offset);
+    free(field_cname);
+
+    current_offset += field_type->size;
+    if (align > max_align)
+      max_align = align;
+
+    if (p->current_token.type == TOKEN_COMMA ||
+        p->current_token.type == TOKEN_SEMI) {
+      parser_token_advance(p);
+    }
+  }
+
+  if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after variant payload")) {
+    return NULL;
+  }
+
+  payload_struct->alignment = max_align ? max_align : 1;
+  payload_struct->size = align_to(current_offset, payload_struct->alignment);
+  return type_get_pointer(p->type_ctx, payload_struct);
+}
+
 AstNode *parser_parse_var_decl(Parser *p, bool is_export) {
   int is_const = (p->current_token.type == TOKEN_CONST);
   parser_token_advance(p);
@@ -71,11 +145,83 @@ AstNode *parser_parse_type_alias(Parser *p, bool is_export) {
   if (!parser_expect(p, TOKEN_ASSIGN, "Expected '=' in type alias declaration"))
     return NULL;
 
+  if (p->current_token.type == TOKEN_BIT_OR) {
+    Type *alias_type = type_get_union(p->type_ctx, alias_token.text);
+    if (!alias_type)
+      return NULL;
+
+    if (!parser_add_type_alias(p, alias_token.text, alias_type,
+                               alias_token.loc))
+      return NULL;
+
+    size_t max_size = 0;
+    size_t max_align = 1;
+
+    while (p->current_token.type == TOKEN_BIT_OR) {
+      parser_token_advance(p); // consume '|'
+
+      Token mem_ident = p->current_token;
+      if (!parser_expect(p, TOKEN_IDENT, "Expected variant name"))
+        return NULL;
+
+      Type *variant_type = type_get_primitive(p->type_ctx, PRIM_VOID);
+      if (p->current_token.type == TOKEN_LPAREN) {
+        parser_token_advance(p);
+        if (p->current_token.type == TOKEN_RPAREN) {
+          parser_token_advance(p);
+        } else if (p->current_token.type == TOKEN_LBRACE) {
+          variant_type = parser_parse_alias_variant_payload_struct(p);
+          if (!variant_type)
+            return NULL;
+          if (!parser_expect(p, TOKEN_RPAREN,
+                             "Expected ')' after variant payload"))
+            return NULL;
+        } else {
+          variant_type = parser_parse_type_full(p);
+          if (!variant_type)
+            return NULL;
+          if (!parser_expect(p, TOKEN_RPAREN,
+                             "Expected ')' after variant payload"))
+            return NULL;
+        }
+      }
+
+      if (p->current_token.type == TOKEN_COMMA) {
+        parser_token_advance(p);
+      }
+
+      char *c_mem_name = sv_to_cstr(mem_ident.text);
+      type_add_member(alias_type, c_mem_name, variant_type, 0);
+      free(c_mem_name);
+
+      size_t align = variant_type->alignment ? variant_type->alignment
+                                             : variant_type->size;
+      if (align == 0)
+        align = 1;
+      if (variant_type->size > max_size)
+        max_size = variant_type->size;
+      if (align > max_align)
+        max_align = align;
+    }
+
+    if (!parser_expect(p, TOKEN_SEMI,
+                       "Expected ';' after type alias declaration"))
+      return NULL;
+
+    alias_type->is_tagged_union = true;
+    alias_type->alignment = max_align > 8 ? max_align : 8;
+    alias_type->size = align_to(max_size + 8, alias_type->alignment);
+
+    AstNode *name_node = AstNode_new_var(alias_token.text, alias_token.loc);
+    return AstNode_new_type_alias(name_node, alias_type, is_export, loc);
+  }
+
   Type *target_type = parser_parse_type_full(p);
   if (!target_type)
     return NULL;
 
-  if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after type alias declaration"))
+  if (!parser_expect(p, TOKEN_SEMI,
+                     "Expected ';' after type alias declaration"))
     return NULL;
 
   if (!parser_add_type_alias(p, alias_token.text, target_type, alias_token.loc))
@@ -109,12 +255,15 @@ AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
          p->current_token.type != TOKEN_EOF) {
     Location p_loc = p->current_token.loc;
 
-    StringView param_name = p->current_token.text;
-    AstNode *param_name_node = AstNode_new_var(param_name, p_loc);
-    if (!parser_expect(p, TOKEN_IDENT, "Expected parameter name")) {
+    Token param_name = p->current_token;
+    if (p->current_token.type != TOKEN_IDENT &&
+        p->current_token.type != TOKEN_TYPE) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Expected parameter name");
       skip_to_next_param(p);
       continue;
     }
+    parser_token_advance(p);
 
     if (!parser_expect(p, TOKEN_COLON, "Expected ':' after parameter name")) {
       skip_to_next_param(p);
@@ -135,6 +284,7 @@ AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
         return NULL;
     }
 
+    AstNode *param_name_node = AstNode_new_var(param_name.text, p_loc);
     AstNode *param_node = AstNode_new_param(param_name_node, param_type, p_loc);
     param_node->param.default_value = default_value;
     List_push(&params, param_node);
@@ -145,7 +295,7 @@ AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
   if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after parameters"))
     return NULL;
 
-  Type *ret_type = type_get_primitive(p->type_ctx, PRIM_VOID);
+  Type *ret_type = type_get_primitive(p->type_ctx, PRIM_UNKNOWN);
   if (p->current_token.type == TOKEN_COLON) {
     parser_token_advance(p);
     ret_type = parser_parse_type_full(p);
@@ -241,10 +391,13 @@ AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
 
     Location mem_loc = p->current_token.loc;
     Token mem_ident = p->current_token;
-    if (!parser_expect(p, TOKEN_IDENT, "Expected member name")) {
+    if (p->current_token.type != TOKEN_IDENT &&
+        p->current_token.type != TOKEN_TYPE) {
+      ErrorHandler_report(p->eh, p->current_token.loc, "Expected member name");
       parser_sync(p);
       continue;
     }
+    parser_token_advance(p);
 
     if (!parser_expect(p, TOKEN_COLON, "Expected ':' after member name")) {
       parser_sync(p);
@@ -257,9 +410,15 @@ AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
       continue;
     }
 
-    if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after member type")) {
-      parser_sync(p);
-      continue;
+    if (p->current_token.type == TOKEN_SEMI ||
+        p->current_token.type == TOKEN_COMMA) {
+      parser_token_advance(p);
+    } else if (p->current_token.type != TOKEN_RBRACE) {
+      if (!parser_expect(p, TOKEN_SEMI,
+                         "Expected ';' or ',' after member type")) {
+        parser_sync(p);
+        continue;
+      }
     }
 
     AstNode *mem_name = AstNode_new_var(mem_ident.text, mem_ident.loc);
@@ -395,11 +554,20 @@ AstNode *parser_parse_error_decl(Parser *p, bool is_export) {
 }
 
 AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
-  Location loc = p->current_token.loc;
+  ErrorHandler_report(
+      p->eh, p->current_token.loc,
+      "Error: Raw unions are deprecated. Use enum or type alias.");
   parser_token_advance(p); // consume 'union'
+  parser_sync(p);
+  return NULL;
+}
+
+AstNode *parser_parse_enum_decl(Parser *p, bool is_frozen, bool is_export) {
+  Location loc = p->current_token.loc;
+  parser_token_advance(p); // consume 'enum'
 
   Token name_token = p->current_token;
-  if (!parser_expect(p, TOKEN_IDENT, "Expected union name"))
+  if (!parser_expect(p, TOKEN_IDENT, "Expected enum name"))
     return NULL;
   AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
 
@@ -435,8 +603,8 @@ AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
     }
   }
 
-  if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after union name"))
-    goto union_decl_error;
+  if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after enum name"))
+    goto enum_decl_error;
 
   List members;
   List_init(&members);
@@ -461,44 +629,126 @@ AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
 
     Location mem_loc = p->current_token.loc;
     Token mem_ident = p->current_token;
-    if (!parser_expect(p, TOKEN_IDENT, "Expected member name")) {
+    if (!parser_expect(p, TOKEN_IDENT, "Expected variant name")) {
       parser_sync(p);
       continue;
     }
 
-    if (!parser_expect(p, TOKEN_COLON, "Expected ':' after member name")) {
-      parser_sync(p);
-      continue;
+    Type *variant_type = NULL;
+    if (p->current_token.type == TOKEN_LPAREN) {
+      parser_token_advance(p);
+      if (p->current_token.type == TOKEN_RPAREN) {
+        parser_token_advance(p);
+        variant_type = type_get_primitive(p->type_ctx, PRIM_VOID);
+      } else {
+        variant_type = parser_parse_type_full(p);
+        if (!variant_type) {
+          parser_sync(p);
+          continue;
+        }
+        if (!parser_expect(p, TOKEN_RPAREN,
+                           "Expected ')' after enum variant payload")) {
+          parser_sync(p);
+          continue;
+        }
+      }
+    } else if (p->current_token.type == TOKEN_LBRACE) {
+      parser_token_advance(p);
+      Type *payload_struct = xcalloc(1, sizeof(Type));
+      payload_struct->kind = KIND_STRUCT;
+      payload_struct->name = sv_from_parts("", 0);
+      payload_struct->needs_drop = false;
+      payload_struct->drop_fn = NULL;
+      List_init(&payload_struct->members);
+      List_init(&payload_struct->field_drops);
+      List_init(&payload_struct->methods);
+      List_init(&payload_struct->impls);
+      payload_struct->alignment = 0;
+      payload_struct->size = 0;
+      payload_struct->is_frozen = true;
+      payload_struct->is_intrinsic = false;
+
+      size_t current_offset = 0;
+      size_t max_align = 1;
+      while (p->current_token.type != TOKEN_RBRACE &&
+             p->current_token.type != TOKEN_EOF) {
+        if (p->current_token.type != TOKEN_IDENT) {
+          ErrorHandler_report(p->eh, p->current_token.loc,
+                              "Expected field name in variant payload");
+          break;
+        }
+        StringView field_name = p->current_token.text;
+        parser_token_advance(p);
+        if (!parser_expect(p, TOKEN_COLON,
+                           "Expected ':' after variant field name")) {
+          parser_sync(p);
+          continue;
+        }
+        Type *field_type = parser_parse_type_full(p);
+        if (!field_type) {
+          parser_sync(p);
+          continue;
+        }
+
+        size_t align =
+            field_type->alignment ? field_type->alignment : field_type->size;
+        if (align == 0)
+          align = 1;
+        current_offset = align_to(current_offset, align);
+
+        char *field_cname = sv_to_cstr(field_name);
+        type_add_member(payload_struct, field_cname, field_type,
+                        current_offset);
+        free(field_cname);
+
+        current_offset += field_type->size;
+        if (align > max_align)
+          max_align = align;
+
+        if (p->current_token.type == TOKEN_COMMA)
+          parser_token_advance(p);
+      }
+      if (!parser_expect(p, TOKEN_RBRACE,
+                         "Expected '}' after variant payload")) {
+        parser_sync(p);
+        continue;
+      }
+      payload_struct->alignment = max_align ? max_align : 1;
+      payload_struct->size =
+          align_to(current_offset, payload_struct->alignment);
+      variant_type = type_get_pointer(p->type_ctx, payload_struct);
+    } else {
+      variant_type = type_get_primitive(p->type_ctx, PRIM_VOID);
     }
 
-    Type *type = parser_parse_type_full(p);
-    if (!type) {
-      parser_sync(p);
-      continue;
-    }
-
-    if (!parser_expect(p, TOKEN_SEMI, "Expected ';' after member type")) {
-      parser_sync(p);
-      continue;
+    if (p->current_token.type == TOKEN_SEMI ||
+        p->current_token.type == TOKEN_COMMA) {
+      parser_token_advance(p);
+    } else if (p->current_token.type != TOKEN_RBRACE) {
+      if (!parser_expect(p, TOKEN_SEMI,
+                         "Expected ';' or ',' after enum variant")) {
+        parser_sync(p);
+        continue;
+      }
     }
 
     AstNode *mem_name = AstNode_new_var(mem_ident.text, mem_ident.loc);
     AstNode *mem_decl =
-        AstNode_new_var_decl(mem_name, NULL, type, 0, false, mem_loc);
+        AstNode_new_var_decl(mem_name, NULL, variant_type, 0, false, mem_loc);
     List_push(&members, mem_decl);
   }
 
-  if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after union members"))
-    goto union_decl_error;
+  if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after enum variants"))
+    goto enum_decl_error;
 
   if (placeholders.len > 0) {
     parser_placeholder_scope_pop(p);
   }
 
-  return AstNode_new_union_decl(name_node, members, placeholders, is_frozen,
-                                false, loc);
+  return AstNode_new_enum_decl(name_node, members, placeholders, is_frozen,
+                               false, loc);
 
-union_decl_error:
+enum_decl_error:
   if (placeholders.len > 0) {
     parser_placeholder_scope_pop(p);
   }
@@ -672,8 +922,8 @@ AstNode *parser_parse_impl_decl(Parser *p) {
     }
 
     if (p->current_token.type == TOKEN_FN) {
-      AstNode *fn = parser_parse_fn_decl(p, is_static, true, is_pub_module,
-                                        is_external);
+      AstNode *fn =
+          parser_parse_fn_decl(p, is_static, true, is_pub_module, is_external);
       if (fn) {
         List_push(&members, fn);
       } else {

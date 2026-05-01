@@ -6,6 +6,7 @@
 #include "tyna/ast.h"
 #include "tyna/codegen.h"
 #include "tyna/utils.h"
+#include "llvm-c/Target.h"
 
 int cg_tagged_union_variant_index(Type *union_type, Type *variant) {
   if (!union_type || union_type->kind != KIND_UNION ||
@@ -32,6 +33,21 @@ int cg_tagged_union_variant_index_llvm(Codegen *cg, Type *union_type,
   return -1;
 }
 
+static bool cg_is_list_struct(Type *t) {
+  if (!t || t->kind != KIND_STRUCT)
+    return false;
+  if (t->data.instance.from_template &&
+      sv_eq(t->data.instance.from_template->name, sv_from_parts("List", 4)))
+    return true;
+  return false;
+}
+
+static bool cg_is_dynamic_array_type(Type *t) {
+  if (!t || t->fixed_array_len != 0 || t->data.instance.generic_args.len == 0)
+    return false;
+  return type_is_array_struct(t) || cg_is_list_struct(t);
+}
+
 LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef val, Type *from_t,
                                   Type *union_t) {
   int variant_index = cg_tagged_union_variant_index(union_t, from_t);
@@ -47,6 +63,11 @@ LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef val, Type *from_t,
       LLVMConstInt(LLVMInt64TypeInContext(cg->context), variant_index, 0),
       tag_ptr);
 
+  if (from_t && from_t->kind == KIND_PRIMITIVE &&
+      from_t->data.primitive == PRIM_VOID) {
+    return LLVMBuildLoad2(cg->builder, union_ty, tmp, "tagged_union_val");
+  }
+
   LLVMValueRef payload_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp, 1,
                                                  "tagged_union_payload_ptr");
   LLVMTypeRef from_ty = cg_type_get_llvm(cg, from_t);
@@ -55,6 +76,18 @@ LLVMValueRef cg_make_tagged_union(Codegen *cg, LLVMValueRef val, Type *from_t,
                        "tagged_union_payload_cast");
   LLVMBuildStore(cg->builder, val, store_ptr);
   return LLVMBuildLoad2(cg->builder, union_ty, tmp, "tagged_union_val");
+}
+
+int cg_tagged_union_variant_index_by_member(Type *union_type, Member *variant) {
+  if (!union_type || union_type->kind != KIND_UNION ||
+      !union_type->is_tagged_union || !variant)
+    return -1;
+  for (size_t i = 0; i < union_type->members.len; i++) {
+    Member *m = union_type->members.items[i];
+    if (m == variant)
+      return (int)i;
+  }
+  return -1;
 }
 
 LLVMValueRef cg_extract_tagged_union(Codegen *cg, LLVMValueRef union_val,
@@ -152,8 +185,9 @@ LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
     LLVMTypeRef llvm_array_ty = cg_type_get_llvm(cg, inst_type);
 
     LLVMValueRef array_val = LLVMGetUndef(llvm_array_ty);
+    AstNode **items = (AstNode **)node->array_literal.items.items;
     for (size_t i = 0; i < node->array_literal.items.len; i++) {
-      AstNode *item = node->array_literal.items.items[i];
+      AstNode *item = items[i];
       LLVMValueRef val = cg_expression(cg, item);
       val = cg_cast_value(cg, val, item->resolved_type, llvm_elem_ty);
       array_val = LLVMBuildInsertValue(cg->builder, array_val, val, (unsigned)i,
@@ -165,14 +199,92 @@ LLVMValueRef cg_array_literal(Codegen *cg, AstNode *node) {
   size_t count = node->array_literal.items.len;
   Type *element_type = inst_type->data.instance.generic_args.items[0];
   LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, element_type);
+
+  if (cg_is_dynamic_array_type(inst_type)) {
+    LLVMTypeRef struct_ty = cg_type_get_llvm(cg, inst_type);
+    LLVMValueRef array_ptr =
+        LLVMBuildAlloca(cg->builder, struct_ty, "array_lit_temp");
+    LLVMBuildStore(cg->builder, LLVMConstNull(struct_ty), array_ptr);
+
+    const char *data_layout = LLVMGetDataLayout(cg->module);
+    LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+    unsigned long long elem_size_bytes = LLVMABISizeOfType(td, llvm_elem_ty);
+    LLVMDisposeTargetData(td);
+    LLVMValueRef elem_size =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), elem_size_bytes, 0);
+
+    if (count == 0) {
+      CgFunc *new_fn =
+          cg_find_system_function(cg, sv_from_cstr("__tyna_array_new"));
+      if (!new_fn)
+        panic("Internal error: __tyna_array_new runtime function missing");
+      LLVMBuildCall2(cg->builder, new_fn->type, new_fn->value,
+                     (LLVMValueRef[]){array_ptr, elem_size}, 2, "");
+    } else {
+      CgFunc *from_stack_fn =
+          cg_find_system_function(cg, sv_from_cstr("__tyna_array_from_stack"));
+      if (!from_stack_fn)
+        panic(
+            "Internal error: __tyna_array_from_stack runtime function missing");
+
+      LLVMTypeRef array_ty = LLVMArrayType(llvm_elem_ty, (unsigned)count);
+      LLVMValueRef raw_data_ptr =
+          LLVMBuildAlloca(cg->builder, array_ty, "array_lit_storage");
+
+      LLVMValueRef *const_values = xmalloc(sizeof(LLVMValueRef) * count);
+      AstNode **items = (AstNode **)node->array_literal.items.items;
+      bool all_const = true;
+      for (size_t i = 0; i < count; i++) {
+        AstNode *item = items[i];
+        LLVMValueRef val = cg_expression(cg, item);
+        if (!LLVMIsConstant(val))
+          all_const = false;
+        const_values[i] = val;
+      }
+
+      if (all_const) {
+        LLVMValueRef const_array =
+            LLVMConstArray(llvm_elem_ty, const_values, (unsigned)count);
+        LLVMBuildStore(cg->builder, const_array, raw_data_ptr);
+      } else {
+        for (size_t i = 0; i < count; i++) {
+          LLVMValueRef indices[] = {
+              LLVMConstInt(LLVMInt32TypeInContext(cg->context), 0, 0),
+              LLVMConstInt(LLVMInt32TypeInContext(cg->context), i, 0)};
+          LLVMValueRef element_ptr = LLVMBuildGEP2(
+              cg->builder, array_ty, raw_data_ptr, indices, 2, "item_ptr");
+          AstNode *item = items[i];
+          LLVMValueRef val = const_values[i];
+          val = cg_cast_value(cg, val, item->resolved_type, llvm_elem_ty);
+          LLVMBuildStore(cg->builder, val, element_ptr);
+        }
+      }
+      free(const_values);
+
+      LLVMTypeRef i8_ptr =
+          LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+      LLVMValueRef stack_ptr =
+          LLVMBuildBitCast(cg->builder, raw_data_ptr, i8_ptr, "stack_ptr");
+      LLVMBuildCall2(
+          cg->builder, from_stack_fn->type, from_stack_fn->value,
+          (LLVMValueRef[]){
+              array_ptr, stack_ptr,
+              LLVMConstInt(LLVMInt64TypeInContext(cg->context), count, 0),
+              elem_size},
+          4, "");
+    }
+    return LLVMBuildLoad2(cg->builder, struct_ty, array_ptr, "array_lit_dyn");
+  }
+
   LLVMTypeRef array_ty = LLVMArrayType(llvm_elem_ty, count);
   LLVMValueRef raw_data_ptr =
       LLVMBuildAlloca(cg->builder, array_ty, "array_lit_storage");
 
   LLVMValueRef *const_values = xmalloc(sizeof(LLVMValueRef) * count);
+  AstNode **items = (AstNode **)node->array_literal.items.items;
   bool all_const = true;
   for (size_t i = 0; i < count; i++) {
-    AstNode *item = node->array_literal.items.items[i];
+    AstNode *item = items[i];
     LLVMValueRef val = cg_expression(cg, item);
     if (!LLVMIsConstant(val))
       all_const = false;
@@ -269,6 +381,79 @@ LLVMValueRef cg_array_repeat(Codegen *cg, AstNode *node) {
 
   Type *element_type = inst_type->data.instance.generic_args.items[0];
   LLVMTypeRef llvm_elem_ty = cg_type_get_llvm(cg, element_type);
+
+  if (cg_is_dynamic_array_type(inst_type)) {
+    LLVMTypeRef struct_ty = cg_type_get_llvm(cg, inst_type);
+    LLVMValueRef array_ptr =
+        LLVMBuildAlloca(cg->builder, struct_ty, "array_rep_temp");
+    LLVMBuildStore(cg->builder, LLVMConstNull(struct_ty), array_ptr);
+
+    CgFunc *with_capacity_fn =
+        cg_find_system_function(cg, sv_from_cstr("__tyna_array_with_capacity"));
+    CgFunc *push_fn =
+        cg_find_system_function(cg, sv_from_cstr("__tyna_array_push"));
+    if (!with_capacity_fn)
+      panic("Internal error: __tyna_array_with_capacity runtime function "
+            "missing");
+    if (!push_fn)
+      panic("Internal error: __tyna_array_push runtime function missing");
+
+    const char *data_layout = LLVMGetDataLayout(cg->module);
+    LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+    unsigned long long elem_size_bytes = LLVMABISizeOfType(td, llvm_elem_ty);
+    LLVMDisposeTargetData(td);
+    LLVMValueRef elem_size =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), elem_size_bytes, 0);
+
+    LLVMBuildCall2(cg->builder, with_capacity_fn->type, with_capacity_fn->value,
+                   (LLVMValueRef[]){array_ptr, count_val, elem_size}, 3, "");
+
+    LLVMBasicBlockRef pre_header = LLVMGetInsertBlock(cg->builder);
+    LLVMBasicBlockRef loop_body = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "repeat_loop");
+    LLVMBasicBlockRef loop_end = LLVMAppendBasicBlockInContext(
+        cg->context, cg->current_function, "repeat_end");
+
+    LLVMPositionBuilderAtEnd(cg->builder, pre_header);
+    LLVMValueRef is_zero = LLVMBuildICmp(
+        cg->builder, LLVMIntEQ, count_val,
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0), "is_zero");
+    LLVMBuildCondBr(cg->builder, is_zero, loop_end, loop_body);
+
+    LLVMPositionBuilderAtEnd(cg->builder, loop_body);
+
+    LLVMValueRef i_phi =
+        LLVMBuildPhi(cg->builder, LLVMInt64TypeInContext(cg->context), "i");
+    LLVMValueRef zero = LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0);
+    LLVMAddIncoming(i_phi, &zero, &pre_header, 1);
+
+    LLVMValueRef val = cg_expression(cg, node->array_repeat.value);
+    LLVMValueRef cast_val = cg_cast_value(
+        cg, val, node->array_repeat.value->resolved_type, llvm_elem_ty);
+
+    LLVMValueRef elem_tmp =
+        LLVMBuildAlloca(cg->builder, llvm_elem_ty, "array_rep_elem_tmp");
+    LLVMBuildStore(cg->builder, cast_val, elem_tmp);
+    LLVMTypeRef i8_ptr = LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+    LLVMValueRef elem_ptr_i8 =
+        LLVMBuildBitCast(cg->builder, elem_tmp, i8_ptr, "elem_ptr");
+    LLVMBuildCall2(cg->builder, push_fn->type, push_fn->value,
+                   (LLVMValueRef[]){array_ptr, elem_ptr_i8, elem_size}, 3, "");
+
+    LLVMValueRef i_next = LLVMBuildAdd(
+        cg->builder, i_phi,
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "i_next");
+    LLVMValueRef has_more =
+        LLVMBuildICmp(cg->builder, LLVMIntULT, i_next, count_val, "has_more");
+    LLVMBasicBlockRef loop_latch = LLVMGetInsertBlock(cg->builder);
+    LLVMAddIncoming(i_phi, &i_next, &loop_latch, 1);
+
+    LLVMBuildCondBr(cg->builder, has_more, loop_body, loop_end);
+
+    LLVMPositionBuilderAtEnd(cg->builder, loop_end);
+    return LLVMBuildLoad2(cg->builder, struct_ty, array_ptr, "array_rep_dyn");
+  }
+
   LLVMValueRef raw_data_ptr = LLVMBuildArrayAlloca(
       cg->builder, llvm_elem_ty, count_val, "array_rep_storage");
 

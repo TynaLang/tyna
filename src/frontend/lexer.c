@@ -74,6 +74,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_STRUCT;
   else if (sv_eq_cstr(text, "union"))
     t.type = TOKEN_UNION;
+  else if (sv_eq_cstr(text, "enum"))
+    t.type = TOKEN_ENUM;
   else if (sv_eq_cstr(text, "loop"))
     t.type = TOKEN_LOOP;
   else if (sv_eq_cstr(text, "switch"))
@@ -154,6 +156,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_FALSE;
   else if (sv_eq_cstr(text, "null"))
     t.type = TOKEN_NULL;
+  else if (sv_eq_cstr(text, "None"))
+    t.type = TOKEN_NONE;
   else
     t.type = TOKEN_IDENT;
 

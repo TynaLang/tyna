@@ -4,7 +4,8 @@ Symbol *sema_resolve(Sema *s, StringView name) {
   for (SemaScope *scope = s->scope; scope != NULL; scope = scope->parent) {
     for (size_t i = 0; i < scope->symbols.len; i++) {
       Symbol *sym = scope->symbols.items[i];
-      if (sv_eq(sym->name, name)) {
+      if (sv_eq(sym->name, name) ||
+          (sym->original_name.len && sv_eq(sym->original_name, name))) {
         return sym;
       }
     }
@@ -18,7 +19,8 @@ Symbol *sema_resolve_local(Sema *s, StringView name) {
 
   for (size_t i = 0; i < s->scope->symbols.len; i++) {
     Symbol *sym = s->scope->symbols.items[i];
-    if (sv_eq(sym->name, name)) {
+    if (sv_eq(sym->name, name) ||
+        (sym->original_name.len && sv_eq(sym->original_name, name))) {
       return sym;
     }
   }

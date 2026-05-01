@@ -98,8 +98,9 @@ void sema_check_union_decl(Sema *s, AstNode *node) {
   }
 
   if (!existing || !existing->type->is_intrinsic) {
-    t->alignment = max_align;
-    t->size = align_to(max_size, max_align);
+    t->is_tagged_union = true;
+    t->alignment = max_align > 8 ? max_align : 8;
+    t->size = align_to(max_size + 8, t->alignment);
   }
 
   s->generic_context_type = old_generic_context;

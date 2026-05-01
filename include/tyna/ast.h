@@ -47,6 +47,7 @@ enum AstKind {
   NODE_BOOL,
   NODE_STRING,
   NODE_NULL,
+  NODE_NONE,
   NODE_VAR,
 
   NODE_BINARY_ARITH,
@@ -76,6 +77,7 @@ enum AstKind {
   NODE_STATIC_MEMBER,
   NODE_STRUCT_DECL,
   NODE_UNION_DECL,
+  NODE_ENUM_DECL,
   NODE_ERROR_DECL,
   NODE_ERROR_SET_DECL,
   NODE_IMPL_DECL,
@@ -136,6 +138,14 @@ struct AstNode {
       bool is_frozen;
       bool is_export;
     } union_decl;
+
+    struct {
+      AstNode *name;
+      List members;      // List<AstNode* (NODE_VAR_DECL or NODE_FUNC_DECL)>
+      List placeholders; // List<StringView*>
+      bool is_frozen;
+      bool is_export;
+    } enum_decl;
 
     struct {
       AstNode *name;
@@ -388,6 +398,7 @@ AstNode *AstNode_new_char(char value, Location loc);
 AstNode *AstNode_new_bool(int value, Location loc);
 AstNode *AstNode_new_string(StringView value, Location loc);
 AstNode *AstNode_new_null(Location loc);
+AstNode *AstNode_new_none(Location loc);
 AstNode *AstNode_new_new_expr(Type *target_type, List args, List field_inits,
                               Location loc);
 
@@ -446,12 +457,15 @@ AstNode *AstNode_new_struct_decl(AstNode *name, List members, List placeholders,
                                  bool is_frozen, bool is_export, Location loc);
 AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
                                 bool is_frozen, bool is_export, Location loc);
+AstNode *AstNode_new_enum_decl(AstNode *name, List members, List placeholders,
+                               bool is_frozen, bool is_export, Location loc);
 AstNode *AstNode_new_error_decl(AstNode *name, List members, StringView message,
                                 bool is_export, Location loc);
 AstNode *AstNode_new_error_set_decl(AstNode *name, List members, bool is_export,
                                     Location loc);
 AstNode *AstNode_new_impl_decl(Type *type, List members, Location loc);
-AstNode *AstNode_new_type_alias(AstNode *name, Type *target_type, bool is_export, Location loc);
+AstNode *AstNode_new_type_alias(AstNode *name, Type *target_type,
+                                bool is_export, Location loc);
 AstNode *AstNode_new_array_literal(List elements, Location loc);
 AstNode *AstNode_new_binary_is(AstNode *left, AstNode *right, Location loc);
 AstNode *AstNode_new_binary_else(AstNode *left, AstNode *right, Location loc);

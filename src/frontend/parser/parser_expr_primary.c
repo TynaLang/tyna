@@ -13,6 +13,64 @@ static int is_type_token(TokenType t) {
          t == TOKEN_STAR || t == TOKEN_CONST;
 }
 
+static bool parser_peek_is_type_start(Parser *p, int offset) {
+  Token t =
+      offset == 0 ? p->current_token : parser_token_peek(p->lexer, offset);
+  if (t.type == TOKEN_IDENT || parser_is_type_keyword(t.type) ||
+      t.type == TOKEN_LBRACKET || t.type == TOKEN_STAR ||
+      t.type == TOKEN_CONST) {
+    return true;
+  }
+  return false;
+}
+
+static bool parser_peek_is_heap_allocation(Parser *p) {
+  int offset = 0;
+  Token t = p->current_token;
+
+  while (t.type == TOKEN_CONST || t.type == TOKEN_STAR) {
+    offset++;
+    t = parser_token_peek(p->lexer, offset);
+  }
+
+  if (t.type == TOKEN_LBRACKET) {
+    int depth = 1;
+    offset++;
+    while (depth > 0) {
+      t = parser_token_peek(p->lexer, offset);
+      if (t.type == TOKEN_EOF)
+        return false;
+      if (t.type == TOKEN_LBRACKET)
+        depth++;
+      else if (t.type == TOKEN_RBRACKET)
+        depth--;
+      offset++;
+    }
+  } else if (t.type == TOKEN_IDENT || parser_is_type_keyword(t.type)) {
+    offset++;
+    t = parser_token_peek(p->lexer, offset);
+    if (t.type == TOKEN_LT) {
+      int depth = 1;
+      offset++;
+      while (depth > 0) {
+        t = parser_token_peek(p->lexer, offset);
+        if (t.type == TOKEN_EOF)
+          return false;
+        if (t.type == TOKEN_LT)
+          depth++;
+        else if (t.type == TOKEN_GT)
+          depth--;
+        offset++;
+      }
+    }
+  } else {
+    return false;
+  }
+
+  t = parser_token_peek(p->lexer, offset);
+  return t.type == TOKEN_LPAREN || t.type == TOKEN_LBRACE;
+}
+
 static AstNode *parser_parse_if_expr(Parser *p) {
   Location loc = p->current_token.loc;
 
@@ -166,6 +224,17 @@ AstNode *parser_parse_primary(Parser *p) {
       return AstNode_new_sizeof_expr(target_type, t.loc);
     }
 
+    if (t.type == TOKEN_IDENT &&
+        (sv_eq_cstr(t.text, "heap") || sv_eq_cstr(t.text, "ref"))) {
+      AstNode *expr = parser_parse_expression(p, 100);
+      if (!expr)
+        return NULL;
+      List args;
+      List_init(&args);
+      List_push(&args, expr);
+      return AstNode_new_call(AstNode_new_var(t.text, t.loc), args, t.loc);
+    }
+
     if (p->current_token.type == TOKEN_COLON_COLON) {
       parser_token_advance(p);
       Token member = p->current_token;
@@ -211,8 +280,47 @@ AstNode *parser_parse_primary(Parser *p) {
     return AstNode_new_bool(0, t.loc);
   case TOKEN_NULL:
     return AstNode_new_null(t.loc);
+  case TOKEN_NONE:
+    return AstNode_new_none(t.loc);
   case TOKEN_NEW:
     return parser_parse_new_expr(p);
+  case TOKEN_LBRACE: {
+    List args;
+    List_init(&args);
+    List field_inits;
+    List_init(&field_inits);
+
+    while (p->current_token.type != TOKEN_RBRACE &&
+           p->current_token.type != TOKEN_EOF) {
+      if (p->current_token.type != TOKEN_IDENT) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected field name in struct literal");
+        return NULL;
+      }
+      StringView field_name = p->current_token.text;
+      Location field_loc = p->current_token.loc;
+      parser_token_advance(p);
+      if (!parser_expect(p, TOKEN_COLON,
+                         "Expected ':' after struct field name"))
+        return NULL;
+      AstNode *value = parser_parse_expression(p, 0);
+      if (!value)
+        return NULL;
+      AstNode *field_target = AstNode_new_var(field_name, field_loc);
+      AstNode *assign = AstNode_new_assign_expr(field_target, value, field_loc);
+      List_push(&field_inits, assign);
+      if (p->current_token.type == TOKEN_COMMA)
+        parser_token_advance(p);
+      else
+        break;
+    }
+
+    if (!parser_expect(p, TOKEN_RBRACE,
+                       "Expected '}' at end of struct literal"))
+      return NULL;
+
+    return AstNode_new_new_expr(NULL, args, field_inits, t.loc);
+  }
 
   case TOKEN_IF:
     return parser_parse_if_expr(p);
@@ -334,6 +442,52 @@ AstNode *parser_parse_primary(Parser *p) {
   }
 
   case TOKEN_STAR: {
+    if (parser_peek_is_heap_allocation(p)) {
+      Location loc = t.loc;
+      Type *target_type = parser_parse_type_full(p);
+      if (!target_type)
+        return NULL;
+
+      List args;
+      List_init(&args);
+      List field_inits;
+      List_init(&field_inits);
+
+      if (p->current_token.type == TOKEN_LPAREN) {
+        parser_token_advance(p);
+        if (p->current_token.type != TOKEN_RPAREN) {
+          while (1) {
+            AstNode *arg = parser_parse_expression(p, 0);
+            if (!arg)
+              return NULL;
+            List_push(&args, arg);
+            if (p->current_token.type == TOKEN_COMMA)
+              parser_token_advance(p);
+            else
+              break;
+          }
+        }
+        if (!parser_expect(p, TOKEN_RPAREN,
+                           "Expected ')' after constructor args"))
+          return NULL;
+      } else if (p->current_token.type == TOKEN_LBRACE) {
+        if (!parser_parse_struct_literal_fields(p, &field_inits))
+          return NULL;
+      } else {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected '(' or '{' after heap allocation type");
+        return NULL;
+      }
+
+      AstNode *inner =
+          AstNode_new_new_expr(target_type, args, field_inits, loc);
+      List call_args;
+      List_init(&call_args);
+      List_push(&call_args, inner);
+      return AstNode_new_call(AstNode_new_var(sv_from_cstr("heap"), loc),
+                              call_args, loc);
+    }
+
     AstNode *expr = parser_parse_expression(p, 100);
     return AstNode_new_unary(OP_DEREF, expr, t.loc);
   }

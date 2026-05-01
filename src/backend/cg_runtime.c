@@ -63,6 +63,7 @@ void cg_register_runtime_functions(Codegen *cg) {
        4,
        {i8_ptr, i8_ptr, i64_ty, i64_ty}},
       {"__tyna_array_free", void_ty, false, 1, {i8_ptr}},
+      {"__tyna_map_init", void_ty, false, 2, {i8_ptr, i64_ty}},
 
       // String Runtime (Pass str_ty, buf_ptr_ty, i8_ptr directly)
       {"__tyna_str_equals", i32_ty, false, 2, {str_ty, str_ty}},

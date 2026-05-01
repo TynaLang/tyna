@@ -51,6 +51,7 @@ static LLVMTypeRef cg_const_target_type(Codegen *cg, AstNode *node) {
   case NODE_STRING:
     return cg_type_get_llvm(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
   case NODE_NULL:
+  case NODE_NONE:
     return LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
   default:
     panic("cg_const_expr received unknown constant node without resolved type");
@@ -84,9 +85,36 @@ static LLVMValueRef cg_const_expr_impl(Codegen *cg, AstNode *node) {
     LLVMValueRef len = LLVMConstInt(LLVMInt64TypeInContext(cg->context),
                                     node->string.value.len, false);
     LLVMValueRef fields[] = {ptr, len};
-    return LLVMConstNamedStruct(target_ty, fields, 2);
+
+    LLVMTypeRef string_ty =
+        cg_type_get_llvm(cg, type_get_primitive(cg->type_ctx, PRIM_STRING));
+    LLVMValueRef string_val = LLVMConstNamedStruct(string_ty, fields, 2);
+
+    if (target_ty == string_ty)
+      return string_val;
+
+    if (LLVMGetTypeKind(target_ty) == LLVMStructTypeKind) {
+      unsigned field_count = LLVMCountStructElementTypes(target_ty);
+      LLVMTypeRef *field_types = calloc(field_count, sizeof(LLVMTypeRef));
+      LLVMGetStructElementTypes(target_ty, field_types);
+
+      LLVMValueRef result = LLVMConstNull(target_ty);
+      for (unsigned i = 0; i < field_count; i++) {
+        if (field_types[i] == string_ty) {
+          result = LLVMBuildInsertValue(cg->builder, result, string_val, i,
+                                        "string_field_const");
+          break;
+        }
+      }
+      free(field_types);
+      if (result)
+        return result;
+    }
+
+    return string_val;
   }
   case NODE_NULL:
+  case NODE_NONE:
     return LLVMConstNull(target_ty);
   default:
     return NULL;

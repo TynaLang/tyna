@@ -76,6 +76,7 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
     break;
 
   case NODE_NULL:
+  case NODE_NONE:
     break;
 
   case NODE_VAR:

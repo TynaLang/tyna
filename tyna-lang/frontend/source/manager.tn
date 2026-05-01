@@ -1,0 +1,38 @@
+import std.map;
+
+struct FileInfo {
+    // The actual path on disk (e.g., "src/parser/ast.tn")
+    abs_path: str, 
+    
+    // The module path (e.g., "compiler.parser.ast")
+    module_path: str, 
+    
+    // The text buffer itself. In LSP, this gets replaced on every keystroke.
+    content: String, 
+    
+    // LSP requires tracking versions to discard stale parse trees
+    version: u32,    
+    
+    // Pre-calculated byte offsets where every line starts.
+    // Index 0 is always 0. Index 1 is the offset of line 2, etc.
+    line_starts: List<u32>, 
+}
+
+struct SourceManager {
+    files: Map<u32, FileInfo>,
+    file_map: Map<str, FileId>,
+    
+    // Simple counter to generate new IDs
+    next_id: u32,
+}
+
+
+impl SourceManager {
+    fn new(): heap<SourceManager> {
+        return *SourceManager {
+            files: Map.new(),
+            file_map: Map.new(),
+            next_id: 0,
+        };
+    }
+}

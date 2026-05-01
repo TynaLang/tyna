@@ -1,0 +1,3 @@
+struct FileId {
+    id: u32,
+}

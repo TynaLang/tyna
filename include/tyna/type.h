@@ -82,6 +82,7 @@ struct Type {
   List impls;           // List<AstNode*> for generic impl declarations
   bool is_frozen;       // If true, fields cannot be added/modified.
   bool is_intrinsic;    // Identifies types the compiler "needs" (like Array)
+  bool is_transparent;  // True for types with no distinct runtime layout
   bool is_tagged_union; // True for shorthand tagged unions like i32 | f32
 };
 
@@ -140,5 +141,11 @@ bool type_is_concrete(Type *t);
 
 // Semantic Rules
 int type_can_implicitly_cast(Type *to, Type *from);
+
+bool type_is_option(Type *t);
+Type *type_get_option_payload(Type *t);
+bool type_is_heap_type(Type *t);
+bool type_is_ref_type(Type *t);
+bool type_is_heap_or_ref(Type *t);
 
 #endif // TYNA_TYPE_H

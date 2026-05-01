@@ -483,9 +483,9 @@ Type *type_get_union_anonymous(TypeContext *ctx, List types) {
       max_align = align;
   }
 
-  u->alignment = max_align;
-  u->size = align_to(max_size, max_align);
   u->is_tagged_union = true;
+  u->alignment = max_align > 8 ? max_align : 8;
+  u->size = align_to(max_size + 8, u->alignment);
   List_push(&ctx->instances, u);
   return u;
 }
@@ -602,6 +602,15 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
     }
   }
 
+  bool is_option = template_type->kind == KIND_TEMPLATE &&
+                   sv_eq(template_type->name, sv_from_cstr("Option"));
+  bool is_transparent = false;
+  if (is_option && args.len == 1) {
+    Type *payload = args.items[0];
+    if (type_is_heap_or_ref(payload))
+      is_transparent = true;
+  }
+
   Type *inst = xcalloc(1, sizeof(Type));
   inst->kind = KIND_STRUCT;
   inst->name = template_type->name; // In a real impl, concat names
@@ -611,6 +620,7 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
   for (size_t i = 0; i < args.len; i++) {
     List_push(&inst->data.instance.generic_args, args.items[i]);
   }
+  inst->is_transparent = is_transparent;
   type_init_common(inst);
 
   // Clone members and swap placeholders
@@ -641,6 +651,14 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
   }
   inst->size = align_to(current_offset, max_align);
   inst->alignment = max_align;
+
+  if (inst->is_transparent) {
+    Type *payload = type_get_option_payload(inst);
+    if (payload) {
+      inst->size = payload->size;
+      inst->alignment = payload->alignment;
+    }
+  }
 
   List_push(&ctx->instances, inst);
   return inst;
@@ -758,6 +776,31 @@ bool type_equals(Type *a, Type *b) {
   default:
     return false;
   }
+}
+
+bool type_is_option(Type *t) {
+  return t && t->kind == KIND_STRUCT && t->data.instance.from_template &&
+         sv_eq(t->data.instance.from_template->name, sv_from_cstr("Option"));
+}
+
+Type *type_get_option_payload(Type *t) {
+  if (!type_is_option(t) || t->data.instance.generic_args.len == 0)
+    return NULL;
+  return t->data.instance.generic_args.items[0];
+}
+
+bool type_is_heap_type(Type *t) {
+  return t && t->kind == KIND_STRUCT && t->data.instance.from_template &&
+         sv_eq(t->data.instance.from_template->name, sv_from_cstr("heap"));
+}
+
+bool type_is_ref_type(Type *t) {
+  return t && t->kind == KIND_STRUCT && t->data.instance.from_template &&
+         sv_eq(t->data.instance.from_template->name, sv_from_cstr("ref"));
+}
+
+bool type_is_heap_or_ref(Type *t) {
+  return type_is_heap_type(t) || type_is_ref_type(t);
 }
 
 const char *type_to_name(Type *t) {
@@ -1026,6 +1069,9 @@ int type_can_implicitly_cast(Type *to, Type *from) {
   if (!to || !from)
     return 0;
 
+  if (type_is_option(to) && type_is_unknown(from))
+    return 1;
+
   if (to->kind == KIND_TEMPLATE || from->kind == KIND_TEMPLATE)
     return 1;
 
@@ -1079,6 +1125,11 @@ int type_can_implicitly_cast(Type *to, Type *from) {
     if (from->data.pointer_to->kind == KIND_PRIMITIVE &&
         from->data.pointer_to->data.primitive == PRIM_VOID)
       return 1;
+  }
+
+  if (type_is_option(to) && to->is_transparent && from->kind == KIND_POINTER &&
+      type_is_unknown(from->data.pointer_to)) {
+    return 1;
   }
 
   if (to->kind == KIND_ERROR_SET && from->kind == KIND_ERROR) {
@@ -1140,6 +1191,25 @@ int type_can_implicitly_cast(Type *to, Type *from) {
 
   if (to->kind == KIND_POINTER && from->kind == KIND_STRING_BUFFER) {
     return 0;
+  }
+
+  if (from->kind == KIND_PRIMITIVE && from->data.primitive == PRIM_STRING) {
+    if (to->kind == KIND_STRUCT) {
+      if (type_is_ref_type(to)) {
+        if (to->data.instance.generic_args.len == 1) {
+          Type *inner = to->data.instance.generic_args.items[0];
+          if (inner && inner->kind == KIND_STRUCT &&
+              sv_eq(inner->name, sv_from_cstr("StringView"))) {
+            return 1;
+          }
+        }
+      }
+
+      if (sv_eq(to->name, sv_from_cstr("Token")) ||
+          sv_eq(to->name, sv_from_cstr("StringView"))) {
+        return 1;
+      }
+    }
   }
 
   return 0;

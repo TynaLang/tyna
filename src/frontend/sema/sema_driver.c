@@ -37,6 +37,133 @@ void sema_prime_types(Sema *s) {
   if (!sema_resolve(s, array_tpl->name)) {
     sema_define(s, array_tpl->name, array_tpl, true, (Location){0, 0});
   }
+
+  Type *list_tpl = type_get_template(s->types, sv_from_parts("List", 4));
+  if (!list_tpl) {
+    list_tpl = xcalloc(1, sizeof(Type));
+    list_tpl->kind = KIND_TEMPLATE;
+    list_tpl->name = sv_from_parts("List", 4);
+    list_tpl->is_intrinsic = true;
+    list_tpl->is_frozen = false;
+    List_init(&list_tpl->members);
+    List_init(&list_tpl->methods);
+    List_init(&list_tpl->data.template.placeholders);
+    List_init(&list_tpl->data.template.fields);
+
+    StringView *t_placeholder = xcalloc(1, sizeof(StringView));
+    *t_placeholder = sv_from_parts("T", 1);
+    List_push(&list_tpl->data.template.placeholders, t_placeholder);
+
+    Type *t_type = xcalloc(1, sizeof(Type));
+    t_type->kind = KIND_TEMPLATE;
+    t_type->name = *t_placeholder;
+
+    type_add_member(list_tpl, "data", type_get_pointer(s->types, t_type), 0);
+    type_add_member(list_tpl, "len", type_get_primitive(s->types, PRIM_I64), 8);
+    type_add_member(list_tpl, "cap", type_get_primitive(s->types, PRIM_I64),
+                    16);
+
+    list_tpl->size = 24;
+    List_push(&s->types->templates, list_tpl);
+  }
+
+  if (!sema_resolve(s, list_tpl->name)) {
+    sema_define(s, list_tpl->name, list_tpl, true, (Location){0, 0});
+  }
+
+  Type *option_tpl = type_get_template(s->types, sv_from_parts("Option", 6));
+  if (!option_tpl) {
+    option_tpl = xcalloc(1, sizeof(Type));
+    option_tpl->kind = KIND_TEMPLATE;
+    option_tpl->name = sv_from_parts("Option", 6);
+    option_tpl->is_intrinsic = true;
+    option_tpl->is_frozen = false;
+    List_init(&option_tpl->members);
+    List_init(&option_tpl->methods);
+    List_init(&option_tpl->data.template.placeholders);
+    List_init(&option_tpl->data.template.fields);
+
+    StringView *t_placeholder = xmalloc(sizeof(StringView));
+    *t_placeholder = sv_from_parts("T", 1);
+    List_push(&option_tpl->data.template.placeholders, t_placeholder);
+
+    Type *t_type = xcalloc(1, sizeof(Type));
+    t_type->kind = KIND_TEMPLATE;
+    t_type->name = *t_placeholder;
+
+    type_add_member(option_tpl, "tag", type_get_primitive(s->types, PRIM_I64),
+                    0);
+    type_add_member(option_tpl, "value", t_type, 8);
+
+    option_tpl->size = 16;
+    List_push(&s->types->templates, option_tpl);
+  }
+
+  if (!sema_resolve(s, option_tpl->name)) {
+    sema_define(s, option_tpl->name, option_tpl, true, (Location){0, 0});
+  }
+
+  Type *heap_tpl = type_get_template(s->types, sv_from_parts("heap", 4));
+  if (!heap_tpl) {
+    heap_tpl = xcalloc(1, sizeof(Type));
+    heap_tpl->kind = KIND_TEMPLATE;
+    heap_tpl->name = sv_from_parts("heap", 4);
+    heap_tpl->is_intrinsic = true;
+    heap_tpl->is_frozen = false;
+    List_init(&heap_tpl->members);
+    List_init(&heap_tpl->methods);
+    List_init(&heap_tpl->data.template.placeholders);
+    List_init(&heap_tpl->data.template.fields);
+
+    StringView *t_placeholder = xmalloc(sizeof(StringView));
+    *t_placeholder = sv_from_parts("T", 1);
+    List_push(&heap_tpl->data.template.placeholders, t_placeholder);
+
+    Type *t_type = xcalloc(1, sizeof(Type));
+    t_type->kind = KIND_TEMPLATE;
+    t_type->name = *t_placeholder;
+
+    type_add_member(heap_tpl, "value", type_get_pointer(s->types, t_type), 0);
+
+    heap_tpl->size = 8;
+    heap_tpl->alignment = 8;
+    List_push(&s->types->templates, heap_tpl);
+  }
+
+  if (!sema_resolve(s, heap_tpl->name)) {
+    sema_define(s, heap_tpl->name, heap_tpl, true, (Location){0, 0});
+  }
+
+  Type *ref_tpl = type_get_template(s->types, sv_from_parts("ref", 3));
+  if (!ref_tpl) {
+    ref_tpl = xcalloc(1, sizeof(Type));
+    ref_tpl->kind = KIND_TEMPLATE;
+    ref_tpl->name = sv_from_parts("ref", 3);
+    ref_tpl->is_intrinsic = true;
+    ref_tpl->is_frozen = false;
+    List_init(&ref_tpl->members);
+    List_init(&ref_tpl->methods);
+    List_init(&ref_tpl->data.template.placeholders);
+    List_init(&ref_tpl->data.template.fields);
+
+    StringView *t_placeholder = xmalloc(sizeof(StringView));
+    *t_placeholder = sv_from_parts("T", 1);
+    List_push(&ref_tpl->data.template.placeholders, t_placeholder);
+
+    Type *t_type = xcalloc(1, sizeof(Type));
+    t_type->kind = KIND_TEMPLATE;
+    t_type->name = *t_placeholder;
+
+    type_add_member(ref_tpl, "value", type_get_pointer(s->types, t_type), 0);
+
+    ref_tpl->size = 8;
+    ref_tpl->alignment = 8;
+    List_push(&s->types->templates, ref_tpl);
+  }
+
+  if (!sema_resolve(s, ref_tpl->name)) {
+    sema_define(s, ref_tpl->name, ref_tpl, true, (Location){0, 0});
+  }
 }
 
 static Symbol *sema_define_builtin(Sema *s, StringView name, Type *type,
@@ -55,6 +182,12 @@ static void sema_register_builtins(Sema *s) {
                       BUILTIN_TYPEOF);
   sema_define_builtin(s, sv_from_parts("free", 4),
                       type_get_primitive(s->types, PRIM_VOID), BUILTIN_FREE);
+  sema_define_builtin(s, sv_from_parts("Some", 4),
+                      type_get_primitive(s->types, PRIM_UNKNOWN), BUILTIN_SOME);
+  sema_define_builtin(s, sv_from_parts("heap", 4),
+                      type_get_primitive(s->types, PRIM_UNKNOWN), BUILTIN_HEAP);
+  sema_define_builtin(s, sv_from_parts("ref", 3),
+                      type_get_primitive(s->types, PRIM_UNKNOWN), BUILTIN_REF);
 }
 
 static void sema_check_function_bodies(Sema *s, AstNode *node) {
@@ -161,12 +294,15 @@ void sema_analyze(Sema *s, AstNode *root) {
     AstNode *node = root->ast_root.children.items[i];
     if (node->tag == NODE_FUNC_DECL) {
       sema_register_func_signature(s, node);
-    } else if (node->tag == NODE_STRUCT_DECL) {
-      for (size_t j = 0; j < node->struct_decl.members.len; j++) {
-        AstNode *member = node->struct_decl.members.items[j];
+    } else if (node->tag == NODE_STRUCT_DECL || node->tag == NODE_ENUM_DECL) {
+      List *members = node->tag == NODE_STRUCT_DECL ? &node->struct_decl.members
+                                                    : &node->enum_decl.members;
+      AstNode *name = node->tag == NODE_STRUCT_DECL ? node->struct_decl.name
+                                                    : node->enum_decl.name;
+      for (size_t j = 0; j < members->len; j++) {
+        AstNode *member = members->items[j];
         if (member->tag == NODE_FUNC_DECL) {
-          sema_register_method_signature(s, member,
-                                         node->struct_decl.name->var.value);
+          sema_register_method_signature(s, member, name->var.value);
         }
       }
     } else if (node->tag == NODE_IMPL_DECL) {
@@ -187,7 +323,7 @@ void sema_analyze(Sema *s, AstNode *root) {
       sema_check_stmt(s, node);
     } else if (node->tag == NODE_STRUCT_DECL) {
       sema_check_struct_decl(s, node);
-    } else if (node->tag == NODE_UNION_DECL) {
+    } else if (node->tag == NODE_UNION_DECL || node->tag == NODE_ENUM_DECL) {
       sema_check_union_decl(s, node);
     } else if (node->tag == NODE_ERROR_DECL) {
       sema_check_error_decl(s, node);

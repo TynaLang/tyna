@@ -40,6 +40,7 @@ typedef enum TokenType {
   TOKEN_DEFER,
   TOKEN_STRUCT,
   TOKEN_UNION,
+  TOKEN_ENUM,
   TOKEN_SWITCH,
   TOKEN_CASE,
   TOKEN_FOR,
@@ -79,6 +80,7 @@ typedef enum TokenType {
   TOKEN_TRUE,
   TOKEN_FALSE,
   TOKEN_NULL,
+  TOKEN_NONE,
 
   // Symbols
   TOKEN_COLON,

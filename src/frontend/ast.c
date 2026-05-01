@@ -61,6 +61,11 @@ AstNode *AstNode_new_null(Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_none(Location loc) {
+  AstNode *node = AstNode_new(NODE_NONE, loc);
+  return node;
+}
+
 AstNode *AstNode_new_var(StringView value, Location loc) {
   AstNode *node = AstNode_new(NODE_VAR, loc);
   node->var.value = value;
@@ -319,6 +324,17 @@ AstNode *AstNode_new_union_decl(AstNode *name, List members, List placeholders,
   return node;
 }
 
+AstNode *AstNode_new_enum_decl(AstNode *name, List members, List placeholders,
+                               bool is_frozen, bool is_export, Location loc) {
+  AstNode *node = AstNode_new(NODE_ENUM_DECL, loc);
+  node->enum_decl.name = name;
+  node->enum_decl.members = members;
+  node->enum_decl.placeholders = placeholders;
+  node->enum_decl.is_frozen = is_frozen;
+  node->enum_decl.is_export = is_export;
+  return node;
+}
+
 AstNode *AstNode_new_error_decl(AstNode *name, List members, StringView message,
                                 bool is_export, Location loc) {
   AstNode *node = AstNode_new(NODE_ERROR_DECL, loc);
@@ -345,8 +361,8 @@ AstNode *AstNode_new_impl_decl(Type *type, List members, Location loc) {
   return node;
 }
 
-AstNode *AstNode_new_type_alias(AstNode *name, Type *target_type, bool is_export,
-                                Location loc) {
+AstNode *AstNode_new_type_alias(AstNode *name, Type *target_type,
+                                bool is_export, Location loc) {
   AstNode *node = AstNode_new(NODE_TYPE_ALIAS, loc);
   node->type_alias_decl.name = name;
   node->type_alias_decl.target_type = target_type;

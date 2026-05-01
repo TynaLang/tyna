@@ -1,4 +1,5 @@
 #include <llvm-c/Core.h>
+#include <llvm-c/Target.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -552,6 +553,81 @@ LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
     return cg_typeof_string(cg, arg_type);
   }
 
+  if (sv_eq(fn_name, sv_from_cstr("Some"))) {
+    if (node->call.args.len != 1)
+      panic("Some() requires exactly one argument");
+
+    AstNode *arg_node = node->call.args.items[0];
+    LLVMValueRef arg_val = cg_expression(cg, arg_node);
+    Type *return_type = node->resolved_type;
+    if (!return_type)
+      panic("Some() call has no resolved return type");
+
+    if (return_type->is_transparent) {
+      return cg_cast_value(cg, arg_val, arg_node->resolved_type,
+                           cg_type_get_llvm(cg, return_type));
+    }
+
+    LLVMTypeRef ret_ty = cg_type_get_llvm(cg, return_type);
+    LLVMValueRef tmp = LLVMBuildAlloca(cg->builder, ret_ty, "option_tmp");
+    LLVMValueRef tag_ptr =
+        LLVMBuildStructGEP2(cg->builder, ret_ty, tmp, 0, "option_tag_ptr");
+    LLVMBuildStore(cg->builder,
+                   LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0),
+                   tag_ptr);
+    LLVMValueRef value_ptr =
+        LLVMBuildStructGEP2(cg->builder, ret_ty, tmp, 1, "option_value_ptr");
+    Type *payload_type = type_get_option_payload(return_type);
+    if (!payload_type)
+      panic("Some() return type is not an Option");
+    LLVMTypeRef value_ty = cg_type_get_llvm(cg, payload_type);
+    LLVMBuildStore(
+        cg->builder,
+        cg_cast_value(cg, arg_val, arg_node->resolved_type, value_ty),
+        value_ptr);
+    return LLVMBuildLoad2(cg->builder, ret_ty, tmp, "option_val");
+  }
+
+  if (sv_eq(fn_name, sv_from_cstr("heap")) ||
+      sv_eq(fn_name, sv_from_cstr("ref"))) {
+    if (node->call.args.len != 1)
+      panic("%.*s() requires exactly one argument", (int)fn_name.len,
+            fn_name.data);
+
+    AstNode *arg_node = node->call.args.items[0];
+    LLVMValueRef arg_val = cg_expression(cg, arg_node);
+    Type *return_type = node->resolved_type;
+    if (!return_type)
+      panic("%.*s() call has no resolved return type", (int)fn_name.len,
+            fn_name.data);
+
+    if (!type_is_heap_or_ref(return_type))
+      panic("%.*s() return type is not heap or ref", (int)fn_name.len,
+            fn_name.data);
+
+    Type *inner_type = return_type->data.instance.generic_args.items[0];
+    LLVMTypeRef inner_ty = cg_type_get_llvm(cg, inner_type);
+    const char *data_layout = LLVMGetDataLayout(cg->module);
+    LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+    unsigned long long alloc_size = LLVMABISizeOfType(td, inner_ty);
+    LLVMDisposeTargetData(td);
+    LLVMValueRef size_val =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), alloc_size, 0);
+    CgFunc *malloc_fn = cg_find_system_function(cg, sv_from_cstr("malloc"));
+    if (!malloc_fn)
+      panic("malloc runtime function not available");
+    LLVMValueRef ptr =
+        LLVMBuildCall2(cg->builder, malloc_fn->type, malloc_fn->value,
+                       &size_val, 1, "heap_alloc");
+    LLVMValueRef typed_ptr = LLVMBuildBitCast(
+        cg->builder, ptr, LLVMPointerType(inner_ty, 0), "heap_ptr");
+    LLVMBuildStore(
+        cg->builder,
+        cg_cast_value(cg, arg_val, arg_node->resolved_type, inner_ty),
+        typed_ptr);
+    return typed_ptr;
+  }
+
   if (cg_is_error_print_method(fn_name)) {
     return cg_error_print_call(cg, node);
   }
@@ -580,8 +656,49 @@ LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
     }
   }
 
-  if (!fn)
+  if (!fn) {
+    if (node->call.func->tag == NODE_STATIC_MEMBER) {
+      Type *target_type =
+          type_get_named(cg->type_ctx, node->call.func->static_member.parent);
+      if (target_type && target_type->kind == KIND_UNION &&
+          target_type->is_tagged_union) {
+        Member *variant =
+            type_get_member(target_type, node->call.func->static_member.member);
+        if (variant) {
+          if (node->call.args.len == 0) {
+            LLVMTypeRef union_ty = cg_type_get_llvm(cg, target_type);
+            LLVMValueRef tmp =
+                LLVMBuildAlloca(cg->builder, union_ty, "tagged_union_tmp");
+            LLVMValueRef tag_ptr = LLVMBuildStructGEP2(
+                cg->builder, union_ty, tmp, 0, "tagged_union_tag_ptr");
+            int variant_index = -1;
+            for (size_t i = 0; i < target_type->members.len; i++) {
+              if (target_type->members.items[i] == variant) {
+                variant_index = (int)i;
+                break;
+              }
+            }
+            if (variant_index < 0)
+              variant_index = 0;
+            LLVMBuildStore(cg->builder,
+                           LLVMConstInt(LLVMInt64TypeInContext(cg->context),
+                                        variant_index, 0),
+                           tag_ptr);
+            return LLVMBuildLoad2(cg->builder, union_ty, tmp,
+                                  "tagged_union_val");
+          }
+          if (node->call.args.len == 1) {
+            AstNode *arg_node = node->call.args.items[0];
+            LLVMValueRef arg_val = cg_expression(cg, arg_node);
+            LLVMValueRef tagged = cg_make_tagged_union(
+                cg, arg_val, arg_node->resolved_type, target_type);
+            return tagged;
+          }
+        }
+      }
+    }
     panic("Call to undefined function '" SV_FMT "'", SV_ARG(fn_name));
+  }
 
   unsigned arg_count = (unsigned)node->call.args.len;
   LLVMValueRef *args =

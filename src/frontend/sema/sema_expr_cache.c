@@ -76,6 +76,7 @@ ExprInfo sema_check_expr_cache(Sema *s, AstNode *node) {
   case NODE_STRING:
   case NODE_BOOL:
   case NODE_NULL:
+  case NODE_NONE:
     info = sema_check_literal(s, node);
     break;
 

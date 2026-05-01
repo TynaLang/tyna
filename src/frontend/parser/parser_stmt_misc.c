@@ -288,6 +288,8 @@ AstNode *parser_parse_statement(Parser *p) {
     return parser_parse_struct_decl(p, false, is_export);
   case TOKEN_UNION:
     return parser_parse_union_decl(p, false, is_export);
+  case TOKEN_ENUM:
+    return parser_parse_enum_decl(p, false, is_export);
   case TOKEN_AT:
     return parser_parse_error_decl(p, is_export);
   case TOKEN_ERROR_KEYWORD:
@@ -301,13 +303,15 @@ AstNode *parser_parse_statement(Parser *p) {
   case TOKEN_FROZEN: {
     parser_token_advance(p);
     if (p->current_token.type != TOKEN_STRUCT &&
-        p->current_token.type != TOKEN_UNION) {
+        p->current_token.type != TOKEN_UNION && p->current_token.type != TOKEN_ENUM) {
       ErrorHandler_report(p->eh, p->current_token.loc,
-                          "Expected 'struct' or 'union' after 'frozen'");
+                          "Expected 'struct', 'union', or 'enum' after 'frozen'");
       return NULL;
     }
     if (p->current_token.type == TOKEN_STRUCT)
       return parser_parse_struct_decl(p, true, is_export);
+    if (p->current_token.type == TOKEN_ENUM)
+      return parser_parse_enum_decl(p, true, is_export);
     return parser_parse_union_decl(p, true, is_export);
   }
   case TOKEN_STATIC: {

@@ -142,6 +142,10 @@ ExprInfo sema_check_literal(Sema *s, AstNode *node) {
         .category = VAL_RVALUE,
     };
 
+  case NODE_NONE:
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE};
+
   default:
     return (ExprInfo){
         .type = type_get_primitive(s->types, PRIM_UNKNOWN),

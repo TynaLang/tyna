@@ -1,0 +1,9 @@
+struct SourceLocation {
+    file: FileId,
+    offset: u32, // Byte offset from the start of the file
+}
+
+struct SourceSpan {
+    start: SourceLocation,
+    end: SourceLocation,
+}

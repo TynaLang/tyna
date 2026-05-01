@@ -84,6 +84,7 @@ void Ast_free(AstNode *node) {
     List_free(&node->print_stmt.values, 0);
     break;
   case NODE_NULL:
+  case NODE_NONE:
     break;
   case NODE_BINARY_ARITH:
     Ast_free(node->binary_arith.left);
@@ -237,6 +238,13 @@ void Ast_free(AstNode *node) {
     }
     List_free(&node->union_decl.members, 0);
     break;
+  case NODE_ENUM_DECL:
+    Ast_free(node->enum_decl.name);
+    for (size_t i = 0; i < node->enum_decl.members.len; i++) {
+      Ast_free((AstNode *)node->enum_decl.members.items[i]);
+    }
+    List_free(&node->enum_decl.members, 0);
+    break;
   case NODE_ERROR_DECL:
     Ast_free(node->error_decl.name);
     for (size_t i = 0; i < node->error_decl.members.len; i++) {
@@ -324,6 +332,7 @@ AstNode *Ast_clone(AstNode *node) {
     break;
 
   case NODE_NULL:
+  case NODE_NONE:
     break;
 
   case NODE_VAR:
@@ -490,6 +499,20 @@ AstNode *Ast_clone(AstNode *node) {
                 node->union_decl.placeholders.items[i]);
     copy->union_decl.is_frozen = node->union_decl.is_frozen;
     copy->union_decl.is_export = node->union_decl.is_export;
+    break;
+
+  case NODE_ENUM_DECL:
+    copy->enum_decl.name = Ast_clone(node->enum_decl.name);
+    List_init(&copy->enum_decl.members);
+    for (size_t i = 0; i < node->enum_decl.members.len; i++)
+      List_push(&copy->enum_decl.members,
+                Ast_clone(node->enum_decl.members.items[i]));
+    List_init(&copy->enum_decl.placeholders);
+    for (size_t i = 0; i < node->enum_decl.placeholders.len; i++)
+      List_push(&copy->enum_decl.placeholders,
+                node->enum_decl.placeholders.items[i]);
+    copy->enum_decl.is_frozen = node->enum_decl.is_frozen;
+    copy->enum_decl.is_export = node->enum_decl.is_export;
     break;
 
   case NODE_ERROR_DECL:
@@ -722,6 +745,9 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
     break;
   case NODE_NULL:
     printf("NULL\n");
+    break;
+  case NODE_NONE:
+    printf("NONE\n");
     break;
   case NODE_ERROR_DECL:
     printf("ERROR_DECL: " SV_FMT "\n",
@@ -1026,6 +1052,17 @@ void Ast_print_to_stream(FILE *out, AstNode *node, int indent) {
     printf("MEMBERS:\n");
     for (size_t i = 0; i < node->union_decl.members.len; i++) {
       Ast_print(node->union_decl.members.items[i], indent + 2);
+    }
+    break;
+  case NODE_ENUM_DECL:
+    printf("ENUM_DECL\n");
+    print_indent(indent + 1);
+    printf("NAME:\n");
+    Ast_print(node->enum_decl.name, indent + 2);
+    print_indent(indent + 1);
+    printf("MEMBERS:\n");
+    for (size_t i = 0; i < node->enum_decl.members.len; i++) {
+      Ast_print(node->enum_decl.members.items[i], indent + 2);
     }
     break;
   case NODE_IMPL_DECL:

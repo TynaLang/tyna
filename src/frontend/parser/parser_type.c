@@ -33,8 +33,7 @@ bool parser_add_type_alias(Parser *p, StringView alias, Type *target,
       continue;
 
     if (entry->target != target) {
-      ErrorHandler_report(p->eh, loc,
-                          "Type alias '%.*s' already targets '%s'",
+      ErrorHandler_report(p->eh, loc, "Type alias '%.*s' already targets '%s'",
                           (int)alias.len, alias.data,
                           type_to_name(entry->target));
       return false;
@@ -113,6 +112,75 @@ Type *parser_parse_type_full(Parser *p) {
 
     res = type_get_array(p->type_ctx, elementType,
                          has_fixed_length ? (uint64_t)array_len : 0);
+  } else if (p->current_token.type == TOKEN_LBRACE) {
+    parser_token_advance(p); // consume '{'
+
+    Type *struct_type = xcalloc(1, sizeof(Type));
+    struct_type->kind = KIND_STRUCT;
+    struct_type->name = sv_from_parts("", 0);
+    struct_type->needs_drop = false;
+    struct_type->drop_fn = NULL;
+    List_init(&struct_type->members);
+    List_init(&struct_type->field_drops);
+    List_init(&struct_type->methods);
+    List_init(&struct_type->impls);
+    struct_type->alignment = 0;
+    struct_type->size = 0;
+    struct_type->is_frozen = true;
+    struct_type->is_intrinsic = false;
+
+    size_t current_offset = 0;
+    size_t max_align = 1;
+
+    while (p->current_token.type != TOKEN_RBRACE &&
+           p->current_token.type != TOKEN_EOF) {
+      if (p->current_token.type != TOKEN_IDENT) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected field name in struct type");
+        parser_sync(p);
+        break;
+      }
+
+      StringView field_name = p->current_token.text;
+      parser_token_advance(p);
+
+      if (!parser_expect(p, TOKEN_COLON, "Expected ':' after field name")) {
+        parser_sync(p);
+        continue;
+      }
+
+      Type *field_type = parser_parse_type_full(p);
+      if (!field_type) {
+        parser_sync(p);
+        continue;
+      }
+
+      size_t align =
+          field_type->alignment ? field_type->alignment : field_type->size;
+      if (align == 0)
+        align = 1;
+      current_offset = align_to(current_offset, align);
+
+      char *field_cname = sv_to_cstr(field_name);
+      type_add_member(struct_type, field_cname, field_type, current_offset);
+      free(field_cname);
+
+      current_offset += field_type->size;
+      if (align > max_align)
+        max_align = align;
+
+      if (p->current_token.type == TOKEN_COMMA ||
+          p->current_token.type == TOKEN_SEMI) {
+        parser_token_advance(p);
+      }
+    }
+
+    if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after struct type"))
+      return NULL;
+
+    struct_type->alignment = max_align ? max_align : 1;
+    struct_type->size = align_to(current_offset, struct_type->alignment);
+    res = struct_type;
   } else {
     PrimitiveKind kind = Token_token_to_type(p->current_token.type);
     if (kind != PRIM_UNKNOWN) {

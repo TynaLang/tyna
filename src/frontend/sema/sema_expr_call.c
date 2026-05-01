@@ -136,8 +136,60 @@ ExprInfo sema_check_call(Sema *s, AstNode *node) {
 
     return (ExprInfo){.type = return_type, .category = VAL_RVALUE};
   } else {
-    // For non-var calls (e.g., NODE_STATIC_MEMBER), get return type from
-    // checked expr
+    // For non-var calls (e.g., NODE_STATIC_MEMBER), validate tagged union
+    // variant constructors before returning the resolved enum type.
+    if (node->call.func->tag == NODE_STATIC_MEMBER && func_type &&
+        func_type->kind == KIND_UNION && func_type->is_tagged_union) {
+      Type *parent_type = func_type;
+      Member *variant =
+          type_get_member(parent_type, node->call.func->static_member.member);
+      if (variant) {
+        Type *payload_type = variant->type;
+
+        if (node->call.args.len == 0) {
+          if (payload_type->kind != KIND_PRIMITIVE ||
+              payload_type->data.primitive != PRIM_VOID) {
+            sema_error(s, node, "Enum variant '%.*s' requires a payload",
+                       (int)node->call.func->static_member.member.len,
+                       node->call.func->static_member.member.data);
+          }
+        } else if (node->call.args.len == 1) {
+          AstNode *arg_node = node->call.args.items[0];
+          if (arg_node->tag == NODE_NEW_EXPR &&
+              !arg_node->new_expr.target_type) {
+            Type *target_type = payload_type;
+            if (target_type && target_type->kind == KIND_POINTER) {
+              target_type = target_type->data.pointer_to;
+            }
+            arg_node->new_expr.target_type = target_type;
+          }
+          if (arg_node->tag == NODE_VAR) {
+            Symbol *symbol = sema_resolve(s, arg_node->var.value);
+            if (!symbol) {
+              // Pattern binder in 'is' expressions should not be checked as
+              // a normal argument.
+              return (ExprInfo){.type = parent_type, .category = VAL_RVALUE};
+            }
+          }
+          node->call.args.items[0] = sema_coerce(s, arg_node, payload_type);
+          arg_node = node->call.args.items[0];
+          Type *arg_type = sema_check_expr(s, arg_node).type;
+          if (!type_can_implicitly_cast(payload_type, arg_type)) {
+            sema_error(
+                s, arg_node,
+                "Enum variant payload type mismatch: expected %s, got %s",
+                type_to_name(payload_type), type_to_name(arg_type));
+          }
+        } else {
+          sema_error(
+              s, node,
+              "Enum variant constructor '%.*s' takes at most one payload",
+              (int)node->call.func->static_member.member.len,
+              node->call.func->static_member.member.data);
+        }
+      }
+    }
+
     Type *call_return_type = func_type;
     if (func_type && func_type->kind == KIND_PRIMITIVE &&
         func_type->data.primitive == PRIM_STRING) {

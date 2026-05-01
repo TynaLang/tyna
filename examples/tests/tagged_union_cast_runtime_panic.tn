@@ -1,7 +1,7 @@
 // Read the valid variant first, then explicitly cast the wrong variant.
 let x: i32 | f32;
 x = 123f;
-let ok: i32 = (i32) x;
+let ok: f32 = (f32) x;
 print(ok);
-let y: f32 = (f32) x;
+let y: i32 = (i32) x;
 print(y);

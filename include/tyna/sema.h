@@ -37,6 +37,9 @@ typedef enum {
   BUILTIN_NONE,
   BUILTIN_TYPEOF,
   BUILTIN_FREE,
+  BUILTIN_SOME,
+  BUILTIN_HEAP,
+  BUILTIN_REF,
 } BuiltinKind;
 
 struct Symbol {

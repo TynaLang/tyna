@@ -1,0 +1,56 @@
+import std.array;
+
+pub struct MapEntry<K, V> {
+    key: K;
+    value: V;
+    state: u8;
+}
+
+pub struct Map<K, V> {
+    entries: Array<MapEntry<K, V>>;
+    count: i64;
+}
+
+impl Map<K, V> {
+    pub static fn new(): Map<K, V> {
+        let result: Map<K, V>;
+        result.entries = Array::new();
+        result.count = 0;
+        return result;
+    }
+
+    pub fn set(self: ptr<Map<K, V>>, key: K, value: V): void {
+        let i = 0;
+        while (i < self.entries.len) {
+            let entry = self.entries.data[i];
+            if (entry.key == key) {
+                self.entries.data[i] = MapEntry { key: entry.key, value, state: 1 };
+                return;
+            }
+            i = i + 1;
+        }
+
+        let entry = MapEntry { key, value, state: 1 };
+        self.entries.push(entry);
+        self.count = self.count + 1;
+    }
+
+    pub fn get(self: ptr<Map<K, V>>, key: K): Option<V> {
+        let i = 0;
+        while (i < self.entries.len) {
+            let entry = self.entries.data[i];
+            if (entry.key == key) {
+                return Some(entry.value);
+            }
+            i = i + 1;
+        }
+
+        let result: Option<V>;
+        result.tag = 0;
+        return result;
+    }
+
+    pub fn len(self: Map<K, V>): i64 {
+        return self.count;
+    }
+}
