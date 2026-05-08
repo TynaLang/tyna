@@ -113,7 +113,10 @@ noreturn void panic(const char *msg, ...) {
 char *read_file(const char *filename) {
   FILE *fp = fopen(filename, "rb");
   if (!fp) {
-    perror("Error opening file");
+    char *msg = xmalloc(256);
+    snprintf(msg, 256, "Failed to open file '%s'", filename);
+    perror(msg);
+    free(msg);
     return NULL;
   }
 

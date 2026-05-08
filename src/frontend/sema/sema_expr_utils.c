@@ -5,20 +5,21 @@ Type *sema_find_type_by_name(Sema *s, StringView name) {
     return type_get_string_buffer(s->types);
   }
 
+  for (size_t i = 0; i < s->types->templates.len; i++) {
+    Type *t = s->types->templates.items[i];
+    if (sv_eq(t->name, name) || sv_eq_cstr(name, type_to_name(t)))
+      return t;
+  }
+
   for (size_t i = 0; i < s->types->structs.len; i++) {
     Type *t = s->types->structs.items[i];
     if (sv_eq(t->name, name))
       return t;
   }
+
   for (size_t i = 0; i < s->types->instances.len; i++) {
     Type *t = s->types->instances.items[i];
-    if (sv_eq(t->name, name) || sv_eq_cstr(name, type_to_name(t)))
-      return t;
-  }
-
-  for (size_t i = 0; i < s->types->templates.len; i++) {
-    Type *t = s->types->templates.items[i];
-    if (sv_eq(t->name, name) || sv_eq_cstr(name, type_to_name(t)))
+    if (sv_eq_cstr(name, type_to_name(t)))
       return t;
   }
 
@@ -82,8 +83,8 @@ bool sema_is_writable_address(Sema *s, AstNode *node) {
         arr_type->data.primitive == PRIM_STRING) {
       return false;
     }
-        return arr_type->kind == KIND_POINTER || type_is_array_struct(arr_type) ||
-          type_is_slice_struct(arr_type);
+    return arr_type->kind == KIND_POINTER || type_is_array_struct(arr_type) ||
+           type_is_slice_struct(arr_type);
   }
 
   case NODE_UNARY:

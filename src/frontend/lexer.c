@@ -72,10 +72,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_DEFER;
   else if (sv_eq_cstr(text, "struct"))
     t.type = TOKEN_STRUCT;
-  else if (sv_eq_cstr(text, "union"))
-    t.type = TOKEN_UNION;
-  else if (sv_eq_cstr(text, "enum"))
-    t.type = TOKEN_ENUM;
+  else if (sv_eq_cstr(text, "choice"))
+    t.type = TOKEN_CHOICE;
   else if (sv_eq_cstr(text, "loop"))
     t.type = TOKEN_LOOP;
   else if (sv_eq_cstr(text, "switch"))
@@ -100,12 +98,8 @@ static Token read_identifier(Lexer *l) {
     t.type = TOKEN_IMPL;
   else if (sv_eq_cstr(text, "type"))
     t.type = TOKEN_TYPE;
-  else if (sv_eq_cstr(text, "new"))
-    t.type = TOKEN_NEW;
   else if (sv_eq_cstr(text, "import"))
     t.type = TOKEN_IMPORT;
-  else if (sv_eq_cstr(text, "from"))
-    t.type = TOKEN_FROM;
   else if (sv_eq_cstr(text, "as"))
     t.type = TOKEN_AS;
   else if (sv_eq_cstr(text, "external"))

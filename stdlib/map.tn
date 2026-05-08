@@ -14,7 +14,7 @@ pub struct Map<K, V> {
 impl Map<K, V> {
     pub static fn new(): Map<K, V> {
         let result: Map<K, V>;
-        result.entries = Array::new();
+        result.entries = Array.new();
         result.count = 0;
         return result;
     }
@@ -24,13 +24,13 @@ impl Map<K, V> {
         while (i < self.entries.len) {
             let entry = self.entries.data[i];
             if (entry.key == key) {
-                self.entries.data[i] = MapEntry { key: entry.key, value, state: 1 };
+                self.entries.data[i] = MapEntry { key: entry.key, value: value, state: 1 };
                 return;
             }
             i = i + 1;
         }
 
-        let entry = MapEntry { key, value, state: 1 };
+        let entry = MapEntry { key: key, value: value, state: 1 };
         self.entries.push(entry);
         self.count = self.count + 1;
     }

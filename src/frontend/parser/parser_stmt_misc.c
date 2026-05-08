@@ -79,46 +79,10 @@ static AstNode *parser_parse_import(Parser *p) {
   StringView alias = {NULL, 0};
 
   if (p->current_token.type == TOKEN_LBRACE) {
-    mode = IMPORT_SELECTIVE;
-    parser_token_advance(p); // consume '{'
-
-    while (p->current_token.type != TOKEN_RBRACE &&
-           p->current_token.type != TOKEN_EOF) {
-      if (p->current_token.type != TOKEN_IDENT) {
-        ErrorHandler_report(p->eh, p->current_token.loc,
-                            "Expected identifier in import list");
-        return NULL;
-      }
-
-      ImportSymbol *symbol = xmalloc(sizeof(ImportSymbol));
-      symbol->name = p->current_token.text;
-      symbol->alias = p->current_token.text;
-      parser_token_advance(p);
-
-      if (p->current_token.type == TOKEN_AS) {
-        parser_token_advance(p);
-        if (p->current_token.type != TOKEN_IDENT) {
-          ErrorHandler_report(p->eh, p->current_token.loc,
-                              "Expected identifier after 'as'");
-          free(symbol);
-          return NULL;
-        }
-        symbol->alias = p->current_token.text;
-        parser_token_advance(p);
-      }
-
-      List_push(&symbols, symbol);
-      if (p->current_token.type == TOKEN_COMMA)
-        parser_token_advance(p);
-      else
-        break;
-    }
-
-    if (!parser_expect(p, TOKEN_RBRACE,
-                       "Expected '}' after import symbol list"))
-      return NULL;
-    if (!parser_expect(p, TOKEN_FROM, "Expected 'from' after import list"))
-      return NULL;
+    ErrorHandler_report(p->eh, p->current_token.loc,
+                        "Use 'import module.path.{...};' instead of 'import "
+                        "{...} from module.path'");
+    return NULL;
   }
 
   if (!parser_is_import_path_segment(p->current_token.type)) {
@@ -133,6 +97,47 @@ static AstNode *parser_parse_import(Parser *p) {
   parser_token_advance(p);
   while (p->current_token.type == TOKEN_DOT) {
     parser_token_advance(p);
+    if (p->current_token.type == TOKEN_LBRACE) {
+      mode = IMPORT_SELECTIVE;
+      parser_token_advance(p); // consume '{'
+      while (p->current_token.type != TOKEN_RBRACE &&
+             p->current_token.type != TOKEN_EOF) {
+        if (p->current_token.type != TOKEN_IDENT) {
+          ErrorHandler_report(p->eh, p->current_token.loc,
+                              "Expected identifier in import list");
+          return NULL;
+        }
+
+        ImportSymbol *symbol = xmalloc(sizeof(ImportSymbol));
+        symbol->name = p->current_token.text;
+        symbol->alias = p->current_token.text;
+        parser_token_advance(p);
+
+        if (p->current_token.type == TOKEN_AS) {
+          parser_token_advance(p);
+          if (p->current_token.type != TOKEN_IDENT) {
+            ErrorHandler_report(p->eh, p->current_token.loc,
+                                "Expected identifier after 'as'");
+            free(symbol);
+            return NULL;
+          }
+          symbol->alias = p->current_token.text;
+          parser_token_advance(p);
+        }
+
+        List_push(&symbols, symbol);
+        if (p->current_token.type == TOKEN_COMMA)
+          parser_token_advance(p);
+        else
+          break;
+      }
+
+      if (!parser_expect(p, TOKEN_RBRACE,
+                         "Expected '}' after import symbol list"))
+        return NULL;
+      break;
+    }
+
     if (p->current_token.type == TOKEN_STAR) {
       if (mode == IMPORT_SELECTIVE) {
         ErrorHandler_report(
@@ -156,6 +161,11 @@ static AstNode *parser_parse_import(Parser *p) {
   }
 
   if (p->current_token.type == TOKEN_AS) {
+    if (mode != IMPORT_NAMESPACE) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Alias is only allowed on namespace imports");
+      return NULL;
+    }
     parser_token_advance(p);
     if (p->current_token.type != TOKEN_IDENT) {
       ErrorHandler_report(p->eh, p->current_token.loc,
@@ -286,10 +296,8 @@ AstNode *parser_parse_statement(Parser *p) {
                                 is_external);
   case TOKEN_STRUCT:
     return parser_parse_struct_decl(p, false, is_export);
-  case TOKEN_UNION:
+  case TOKEN_CHOICE:
     return parser_parse_union_decl(p, false, is_export);
-  case TOKEN_ENUM:
-    return parser_parse_enum_decl(p, false, is_export);
   case TOKEN_AT:
     return parser_parse_error_decl(p, is_export);
   case TOKEN_ERROR_KEYWORD:
@@ -303,15 +311,13 @@ AstNode *parser_parse_statement(Parser *p) {
   case TOKEN_FROZEN: {
     parser_token_advance(p);
     if (p->current_token.type != TOKEN_STRUCT &&
-        p->current_token.type != TOKEN_UNION && p->current_token.type != TOKEN_ENUM) {
+        p->current_token.type != TOKEN_CHOICE) {
       ErrorHandler_report(p->eh, p->current_token.loc,
-                          "Expected 'struct', 'union', or 'enum' after 'frozen'");
+                          "Expected 'struct' or 'choice' after 'frozen'");
       return NULL;
     }
     if (p->current_token.type == TOKEN_STRUCT)
       return parser_parse_struct_decl(p, true, is_export);
-    if (p->current_token.type == TOKEN_ENUM)
-      return parser_parse_enum_decl(p, true, is_export);
     return parser_parse_union_decl(p, true, is_export);
   }
   case TOKEN_STATIC: {

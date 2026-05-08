@@ -52,6 +52,30 @@ bool parser_is_generic_call_start(Parser *p) {
   return next.type == TOKEN_LPAREN;
 }
 
+static bool parser_is_generic_type_instantiation_start(Parser *p) {
+  if (p->current_token.type != TOKEN_LT)
+    return false;
+
+  int depth = 0;
+  int lookahead = 1;
+  while (true) {
+    Token t = parser_token_peek(p->lexer, lookahead++);
+    if (t.type == TOKEN_EOF)
+      return false;
+    if (t.type == TOKEN_LT) {
+      depth++;
+    } else if (t.type == TOKEN_GT) {
+      if (depth == 0)
+        break;
+      depth--;
+    }
+  }
+
+  Token next = parser_token_peek(p->lexer, lookahead);
+  return next.type == TOKEN_DOT || next.type == TOKEN_COLON_COLON ||
+         next.type == TOKEN_LBRACKET;
+}
+
 static int parser_is_postfix(Parser *p) {
   Token t = p->current_token;
   if (t.type == TOKEN_LPAREN || t.type == TOKEN_LBRACKET ||
@@ -59,7 +83,8 @@ static int parser_is_postfix(Parser *p) {
       t.type == TOKEN_MINUS_MINUS)
     return 1;
   if (t.type == TOKEN_LT)
-    return parser_is_generic_call_start(p);
+    return parser_is_generic_call_start(p) ||
+           parser_is_generic_type_instantiation_start(p);
   return 0;
 }
 
@@ -178,7 +203,6 @@ static bool token_starts_expression(TokenType type) {
   case TOKEN_TRUE:
   case TOKEN_FALSE:
   case TOKEN_NULL:
-  case TOKEN_NEW:
   case TOKEN_LPAREN:
   case TOKEN_LBRACKET:
   case TOKEN_ERROR_KEYWORD:

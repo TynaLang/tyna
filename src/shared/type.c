@@ -303,13 +303,13 @@ Type *type_get_pointer(TypeContext *ctx, Type *to) {
 }
 
 Type *type_get_named(TypeContext *ctx, StringView name) {
-  for (size_t i = 0; i < ctx->structs.len; i++) {
-    Type *t = ctx->structs.items[i];
+  for (size_t i = 0; i < ctx->templates.len; i++) {
+    Type *t = ctx->templates.items[i];
     if (sv_eq(t->name, name))
       return t;
   }
-  for (size_t i = 0; i < ctx->templates.len; i++) {
-    Type *t = ctx->templates.items[i];
+  for (size_t i = 0; i < ctx->structs.len; i++) {
+    Type *t = ctx->structs.items[i];
     if (sv_eq(t->name, name))
       return t;
   }
@@ -560,6 +560,71 @@ Type *type_resolve_placeholders(TypeContext *ctx, Type *blueprint,
                              template_type->data.template.placeholders, args);
 }
 
+static void type_materialize_struct_instance(TypeContext *ctx, Type *inst) {
+  if (!inst || inst->kind != KIND_STRUCT || !inst->data.instance.from_template)
+    return;
+
+  Type *template_type = inst->data.instance.from_template;
+  if (!template_type || template_type->kind != KIND_TEMPLATE)
+    return;
+
+  if (inst->members.len > 0 || template_type->members.len == 0)
+    return;
+
+  for (size_t i = 0; i < template_type->members.len; i++) {
+    Member *m = template_type->members.items[i];
+    Type *m_type = resolve_placeholder(
+        ctx, m->type, template_type->data.template.placeholders,
+        inst->data.instance.generic_args);
+    type_add_member(inst, m->name, m_type, m->offset);
+  }
+
+  size_t current_offset = 0;
+  size_t max_align = 1;
+  for (size_t i = 0; i < inst->members.len; i++) {
+    Member *m = inst->members.items[i];
+    size_t align = m->type->alignment ? m->type->alignment : m->type->size;
+    if (align == 0)
+      align = 1;
+
+    current_offset = align_to(current_offset, align);
+    m->offset = current_offset;
+    current_offset += m->type->size;
+
+    if (align > max_align)
+      max_align = align;
+  }
+  inst->size = align_to(current_offset, max_align);
+  inst->alignment = max_align;
+
+  if (inst->is_transparent) {
+    Type *payload = type_get_option_payload(inst);
+    if (payload) {
+      inst->size = payload->size;
+      inst->alignment = payload->alignment;
+    }
+  }
+}
+
+void type_materialize_instances_from_template(TypeContext *ctx,
+                                              Type *template_type) {
+  if (!ctx || !template_type || template_type->kind != KIND_TEMPLATE)
+    return;
+
+  for (size_t i = 0; i < ctx->instances.len; i++) {
+    Type *inst = ctx->instances.items[i];
+    if (inst->kind != KIND_STRUCT ||
+        inst->data.instance.from_template != template_type)
+      continue;
+    type_materialize_struct_instance(ctx, inst);
+  }
+}
+
+static void type_initialize_instance(TypeContext *ctx, Type *inst) {
+  (void)ctx;
+  (void)inst;
+}
+
 // Monomorphization engine
 Type *type_get_instance(TypeContext *ctx, Type *template_type, List args) {
   return type_get_instance_fixed(ctx, template_type, args, 0);
@@ -596,8 +661,10 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
             break;
           }
         }
-        if (match)
+        if (match) {
+          type_materialize_struct_instance(ctx, inst);
           return inst;
+        }
       }
     }
   }
@@ -660,6 +727,7 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
     }
   }
 
+  type_initialize_instance(ctx, inst);
   List_push(&ctx->instances, inst);
   return inst;
 }

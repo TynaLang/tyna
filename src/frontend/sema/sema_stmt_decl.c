@@ -127,9 +127,12 @@ void sema_check_var_decl(Sema *s, AstNode *node) {
     actual_type = rhs_info.type;
   }
 
-  // If no explicit type, use inferred type
+  // If no explicit type, use inferred type.
+  // In generic contexts, allow polymorphic inferred types too.
   if (type_needs_inference(decl_type) && actual_type &&
-      type_is_concrete(actual_type)) {
+      (type_is_concrete(actual_type) ||
+       (sema_allows_polymorphic_types(s) &&
+        type_can_be_polymorphic(actual_type)))) {
     decl_type = actual_type;
   }
 

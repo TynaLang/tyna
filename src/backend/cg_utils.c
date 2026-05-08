@@ -64,6 +64,11 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
   case NODE_VAR: {
     CgSym *sym = CGSymbolTable_find(cg->current_scope, node->var.value);
     if (!sym) {
+      fprintf(stderr,
+              "[DEBUG] cg_get_address: undefined variable '%.*s' during "
+              "address-of\n",
+              (int)node->var.value.len, node->var.value.data);
+      CGSymbolTable_debug_dump(cg->current_scope);
       panic("Undefined variable '" SV_FMT "' during address-of",
             SV_ARG(node->var.value));
     }

@@ -66,6 +66,13 @@ impl String {
         return result;
     }
 
+    pub static fn from(src: str): String {
+        let result: String;
+        __tyna_string_new(&result);
+        __tyna_string_push(&result, src);
+        return result;
+    }
+
     pub fn push(self: ptr<String>, piece: str): void {
         __tyna_string_push(self, piece);
     }

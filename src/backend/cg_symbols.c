@@ -1,4 +1,5 @@
 #include "cg_internal.h"
+#include <stdio.h>
 
 void CGSymbolTable_init(CgSymtab *t, CgSymtab *parent) {
   t->parent = parent;
@@ -35,6 +36,19 @@ CgSym *CGSymbolTable_find(CgSymtab *t, StringView name) {
     t = t->parent;
   }
   return NULL;
+}
+
+void CGSymbolTable_debug_dump(CgSymtab *t) {
+  int depth = 0;
+  while (t) {
+    fprintf(stderr, "[DEBUG] CGSymbolTable scope %d:\n", depth);
+    for (size_t i = 0; i < t->symbols.len; i++) {
+      CgSym *s = t->symbols.items[i];
+      fprintf(stderr, "[DEBUG]   %.*s\n", (int)s->name.len, s->name.data);
+    }
+    depth++;
+    t = t->parent;
+  }
 }
 
 static void cg_free_symbol_table(CgSymtab *t) {

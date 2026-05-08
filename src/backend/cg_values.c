@@ -409,13 +409,47 @@ LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
     panic("Field expression object has no resolved type");
   }
 
+  // If a type name was used directly in field access, treat it like a static
+  // member access rather than a runtime object field. This covers expressions
+  // such as `TokenKind.EOF` where `TokenKind` is a tagged union type name.
+  if (obj_node->tag == NODE_VAR &&
+      !CGSymbolTable_find(cg->current_scope, obj_node->var.value)) {
+    Type *parent_type = obj_node->resolved_type;
+    if (parent_type && parent_type->kind == KIND_UNION &&
+        parent_type->is_tagged_union) {
+      Member *variant = type_get_member(parent_type, node->field.field);
+      if (variant) {
+        LLVMTypeRef union_ty = cg_type_get_llvm(cg, parent_type);
+        LLVMValueRef tmp =
+            LLVMBuildAlloca(cg->builder, union_ty, "tagged_union_tmp");
+        LLVMValueRef tag_ptr = LLVMBuildStructGEP2(cg->builder, union_ty, tmp,
+                                                   0, "tagged_union_tag_ptr");
+        int variant_index = -1;
+        for (size_t i = 0; i < parent_type->members.len; i++) {
+          if (parent_type->members.items[i] == variant) {
+            variant_index = (int)i;
+            break;
+          }
+        }
+        if (variant_index < 0)
+          variant_index = 0;
+        LLVMBuildStore(
+            cg->builder,
+            LLVMConstInt(LLVMInt64TypeInContext(cg->context), variant_index, 0),
+            tag_ptr);
+        return LLVMBuildLoad2(cg->builder, union_ty, tmp, "tagged_union_val");
+      }
+    }
+  }
+
   Type *owner = obj_type;
   Member *m = type_get_member(obj_type, node->field.field);
   if (!m && obj_type->kind == KIND_UNION) {
     m = type_find_union_field(obj_type, node->field.field, &owner);
   }
   if (!m)
-    panic("Field not found");
+    panic("Field '%.*s' not found on type %s", (int)node->field.field.len,
+          node->field.field.data, type_to_name(obj_type));
   if (!m->type) {
     panic("Field member has no type");
   }

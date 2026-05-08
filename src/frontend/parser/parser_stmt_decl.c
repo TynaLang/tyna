@@ -238,8 +238,7 @@ AstNode *parser_parse_fn_decl(Parser *p, bool is_static, bool is_export,
   Token ident = p->current_token;
   Location loc = ident.loc;
 
-  if (p->current_token.type != TOKEN_IDENT &&
-      p->current_token.type != TOKEN_NEW) {
+  if (p->current_token.type != TOKEN_IDENT) {
     ErrorHandler_report(p->eh, p->current_token.loc, "Expected function name");
     return NULL;
   }
@@ -358,6 +357,36 @@ AstNode *parser_parse_struct_decl(Parser *p, bool is_frozen, bool is_export) {
   }
 
   if (placeholders.len > 0) {
+    Type *template_type = type_get_template(p->type_ctx, name_token.text);
+    if (!template_type) {
+      template_type = xcalloc(1, sizeof(Type));
+      template_type->kind = KIND_TEMPLATE;
+      template_type->name = name_token.text;
+      template_type->size = 0;
+      template_type->alignment = 0;
+      template_type->fixed_array_len = 0;
+      template_type->needs_drop = false;
+      template_type->drop_fn = NULL;
+      template_type->is_frozen = false;
+      template_type->is_intrinsic = false;
+      template_type->is_transparent = false;
+      template_type->is_tagged_union = false;
+      List_init(&template_type->members);
+      List_init(&template_type->field_drops);
+      List_init(&template_type->methods);
+      List_init(&template_type->impls);
+      List_init(&template_type->data.template.placeholders);
+      List_init(&template_type->data.template.fields);
+      List_push(&p->type_ctx->templates, template_type);
+    }
+
+    if (template_type->data.template.placeholders.len == 0) {
+      for (size_t i = 0; i < placeholders.len; i++) {
+        List_push(&template_type->data.template.placeholders,
+                  placeholders.items[i]);
+      }
+    }
+
     parser_placeholder_scope_push(p);
     for (size_t i = 0; i < placeholders.len; i++) {
       StringView placeholder_name = *(StringView *)placeholders.items[i];
@@ -554,11 +583,129 @@ AstNode *parser_parse_error_decl(Parser *p, bool is_export) {
 }
 
 AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
-  ErrorHandler_report(
-      p->eh, p->current_token.loc,
-      "Error: Raw unions are deprecated. Use enum or type alias.");
-  parser_token_advance(p); // consume 'union'
-  parser_sync(p);
+  Token keyword = p->current_token;
+  if (keyword.type == TOKEN_UNION) {
+    ErrorHandler_report(
+        p->eh, p->current_token.loc,
+        "Error: Raw unions are deprecated. Use enum or type alias.");
+    parser_token_advance(p); // consume 'union'
+    parser_sync(p);
+    return NULL;
+  }
+
+  Location loc = p->current_token.loc;
+  parser_token_advance(p); // consume 'choice'
+
+  Token name_token = p->current_token;
+  if (!parser_expect(p, TOKEN_IDENT, "Expected union name"))
+    return NULL;
+  AstNode *name_node = AstNode_new_var(name_token.text, name_token.loc);
+
+  List placeholders;
+  List_init(&placeholders);
+  if (p->current_token.type == TOKEN_LT) {
+    parser_token_advance(p);
+    while (p->current_token.type != TOKEN_GT &&
+           p->current_token.type != TOKEN_EOF) {
+      if (p->current_token.type != TOKEN_IDENT) {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected placeholder name");
+        break;
+      }
+      StringView *pl = xmalloc(sizeof(StringView));
+      *pl = p->current_token.text;
+      List_push(&placeholders, pl);
+      parser_token_advance(p);
+      if (p->current_token.type == TOKEN_COMMA)
+        parser_token_advance(p);
+    }
+    if (!parser_expect(p, TOKEN_GT, "Expected '>' after placeholders")) {
+      List_free(&placeholders, 1);
+      return NULL;
+    }
+  }
+
+  if (placeholders.len > 0) {
+    parser_placeholder_scope_push(p);
+    for (size_t i = 0; i < placeholders.len; i++) {
+      StringView placeholder_name = *(StringView *)placeholders.items[i];
+      parser_add_placeholder(p, placeholder_name);
+    }
+  }
+
+  if (!parser_expect(p, TOKEN_LBRACE, "Expected '{' after union name"))
+    goto union_decl_error;
+
+  List members;
+  List_init(&members);
+
+  while (p->current_token.type != TOKEN_RBRACE &&
+         p->current_token.type != TOKEN_EOF) {
+    bool is_static = false;
+    if (p->current_token.type == TOKEN_STATIC) {
+      is_static = true;
+      parser_token_advance(p);
+    }
+
+    if (p->current_token.type == TOKEN_FN) {
+      AstNode *fn = parser_parse_fn_decl(p, is_static, false, false, false);
+      if (fn) {
+        List_push(&members, fn);
+      } else {
+        parser_sync(p);
+      }
+      continue;
+    }
+
+    Location mem_loc = p->current_token.loc;
+    Token mem_ident = p->current_token;
+    if (!parser_expect(p, TOKEN_IDENT, "Expected variant name")) {
+      parser_sync(p);
+      continue;
+    }
+
+    Type *variant_type = type_get_primitive(p->type_ctx, PRIM_VOID);
+    if (p->current_token.type == TOKEN_COLON) {
+      parser_token_advance(p);
+      variant_type = parser_parse_type_full(p);
+      if (!variant_type) {
+        parser_sync(p);
+        continue;
+      }
+    }
+
+    if (p->current_token.type == TOKEN_SEMI ||
+        p->current_token.type == TOKEN_COMMA) {
+      parser_token_advance(p);
+    } else if (p->current_token.type != TOKEN_RBRACE) {
+      if (!parser_expect(p, TOKEN_SEMI,
+                         "Expected ';' or ',' after union variant")) {
+        parser_sync(p);
+        continue;
+      }
+    }
+
+    AstNode *mem_name = AstNode_new_var(mem_ident.text, mem_ident.loc);
+    AstNode *mem_decl =
+        AstNode_new_var_decl(mem_name, NULL, variant_type, 0, false, mem_loc);
+    List_push(&members, mem_decl);
+  }
+
+  if (!parser_expect(p, TOKEN_RBRACE, "Expected '}' after union members"))
+    goto union_decl_error;
+
+  if (placeholders.len > 0) {
+    parser_placeholder_scope_pop(p);
+  }
+
+  return AstNode_new_union_decl(name_node, members, placeholders, is_frozen,
+                                is_export, loc);
+
+union_decl_error:
+  if (placeholders.len > 0) {
+    parser_placeholder_scope_pop(p);
+  }
+  List_free(&placeholders, 1);
   return NULL;
 }
 

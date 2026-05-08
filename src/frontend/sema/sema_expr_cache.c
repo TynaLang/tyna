@@ -4,6 +4,29 @@ static ExprInfo ExprInfo_rvalue(Type *type) {
   return (ExprInfo){.type = type, .category = VAL_RVALUE};
 }
 
+static ExprInfo sema_check_generic_type(Sema *s, AstNode *node) {
+  ExprInfo base_info = sema_check_expr_cache(s, node->generic_type.base);
+  Type *base_type = base_info.type;
+  if (!base_type) {
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE};
+  }
+
+  if (base_type->kind != KIND_TEMPLATE) {
+    sema_error(s, node, "Type '%s' is not generic", type_to_name(base_type));
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE};
+  }
+
+  Type *instantiated =
+      type_get_instance(s->types, base_type, node->generic_type.generic_args);
+  if (!instantiated) {
+    return (ExprInfo){.type = type_get_primitive(s->types, PRIM_UNKNOWN),
+                      .category = VAL_RVALUE};
+  }
+  return (ExprInfo){.type = instantiated, .category = VAL_RVALUE};
+}
+
 static ExprInfo expr_info_for_cached_node(Sema *s, AstNode *node, Type *type) {
   if (!node)
     return ExprInfo_rvalue(type);
@@ -85,6 +108,9 @@ ExprInfo sema_check_expr_cache(Sema *s, AstNode *node) {
     break;
   case NODE_FIELD:
     info = sema_check_field(s, node);
+    break;
+  case NODE_GENERIC_TYPE:
+    info = sema_check_generic_type(s, node);
     break;
   case NODE_INDEX:
     info = sema_check_index(s, node);

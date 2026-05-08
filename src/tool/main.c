@@ -1,6 +1,8 @@
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "tyna/ast.h"
 #include "tyna/ast_dump.h"
@@ -11,6 +13,39 @@
 #include "tyna/runner.h"
 #include "tyna/sema.h"
 #include "tyna/utils.h"
+
+static char *find_stdlib_path(const char *start_dir) {
+  if (!start_dir || start_dir[0] == '\0')
+    return NULL;
+
+  char dir[PATH_MAX];
+  strncpy(dir, start_dir, PATH_MAX);
+  dir[PATH_MAX - 1] = '\0';
+
+  while (true) {
+    char candidate[PATH_MAX + 16];
+    size_t dir_len = strlen(dir);
+    if (dir_len + sizeof("/stdlib/std.tn") >= sizeof(candidate))
+      break;
+    snprintf(candidate, sizeof(candidate), "%s/stdlib/std.tn", dir);
+    if (access(candidate, R_OK) == 0)
+      return xstrdup(candidate);
+
+    if (strcmp(dir, "/") == 0)
+      break;
+
+    char *slash = strrchr(dir, '/');
+    if (!slash)
+      break;
+    if (slash == dir) {
+      dir[1] = '\0';
+    } else {
+      *slash = '\0';
+    }
+  }
+
+  return NULL;
+}
 
 static Module *module_find_by_name(Sema *sema, StringView name) {
   for (size_t i = 0; i < sema->modules.len; i++) {
@@ -108,7 +143,9 @@ int main(int argc, char **argv) {
   sema_prime_types(&sema_temp);
   sema_finish(&sema_temp);
 
-  const char *std_path = "stdlib/std.tn";
+  char *resolved_std_path = find_stdlib_path(entry_dir);
+  const char *std_path =
+      resolved_std_path ? resolved_std_path : "stdlib/std.tn";
   const char *std_src = read_file(std_path);
   AstNode *std_ast = NULL;
   ErrorHandler std_eh;
@@ -124,6 +161,8 @@ int main(int argc, char **argv) {
       ErrorHandler_free(&std_eh);
       free(entry_dir);
       type_context_free(type_ctx);
+      if (resolved_std_path)
+        free(resolved_std_path);
       return 1;
     }
   }
@@ -164,6 +203,8 @@ int main(int argc, char **argv) {
         if (ast_out != stdout)
           fclose(ast_out);
         type_context_free(type_ctx);
+        if (resolved_std_path)
+          free(resolved_std_path);
         return 1;
       }
       ErrorHandler_free(&std_eh);
@@ -214,6 +255,8 @@ int main(int argc, char **argv) {
     if (ast_out != stdout)
       fclose(ast_out);
     type_context_free(type_ctx);
+    if (resolved_std_path)
+      free(resolved_std_path);
     return 1;
   }
 
@@ -266,5 +309,7 @@ int main(int argc, char **argv) {
   if (ast_out != stdout) {
     fclose(ast_out);
   }
+  if (resolved_std_path)
+    free(resolved_std_path);
   return 0;
 }

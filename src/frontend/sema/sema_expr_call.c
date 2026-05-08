@@ -22,6 +22,12 @@ ExprInfo sema_check_call(Sema *s, AstNode *node) {
   }
 
   if (sema_try_resolve_method_call(s, node)) {
+    if (node->call.func->tag != NODE_VAR) {
+      return (ExprInfo){
+          .type = type_get_primitive(s->types, PRIM_UNKNOWN),
+          .category = VAL_RVALUE,
+      };
+    }
     return sema_check_call(s, node);
   }
 
@@ -29,6 +35,9 @@ ExprInfo sema_check_call(Sema *s, AstNode *node) {
   Type *func_type = func_info.type;
   if (func_type->kind == KIND_PRIMITIVE &&
       func_type->data.primitive == PRIM_UNKNOWN) {
+    if (node->call.func->tag != NODE_VAR) {
+      sema_error(s, node, "Call to undefined function or unresolved method");
+    }
     return (ExprInfo){
         .type = type_get_primitive(s->types, PRIM_UNKNOWN),
         .category = VAL_RVALUE,

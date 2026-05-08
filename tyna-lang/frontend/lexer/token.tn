@@ -1,0 +1,34 @@
+import frontend.source.location;
+
+pub choice TokenKind {
+    // Literals
+    Identifier,
+    StringLiteral,
+    IntLiteral,
+    FloatLiteral,
+    
+    // Operators
+    Plus, Minus, Star, Slash,
+    Equals, EqualsEquals, Bang,
+    Less, LessEqual, Greater, GreaterEqual,
+    And, Or,
+    
+    // Punctuation
+    LeftParen, RightParen,
+    LeftBrace, RightBrace,
+    LeftBracket, RightBracket,
+    Comma, Colon, Semicolon, Arrow,
+    
+    // Keywords
+    Fn, Let, Mut, Return, If, Else, While, For, 
+    Struct, Choice, Type, Impl,
+    
+    // Meta
+    EOF,
+}
+
+pub struct Token {
+    kind: TokenKind,    
+    lexeme: String,     
+    span: SourceSpan, 
+}

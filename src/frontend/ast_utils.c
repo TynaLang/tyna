@@ -158,6 +158,10 @@ void Ast_free(AstNode *node) {
   case NODE_FIELD:
     Ast_free(node->field.object);
     break;
+  case NODE_GENERIC_TYPE:
+    Ast_free(node->generic_type.base);
+    List_free(&node->generic_type.generic_args, 0);
+    break;
   case NODE_RETURN_STMT:
     Ast_free(node->return_stmt.expr);
     List_free(&node->return_stmt.symbols_to_drop, 0);
@@ -404,6 +408,14 @@ AstNode *Ast_clone(AstNode *node) {
     List_init(&copy->call.generic_args);
     for (size_t i = 0; i < node->call.generic_args.len; i++)
       List_push(&copy->call.generic_args, node->call.generic_args.items[i]);
+    break;
+
+  case NODE_GENERIC_TYPE:
+    copy->generic_type.base = Ast_clone(node->generic_type.base);
+    List_init(&copy->generic_type.generic_args);
+    for (size_t i = 0; i < node->generic_type.generic_args.len; i++)
+      List_push(&copy->generic_type.generic_args,
+                node->generic_type.generic_args.items[i]);
     break;
 
   case NODE_NEW_EXPR:

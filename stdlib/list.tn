@@ -1,0 +1,23 @@
+import array;
+
+pub struct List<T> {
+    data: ptr<T>;
+    len: i64;
+    cap: i64;
+}
+
+impl List<T> {
+    pub static fn new(): List<T> {
+        let result: List<T>;
+        __tyna_array_new(&result as ptr<Array<u8>>, sizeof(T));
+        return result;
+    }
+
+    pub fn len(self: List<T>): i64 {
+        return self.len;
+    }
+
+    pub fn push(self: ptr<List<T>>, value: T): void {
+        __tyna_array_push(self as ptr<Array<u8>>, &value as ptr<void>, sizeof(T));
+    }
+}

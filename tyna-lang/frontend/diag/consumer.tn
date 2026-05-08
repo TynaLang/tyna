@@ -1,0 +1,15 @@
+import frontend.diag.engine;
+
+// An interface for outputting diagnostics.
+// The CLI will implement this to print ANSI colors to the terminal.
+// The LSP will implement this to print JSON to stdout.
+choice DiagnosticConsumer {
+    Terminal,
+    LSP,
+}
+
+impl DiagnosticConsumer {
+    fn emit(self: *DiagnosticConsumer, engine: *DiagEngine) {
+        // Iterates and prints all diagnostics in the engine
+    }
+}

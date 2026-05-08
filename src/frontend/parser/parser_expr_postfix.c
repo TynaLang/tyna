@@ -120,21 +120,45 @@ static bool parser_is_identifier_like(TokenType type) {
          type == TOKEN_RETURN || type == TOKEN_IF || type == TOKEN_ELSE ||
          type == TOKEN_IMPORT || type == TOKEN_EXTERNAL ||
          type == TOKEN_ERROR_KEYWORD || type == TOKEN_ERRORS ||
-         type == TOKEN_IS || type == TOKEN_NEW || type == TOKEN_DEFER ||
-         type == TOKEN_STRUCT || type == TOKEN_UNION || type == TOKEN_SWITCH ||
-         type == TOKEN_CASE || type == TOKEN_FOR || type == TOKEN_WHILE ||
-         type == TOKEN_LOOP || type == TOKEN_IN || type == TOKEN_BREAK ||
-         type == TOKEN_CONTINUE || type == TOKEN_FROZEN ||
-         type == TOKEN_STATIC || type == TOKEN_IMPL || type == TOKEN_TYPE ||
-         type == TOKEN_TYPE_INT || type == TOKEN_TYPE_STR ||
-         type == TOKEN_TYPE_BOOLEAN || type == TOKEN_TYPE_CHAR ||
-         type == TOKEN_TYPE_FLOAT || type == TOKEN_TYPE_I8 ||
-         type == TOKEN_TYPE_I16 || type == TOKEN_TYPE_I32 ||
-         type == TOKEN_TYPE_I64 || type == TOKEN_TYPE_U8 ||
-         type == TOKEN_TYPE_U16 || type == TOKEN_TYPE_U32 ||
-         type == TOKEN_TYPE_U64 || type == TOKEN_TYPE_F32 ||
-         type == TOKEN_TYPE_F64 || type == TOKEN_TYPE_VOID ||
-         type == TOKEN_TRUE || type == TOKEN_FALSE || type == TOKEN_NULL;
+         type == TOKEN_IS || type == TOKEN_DEFER || type == TOKEN_STRUCT ||
+         type == TOKEN_UNION || type == TOKEN_SWITCH || type == TOKEN_CASE ||
+         type == TOKEN_FOR || type == TOKEN_WHILE || type == TOKEN_LOOP ||
+         type == TOKEN_IN || type == TOKEN_BREAK || type == TOKEN_CONTINUE ||
+         type == TOKEN_FROZEN || type == TOKEN_STATIC || type == TOKEN_IMPL ||
+         type == TOKEN_TYPE || type == TOKEN_TYPE_INT ||
+         type == TOKEN_TYPE_STR || type == TOKEN_TYPE_BOOLEAN ||
+         type == TOKEN_TYPE_CHAR || type == TOKEN_TYPE_FLOAT ||
+         type == TOKEN_TYPE_I8 || type == TOKEN_TYPE_I16 ||
+         type == TOKEN_TYPE_I32 || type == TOKEN_TYPE_I64 ||
+         type == TOKEN_TYPE_U8 || type == TOKEN_TYPE_U16 ||
+         type == TOKEN_TYPE_U32 || type == TOKEN_TYPE_U64 ||
+         type == TOKEN_TYPE_F32 || type == TOKEN_TYPE_F64 ||
+         type == TOKEN_TYPE_VOID || type == TOKEN_TRUE || type == TOKEN_FALSE ||
+         type == TOKEN_NULL || type == TOKEN_FROM;
+}
+
+static bool parser_is_generic_type_instantiation_start(Parser *p) {
+  if (p->current_token.type != TOKEN_LT)
+    return false;
+
+  int depth = 0;
+  int lookahead = 1;
+  while (true) {
+    Token t = parser_token_peek(p->lexer, lookahead++);
+    if (t.type == TOKEN_EOF)
+      return false;
+    if (t.type == TOKEN_LT) {
+      depth++;
+    } else if (t.type == TOKEN_GT) {
+      if (depth == 0)
+        break;
+      depth--;
+    }
+  }
+
+  Token next = parser_token_peek(p->lexer, lookahead);
+  return next.type == TOKEN_DOT || next.type == TOKEN_COLON_COLON ||
+         next.type == TOKEN_LBRACKET;
 }
 
 static AstNode *parser_parse_field(Parser *p, AstNode *expr) {
@@ -180,6 +204,10 @@ AstNode *parser_make_postfix(Parser *p, AstNode *expr) {
     if (parser_is_generic_call_start(p)) {
       List generic_args = parser_parse_generic_type_args(p);
       return parser_parse_call(p, expr, generic_args);
+    }
+    if (parser_is_generic_type_instantiation_start(p)) {
+      List generic_args = parser_parse_generic_type_args(p);
+      return AstNode_new_generic_type(expr, generic_args, expr->loc);
     }
     return expr;
   case TOKEN_LBRACE: {

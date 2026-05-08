@@ -1,9 +1,18 @@
 struct SourceLocation {
     file: FileId,
-    offset: u32, // Byte offset from the start of the file
+    offset: u32, 
 }
 
 struct SourceSpan {
     start: SourceLocation,
     end: SourceLocation,
+}
+
+impl SourceSpan {
+    fn empty(): SourceSpan {
+        return SourceSpan {
+            start: SourceLocation { file: FileId { id: 0 }, offset: 0 },
+            end: SourceLocation { file: FileId { id: 0 }, offset: 0 },
+        };
+    }
 }

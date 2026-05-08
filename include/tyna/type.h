@@ -120,6 +120,9 @@ Type *type_get_array(TypeContext *ctx, Type *element_type,
 Type *type_resolve_placeholders(TypeContext *ctx, Type *blueprint,
                                 Type *template_type, List args);
 
+void type_materialize_instances_from_template(TypeContext *ctx,
+                                              Type *template_type);
+
 // Member Management
 Member *type_get_member(Type *type, StringView name);
 Member *type_find_union_field(Type *type, StringView name, Type **out_owner);
@@ -147,5 +150,6 @@ Type *type_get_option_payload(Type *t);
 bool type_is_heap_type(Type *t);
 bool type_is_ref_type(Type *t);
 bool type_is_heap_or_ref(Type *t);
+bool type_is_list_struct(Type *type);
 
 #endif // TYNA_TYPE_H

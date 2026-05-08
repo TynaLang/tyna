@@ -1,0 +1,51 @@
+import frontend.source.manager;
+import frontend.source.id;
+import frontend.diag.engine;
+import frontend.diag.consumer;
+import frontend.lexer.main;
+import frontend.parser.main;
+import frontend.sema.context;
+
+struct Driver {
+    source_mgr: heap<SourceManager>,
+    diag: heap<DiagEngine>,
+}
+
+impl Driver {
+    fn new(): heap<Driver> {
+        let sm = SourceManager.new();
+        return *Driver {
+            source_mgr: sm,
+            diag: DiagEngine.new(sm),
+        };
+    }
+
+    fn run(self: *Driver, path: str) {
+        self.compile_file(path);
+    }
+
+    fn compile_file(self: *Driver, path: str) {
+        // 1. Source Management
+        let file_id = self.source_mgr.load_file(path, "main");
+        
+        // 2. Lexing
+        let lexer = Lexer.new(self.source_mgr, file_id);
+        let parser = Parser.new(lexer);
+        
+        // 3. Parsing
+        let program = parser.parse_program(file_id);
+        
+        if (self.diag.has_errors()) { return; }
+        
+        // 4. Semantic Analysis
+        let sema = SemaContext.new(self.source_mgr, self.diag);
+        
+        for (stmt in program.statements) {
+            sema.check_decl(stmt);
+        }
+        
+        if (self.diag.has_errors()) { return; }
+        
+        // 5. Backend (C or LLVM goes here)
+    }
+}

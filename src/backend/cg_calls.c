@@ -17,6 +17,19 @@ static bool cg_is_error_print_method(StringView name) {
   return name.len > prefix_len && memcmp(name.data, prefix, prefix_len) == 0;
 }
 
+static StringView cg_mangle_method_name(StringView owner, StringView method) {
+  if (owner.len == 0)
+    return method;
+
+  char buf[512];
+  int len = snprintf(buf, sizeof(buf), "_TZN%zu%.*s%zu%.*s", owner.len,
+                     (int)owner.len, owner.data, method.len, (int)method.len,
+                     method.data);
+  char *heap = xmalloc(len + 1);
+  memcpy(heap, buf, len + 1);
+  return sv_from_parts(heap, len);
+}
+
 static LLVMValueRef cg_get_error_field_value(Codegen *cg,
                                              LLVMValueRef error_ptr,
                                              Type *error_type, Member *member) {
@@ -496,7 +509,7 @@ LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
     if (param_types)
       free(param_types);
     free(args);
-    return LLVMBuildLoad2(cg->builder, struct_ty, obj_ptr, "new_value");
+    return obj_ptr;
   }
 
   if (node->new_expr.field_inits.len > 0) {
@@ -521,7 +534,7 @@ LLVMValueRef cg_new_expr(Codegen *cg, AstNode *node) {
     }
   }
 
-  return LLVMBuildLoad2(cg->builder, struct_ty, obj_ptr, "new_value");
+  return obj_ptr;
 }
 
 LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
@@ -539,7 +552,68 @@ LLVMValueRef cg_call_expr(Codegen *cg, AstNode *node) {
              node->call.func->static_member.member.data);
     fn_name = sv_from_cstr(static_member_name_buf);
   } else {
-    panic("Function calls must be by name");
+    fprintf(stderr, "[DEBUG] cg_call_expr: unexpected call target tag %d\n",
+            node->call.func->tag);
+    if (node->call.func->tag == NODE_FIELD) {
+      AstNode *field_object = node->call.func->field.object;
+      StringView object_name = sv_from_parts("", 0);
+      if (field_object->tag == NODE_VAR) {
+        object_name = field_object->var.value;
+      }
+      fprintf(stderr,
+              "[DEBUG]   field object tag %d, object '%.*s', member '%.*s'\n",
+              field_object->tag, (int)object_name.len, object_name.data,
+              (int)node->call.func->field.field.len,
+              node->call.func->field.field.data);
+      if (field_object->tag == NODE_VAR) {
+        StringView plain_name = node->call.func->field.field;
+        CgFunc *fn = cg_find_function(cg, plain_name);
+        if (fn) {
+          fn_name = plain_name;
+        } else {
+          Type *owner_type = field_object->resolved_type;
+          StringView owner_candidates[2];
+          size_t owner_count = 0;
+          if (owner_type) {
+            owner_candidates[owner_count++] =
+                sv_from_cstr(type_to_name(owner_type));
+          }
+          if (object_name.len > 0) {
+            owner_candidates[owner_count++] = object_name;
+          }
+          for (size_t i = 0; i < owner_count; i++) {
+            StringView mangled_name = cg_mangle_method_name(
+                owner_candidates[i], node->call.func->field.field);
+            fprintf(stderr, "[DEBUG]   trying mangled field call %.*s\n",
+                    (int)mangled_name.len, mangled_name.data);
+            fn = cg_find_function(cg, mangled_name);
+            if (fn) {
+              fn_name = mangled_name;
+              break;
+            }
+          }
+        }
+      }
+    } else if (node->call.func->tag == NODE_STATIC_MEMBER) {
+      fprintf(stderr, "[DEBUG]   static member parent '%.*s', member '%.*s'\n",
+              (int)node->call.func->static_member.parent.len,
+              node->call.func->static_member.parent.data,
+              (int)node->call.func->static_member.member.len,
+              node->call.func->static_member.member.data);
+    }
+    if (fn_name.len == 0) {
+      if (node->call.func->tag == NODE_FIELD) {
+        AstNode *field_object = node->call.func->field.object;
+        StringView object_name = sv_from_parts("", 0);
+        if (field_object && field_object->tag == NODE_VAR) {
+          object_name = field_object->var.value;
+        }
+        panic("Unresolved call target '%.*s.%.*s'", (int)object_name.len,
+              object_name.data, (int)node->call.func->field.field.len,
+              node->call.func->field.field.data);
+      }
+      panic("Function calls must be by name");
+    }
   }
 
   if (sv_eq(fn_name, sv_from_cstr("typeof"))) {

@@ -1,0 +1,49 @@
+import std.list;
+import frontend.source.manager;
+import frontend.source.id;
+import frontend.source.location;
+import frontend.lexer.main;
+import frontend.lexer.token.{Token, TokenKind};
+import frontend.parser.ast;
+
+struct Parser {
+    lexer: heap<Lexer>,
+
+    current: Token,
+    previous: Token,
+}
+
+impl Parser {
+    fn new(lexer: heap<Lexer>): heap<Parser> {
+        let p = *Parser {
+            lexer: lexer,
+            current: Token::empty(),
+            previous: Token::empty(),
+        };
+        p.advance();
+        return p;
+    }
+
+    fn advance(self: *Parser) {
+        self.previous = self.current;
+        self.current = self.lexer.next_token();
+    }
+
+    fn parse_program(self: *Parser, file_id: FileId): Program {
+        let stmts = List<heap<Stmt>>.new();
+
+        while self.current.kind != TokenKind.EOF {
+            let stmt = self.parse_statement();
+            stmts.push(stmt);
+        }
+
+        return Program {
+            file_id: file_id,
+            statements: stmts,
+        };
+    }
+
+    fn parse_statement(self: *Parser): heap<Stmt> {
+        return *Stmt.Block { span: SourceSpan.empty(), stmts: List<heap<Stmt>>.new() };
+    }
+}

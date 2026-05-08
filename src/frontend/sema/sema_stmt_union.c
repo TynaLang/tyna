@@ -1,5 +1,19 @@
 #include "sema_internal.h"
 
+static bool sema_function_decl_has_self_param(AstNode *fn_decl) {
+  if (!fn_decl || fn_decl->tag != NODE_FUNC_DECL ||
+      fn_decl->func_decl.params.len == 0) {
+    return false;
+  }
+
+  AstNode *first_param = fn_decl->func_decl.params.items[0];
+  if (!first_param || first_param->tag != NODE_PARAM)
+    return false;
+  if (!first_param->param.name || first_param->param.name->tag != NODE_VAR)
+    return false;
+  return sv_eq_cstr(first_param->param.name->var.value, "self");
+}
+
 void sema_check_union_decl(Sema *s, AstNode *node) {
   StringView name = node->union_decl.name->var.value;
   Symbol *existing = sema_resolve(s, name);
@@ -63,8 +77,10 @@ void sema_check_union_decl(Sema *s, AstNode *node) {
       method_sym->name = method_name;
       method_sym->original_name = original_name;
       method_sym->type = mem->func_decl.return_type;
-      method_sym->kind =
-          mem->func_decl.is_static ? SYM_STATIC_METHOD : SYM_METHOD;
+      bool has_self_param = sema_function_decl_has_self_param(mem);
+      method_sym->kind = (mem->func_decl.is_static || !has_self_param)
+                             ? SYM_STATIC_METHOD
+                             : SYM_METHOD;
       method_sym->value = mem;
       List_push(&t->methods, method_sym);
 

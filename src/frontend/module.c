@@ -81,12 +81,52 @@ static char *path_from_import(const char *import_name,
               strlen(normalized + base_len + 1) + 1);
     }
 
+    char unresolved[PATH_MAX];
     if (!has_ext)
-      snprintf(pathbuf, sizeof(pathbuf), "%s/%s.tn", dir, normalized);
+      snprintf(unresolved, sizeof(unresolved), "%s/%s.tn", dir, normalized);
     else
-      snprintf(pathbuf, sizeof(pathbuf), "%s/%s", dir, normalized);
+      snprintf(unresolved, sizeof(unresolved), "%s/%s", dir, normalized);
+
+    char *search_dir = xstrdup(dir);
+    while (true) {
+      if (!has_ext)
+        snprintf(pathbuf, sizeof(pathbuf), "%s/%s.tn", search_dir, normalized);
+      else
+        snprintf(pathbuf, sizeof(pathbuf), "%s/%s", search_dir, normalized);
+
+      if (access(pathbuf, R_OK) == 0) {
+        char resolved[PATH_MAX];
+        if (realpath(pathbuf, resolved)) {
+          free(search_dir);
+          free(base);
+          free(dir);
+          free(normalized);
+          return xstrdup(resolved);
+        }
+        free(search_dir);
+        free(base);
+        free(dir);
+        free(normalized);
+        return xstrdup(pathbuf);
+      }
+
+      if (strcmp(search_dir, "/") == 0 || strcmp(search_dir, ".") == 0)
+        break;
+
+      char *slash = strrchr(search_dir, '/');
+      if (!slash)
+        break;
+      if (slash == search_dir) {
+        search_dir[1] = '\0';
+      } else {
+        *slash = '\0';
+      }
+    }
+
+    free(search_dir);
     free(base);
     free(dir);
+    return xstrdup(unresolved);
   }
 
   free(normalized);

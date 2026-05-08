@@ -1,5 +1,38 @@
 #include "sema_internal.h"
 
+static bool sema_try_instantiate_generic_method_call(Sema *s, AstNode *expr,
+                                                     Type *target) {
+  if (!expr || expr->tag != NODE_CALL || !expr->call.func ||
+      expr->call.func->tag != NODE_VAR || !target ||
+      target->kind != KIND_STRUCT || !target->data.instance.from_template) {
+    return false;
+  }
+
+  Symbol *symbol = sema_resolve(s, expr->call.func->var.value);
+  if (!symbol ||
+      (symbol->kind != SYM_METHOD && symbol->kind != SYM_STATIC_METHOD) ||
+      !symbol->value || symbol->value->tag != NODE_FUNC_DECL) {
+    return false;
+  }
+
+  Type *return_type = symbol->type;
+  if (!return_type || return_type->kind != KIND_STRUCT ||
+      !return_type->data.instance.from_template ||
+      return_type->data.instance.from_template !=
+          target->data.instance.from_template) {
+    return false;
+  }
+
+  Symbol *concrete_method =
+      sema_instantiate_method_symbol(s, target, symbol, expr->call.func);
+  if (!concrete_method || concrete_method == symbol) {
+    return false;
+  }
+
+  expr->call.func->var.value = concrete_method->name;
+  return true;
+}
+
 static bool sema_is_fixed_to_dynamic_array_conversion(Type *to, Type *from) {
   if (!to || !from)
     return false;
@@ -22,6 +55,10 @@ static bool sema_is_fixed_to_dynamic_array_conversion(Type *to, Type *from) {
 AstNode *sema_coerce(Sema *s, AstNode *expr, Type *target) {
   ExprInfo expr_info = sema_check_expr(s, expr);
   Type *expr_type = expr_info.type;
+  if (sema_try_instantiate_generic_method_call(s, expr, target)) {
+    expr_info = sema_check_expr(s, expr);
+    expr_type = expr_info.type;
+  }
   bool target_is_tagged_union =
       target && target->kind == KIND_UNION && target->is_tagged_union;
 

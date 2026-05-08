@@ -238,7 +238,7 @@ AstNode *parser_parse_primary(Parser *p) {
     if (p->current_token.type == TOKEN_COLON_COLON) {
       parser_token_advance(p);
       Token member = p->current_token;
-      if (member.type == TOKEN_IDENT || member.type == TOKEN_NEW) {
+      if (member.type == TOKEN_IDENT) {
         parser_token_advance(p);
       } else {
         ErrorHandler_report(p->eh, member.loc,

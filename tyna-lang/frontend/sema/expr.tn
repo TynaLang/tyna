@@ -1,0 +1,21 @@
+impl SemaContext {
+    fn check_expr(self: *SemaContext, expr: *Expr): TypeInfo {
+        switch (expr) {
+            Expr.Binary(b) => self.check_binary(b),
+            Expr.Call(c) => self.check_call(c),
+            // ...
+        }
+    }
+    
+    fn check_binary(self: *SemaContext, b: *ExprBinary): TypeInfo {
+        let left_type = self.check_expr(b.left);
+        let right_type = self.check_expr(b.right);
+        
+        if left_type != right_type {
+            // The logic lives HERE in Sema
+            self.diag.error(b.span, "Type mismatch: cannot add '{}' and '{}'", left_type.name, right_type.name);
+        }
+        
+        return left_type;
+    }
+}

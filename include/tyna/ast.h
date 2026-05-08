@@ -73,6 +73,7 @@ enum AstKind {
   NODE_BLOCK,
 
   NODE_FIELD,
+  NODE_GENERIC_TYPE,
   NODE_INDEX,
   NODE_STATIC_MEMBER,
   NODE_STRUCT_DECL,
@@ -319,6 +320,11 @@ struct AstNode {
     } field;
 
     struct {
+      AstNode *base;
+      List generic_args; // List<Type*>
+    } generic_type;
+
+    struct {
       StringView parent;
       StringView member;
     } static_member;
@@ -430,6 +436,8 @@ AstNode *AstNode_new_param(AstNode *name, Type *type, Location loc);
 AstNode *AstNode_new_block(Location loc);
 
 AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc);
+AstNode *AstNode_new_generic_type(AstNode *base, List generic_args,
+                                  Location loc);
 AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc);
 AstNode *AstNode_new_static_member(StringView parent, StringView member,
                                    Location loc);

@@ -233,12 +233,28 @@ Type *parser_parse_type_full(Parser *p) {
         } else {
           Type *template_type = type_get_template(p->type_ctx, name);
           if (!template_type) {
-            res = parser_resolve_named_type(p, name, true);
-            if (!res)
-              res = type_get_union(p->type_ctx, name);
-          } else {
-            res = type_get_instance(p->type_ctx, template_type, args);
+            Type *named = parser_resolve_named_type(p, name, false);
+            if (named && named->kind == KIND_STRUCT && named->members.len == 0 &&
+                !named->is_intrinsic) {
+              named->kind = KIND_TEMPLATE;
+              List_init(&named->methods);
+              List_init(&named->data.template.placeholders);
+              List_init(&named->data.template.fields);
+              List_push(&p->type_ctx->templates, named);
+              template_type = named;
+            }
           }
+          if (!template_type) {
+            template_type = xcalloc(1, sizeof(Type));
+            template_type->kind = KIND_TEMPLATE;
+            template_type->name = name;
+            List_init(&template_type->members);
+            List_init(&template_type->methods);
+            List_init(&template_type->data.template.placeholders);
+            List_init(&template_type->data.template.fields);
+            List_push(&p->type_ctx->templates, template_type);
+          }
+          res = type_get_instance(p->type_ctx, template_type, args);
         }
       } else {
         if (sv_eq_cstr(name, "Error")) {

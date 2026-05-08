@@ -20,6 +20,20 @@ static Symbol *sema_resolve_module_path_symbol(Sema *s, AstNode *node) {
   return module_lookup_export(parent->module, node->field.field);
 }
 
+static Type *sema_unwrap_heap_or_ref_type(Type *type) {
+  if (!type || !type_is_heap_or_ref(type))
+    return type;
+
+  Member *value_member = type_get_member(type, sv_from_parts("value", 5));
+  if (!value_member || !value_member->type)
+    return type;
+
+  if (value_member->type->kind == KIND_POINTER)
+    return value_member->type->data.pointer_to;
+
+  return type;
+}
+
 ExprInfo sema_check_field(Sema *s, AstNode *node) {
   if (!node->field.field.data || !node->field.field.len) {
     sema_error(s, node, "Member access requires a non-empty member name");
@@ -66,7 +80,8 @@ ExprInfo sema_check_field(Sema *s, AstNode *node) {
     };
   }
 
-  while (obj_type->kind == KIND_POINTER) {
+  obj_type = sema_unwrap_heap_or_ref_type(obj_type);
+  while (obj_type && obj_type->kind == KIND_POINTER) {
     obj_type = obj_type->data.pointer_to;
     if (!obj_type) {
       return (ExprInfo){
@@ -130,7 +145,7 @@ ExprInfo sema_check_field(Sema *s, AstNode *node) {
       StringView lookup_name =
           method->original_name.len ? method->original_name : method->name;
       if (sv_eq(lookup_name, node->field.field)) {
-        if (method->kind == SYM_METHOD) {
+        if (method->kind == SYM_METHOD || method->kind == SYM_STATIC_METHOD) {
           node->resolved_type = method->type;
           return (ExprInfo){.type = method->type, .category = VAL_RVALUE};
         }
@@ -177,11 +192,11 @@ ExprInfo sema_check_static_member(Sema *s, AstNode *node) {
     type = sema_find_type_by_name(s, node->static_member.parent);
   }
 
-  if (!type || (type->kind != KIND_STRUCT && type->kind != KIND_TEMPLATE &&
-                type->kind != KIND_STRING_BUFFER &&
-                !(type->kind == KIND_PRIMITIVE &&
-                  type->data.primitive == PRIM_STRING) &&
-                !(type->kind == KIND_UNION && type->is_tagged_union))) {
+  if (!type ||
+      (type->kind != KIND_STRUCT && type->kind != KIND_TEMPLATE &&
+       type->kind != KIND_STRING_BUFFER &&
+       !(type->kind == KIND_PRIMITIVE && type->data.primitive == PRIM_STRING) &&
+       !(type->kind == KIND_UNION && type->is_tagged_union))) {
     sema_error(s, node, "Undefined type '" SV_FMT "'",
                SV_ARG(node->static_member.parent));
     return (ExprInfo){
@@ -209,6 +224,24 @@ ExprInfo sema_check_static_member(Sema *s, AstNode *node) {
     if (sv_eq(lookup_name, node->static_member.member)) {
       if (method->kind == SYM_STATIC_METHOD) {
         return (ExprInfo){.type = method->type, .category = VAL_RVALUE};
+      }
+    }
+  }
+
+  if (type->kind == KIND_STRUCT && type->data.instance.from_template) {
+    Type *template_type = type->data.instance.from_template;
+    for (size_t i = 0; i < template_type->methods.len; i++) {
+      Symbol *method = template_type->methods.items[i];
+      if (!method)
+        continue;
+      if (!method->original_name.data && !method->name.data)
+        continue;
+      StringView lookup_name =
+          method->original_name.len ? method->original_name : method->name;
+      if (sv_eq(lookup_name, node->static_member.member)) {
+        if (method->kind == SYM_STATIC_METHOD) {
+          return (ExprInfo){.type = method->type, .category = VAL_RVALUE};
+        }
       }
     }
   }

@@ -1,21 +1,33 @@
+import std.fs;
+import std.list;
 import std.map;
+import std.path;
+import std.string;
+
+import source.id;
+import source.location;
 
 struct FileInfo {
     // The actual path on disk (e.g., "src/parser/ast.tn")
     abs_path: str, 
-    
+
     // The module path (e.g., "compiler.parser.ast")
     module_path: str, 
-    
+
     // The text buffer itself. In LSP, this gets replaced on every keystroke.
     content: String, 
-    
+
     // LSP requires tracking versions to discard stale parse trees
     version: u32,    
     
     // Pre-calculated byte offsets where every line starts.
     // Index 0 is always 0. Index 1 is the offset of line 2, etc.
     line_starts: List<u32>, 
+}
+
+struct LineCol {
+    line: u32,
+    col: u32,
 }
 
 struct SourceManager {
@@ -26,13 +38,83 @@ struct SourceManager {
     next_id: u32,
 }
 
-
 impl SourceManager {
     fn new(): heap<SourceManager> {
         return *SourceManager {
-            files: Map.new(),
-            file_map: Map.new(),
+            files: Map<u32, FileInfo>.new(),
+            file_map: Map<str, FileId>.new(),
             next_id: 0,
         };
+    }
+
+    fn get_line_col(self: *SourceManager, span: SourceSpan): LineCol {
+        let info_opt: Option<FileInfo> = self.files.get(span.start.file.id);
+        if (info_opt.tag == 1) {
+            let info: FileInfo = info_opt.value;
+            let line_starts: List<u32> = info.line_starts;
+            
+            let low: i64 = 0;
+            let high: i64 = line_starts.len - 1;
+            let line_idx: i64 = 0;
+
+            while (low <= high) {
+                let mid: i64 = (low + high) / 2;
+                if (line_starts.data[mid] <= span.start.offset) {
+                    line_idx = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            }
+
+            let line: u32 = (line_idx + 1) as u32;
+            let col: u32 = span.start.offset - line_starts.data[line_idx] + 1;
+            let result: LineCol;
+            result.line = line;
+            result.col = col;
+            return result;
+        }
+        let result: LineCol;
+        result.line = 0;
+        result.col = 0;
+        return result;
+    }
+
+    fn load_file(self: *SourceManager, path: str, module_path: str): FileId {
+        let existing: Option<FileId> = self.file_map.get(path);
+        if (existing.tag == 1) {
+            return existing.value;
+        }
+
+        let source_text: str = fs.read_to_string(path) else {
+            panic("Failed to load source file");
+        };
+
+        let content: String = String::from(source_text);
+        let line_starts: List<u32> = List<u32>.new();
+        line_starts.push(0);
+
+        let text_len: i64 = source_text.len();
+        let i: i64 = 0;
+        while (i < text_len) {
+            if (source_text.slice(i, i + 1) == "\n") {
+                line_starts.push((i + 1) as u32);
+            }
+            i = i + 1;
+        }
+
+        let file_id: FileId = FileId { id: self.next_id };
+        self.next_id = self.next_id + 1;
+
+        let info: FileInfo;
+        info.abs_path = path;
+        info.module_path = module_path;
+        info.content = content;
+        info.version = 0;
+        info.line_starts = line_starts;
+
+        self.files.set(file_id.id, info);
+        self.file_map.set(path, file_id);
+        return file_id;
     }
 }

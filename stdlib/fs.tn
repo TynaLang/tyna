@@ -103,7 +103,7 @@ pub fn rename(frm: str, to: str): void ! FsError {
 }
 
 pub fn write_atomic(target_path: str, content: str): void ! FsError {
-    let dir = path::dir(target_path);
+    let dir = path.dir(target_path);
     create_dir_all(dir)?;
 
     let err: i32 = 0;

@@ -377,6 +377,14 @@ AstNode *AstNode_new_index(AstNode *expr, AstNode *index, Location loc) {
   return node;
 }
 
+AstNode *AstNode_new_generic_type(AstNode *base, List generic_args,
+                                  Location loc) {
+  AstNode *node = AstNode_new(NODE_GENERIC_TYPE, loc);
+  node->generic_type.base = base;
+  node->generic_type.generic_args = generic_args;
+  return node;
+}
+
 AstNode *AstNode_new_field(AstNode *expr, StringView field, Location loc) {
   AstNode *node = AstNode_new(NODE_FIELD, loc);
   node->field.object = expr;

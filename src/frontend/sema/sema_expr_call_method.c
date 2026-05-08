@@ -1,5 +1,19 @@
 #include "sema_internal.h"
 
+static Type *sema_unwrap_heap_or_ref_type(Type *type) {
+  if (!type || !type_is_heap_or_ref(type))
+    return type;
+
+  Member *value_member = type_get_member(type, sv_from_parts("value", 5));
+  if (!value_member || !value_member->type)
+    return type;
+
+  if (value_member->type->kind == KIND_POINTER)
+    return value_member->type->data.pointer_to;
+
+  return type;
+}
+
 static bool sema_bind_method_alias(Sema *s, Symbol *concrete_method,
                                    AstNode *field_node) {
   if (sema_resolve(s, concrete_method->name)) {
@@ -114,6 +128,29 @@ static bool sema_try_resolve_struct_method(Sema *s, AstNode *node,
   }
 
   return false;
+}
+
+static bool sema_try_resolve_mangled_static_method(Sema *s, AstNode *node,
+                                                   AstNode *field_node,
+                                                   Type *obj_type) {
+  if (!field_node || field_node->tag != NODE_FIELD || !obj_type)
+    return false;
+
+  StringView owner_name = sv_from_cstr(type_to_name(obj_type));
+  StringView mangled_name =
+      sema_mangle_method_name(owner_name, field_node->field.field);
+  Symbol *method = sema_resolve(s, mangled_name);
+  if (!method || method->kind != SYM_STATIC_METHOD) {
+    method = sema_resolve(s, field_node->field.field);
+    if (!method || method->kind != SYM_STATIC_METHOD)
+      return false;
+  }
+
+  if (!sema_bind_method_alias(s, method, field_node))
+    return false;
+
+  node->call.func = AstNode_new_var(method->name, field_node->loc);
+  return true;
 }
 
 static bool sema_try_resolve_static_method(Sema *s, AstNode *node, AstNode *sm,
@@ -242,8 +279,16 @@ bool sema_try_resolve_method_call(Sema *s, AstNode *node) {
       orig_obj_type = type_get_primitive(s->types, PRIM_UNKNOWN);
     }
     Type *obj_type = orig_obj_type;
+    if (field_node->field.object && field_node->field.object->tag == NODE_VAR) {
+      fprintf(stderr,
+              "[SEMA DEBUG] method call object '%.*s' -> type '%s'\n",
+              (int)field_node->field.object->var.value.len,
+              field_node->field.object->var.value.data,
+              type_to_name(obj_type));
+    }
 
-    while (obj_type->kind == KIND_POINTER) {
+    obj_type = sema_unwrap_heap_or_ref_type(obj_type);
+    while (obj_type && obj_type->kind == KIND_POINTER) {
       obj_type = obj_type->data.pointer_to;
     }
 
@@ -263,6 +308,11 @@ bool sema_try_resolve_method_call(Sema *s, AstNode *node) {
                                            obj_type, orig_obj_type)) {
           return true;
         }
+      }
+
+      if (sema_try_resolve_mangled_static_method(s, node, field_node,
+                                                 obj_type)) {
+        return true;
       }
     }
 
