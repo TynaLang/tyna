@@ -1,24 +1,25 @@
 import frontend.source.manager;
 import frontend.source.id;
+import frontend.source.location;
 import frontend.lexer.token.{Token, TokenKind};
 
 struct Lexer {
-    source_mgr: *SourceManager,
+    source_mgr: ref<SourceManager>,
     file_id: FileId,
     
     offset: u32, 
 }
 
 impl Lexer {
-    fn new(source_mgr: *SourceManager, file_id: FileId): heap<Lexer> {
-        return *Lexer {
+    fn new(source_mgr: ref<SourceManager>, file_id: FileId): heap<Lexer> {
+        return heap Lexer {
             source_mgr: source_mgr,
             file_id: file_id,
             offset: 0,
         };
     }
 
-    fn next_token(self: *Lexer): Token {
+    fn next_token(self: ref<Lexer>): Token {
         // ... lexing logic ...
         return Token { kind: TokenKind.EOF, lexeme: String.new(), span: SourceSpan.empty() };
     }

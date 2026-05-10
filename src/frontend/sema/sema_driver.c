@@ -62,8 +62,10 @@ void sema_prime_types(Sema *s) {
     type_add_member(list_tpl, "len", type_get_primitive(s->types, PRIM_I64), 8);
     type_add_member(list_tpl, "cap", type_get_primitive(s->types, PRIM_I64),
                     16);
+    type_add_member(list_tpl, "elem_size",
+                    type_get_primitive(s->types, PRIM_I64), 24);
 
-    list_tpl->size = 24;
+    list_tpl->size = 32;
     List_push(&s->types->templates, list_tpl);
   }
 
@@ -163,6 +165,35 @@ void sema_prime_types(Sema *s) {
 
   if (!sema_resolve(s, ref_tpl->name)) {
     sema_define(s, ref_tpl->name, ref_tpl, true, (Location){0, 0});
+  }
+
+  Type *mut_tpl = type_get_template(s->types, sv_from_parts("mut", 3));
+  if (!mut_tpl) {
+    mut_tpl = xcalloc(1, sizeof(Type));
+    mut_tpl->kind = KIND_TEMPLATE;
+    mut_tpl->name = sv_from_parts("mut", 3);
+    mut_tpl->is_intrinsic = true;
+    mut_tpl->is_frozen = false;
+    List_init(&mut_tpl->members);
+    List_init(&mut_tpl->methods);
+    List_init(&mut_tpl->data.template.placeholders);
+    List_init(&mut_tpl->data.template.fields);
+
+    StringView *t_placeholder = xmalloc(sizeof(StringView));
+    *t_placeholder = sv_from_parts("T", 1);
+    List_push(&mut_tpl->data.template.placeholders, t_placeholder);
+
+    Type *t_type = xcalloc(1, sizeof(Type));
+    t_type->kind = KIND_TEMPLATE;
+    t_type->name = *t_placeholder;
+
+    type_add_member(mut_tpl, "value", t_type, 0);
+    mut_tpl->size = 0;
+    List_push(&s->types->templates, mut_tpl);
+  }
+
+  if (!sema_resolve(s, mut_tpl->name)) {
+    sema_define(s, mut_tpl->name, mut_tpl, true, (Location){0, 0});
   }
 }
 

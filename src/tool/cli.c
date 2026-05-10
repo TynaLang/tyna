@@ -12,6 +12,8 @@ void cli_init_options(CliOptions *opts) {
   opts->show_help = false;
   opts->ast_output_path = NULL;
   opts->input_path = NULL;
+  opts->jit_argc = 0;
+  opts->jit_argv = NULL;
 }
 
 void cli_print_usage(const char *prog_name) {
@@ -36,8 +38,24 @@ bool cli_parse_options(int argc, char **argv, CliOptions *opts) {
     return false;
   }
 
+  bool after_separator = false;
   for (int i = 1; i < argc; i++) {
     const char *arg = argv[i];
+
+    // Handle -- separator: everything after -- is passed to the JIT
+    if (!after_separator && strcmp(arg, "--") == 0) {
+      after_separator = true;
+      continue;
+    }
+
+    if (after_separator) {
+      // Collect JIT arguments
+      int idx = opts->jit_argc++;
+      opts->jit_argv = realloc(opts->jit_argv, sizeof(char *) * opts->jit_argc);
+      opts->jit_argv[idx] = argv[i];
+      continue;
+    }
+
     if (strcmp(arg, "-c") == 0 || strcmp(arg, "--compile") == 0) {
       opts->mode = MODE_COMPILE;
     } else if (strcmp(arg, "-j") == 0 || strcmp(arg, "--jit") == 0) {

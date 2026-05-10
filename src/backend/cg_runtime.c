@@ -68,6 +68,7 @@ void cg_register_runtime_functions(Codegen *cg) {
       // String Runtime (Pass str_ty, buf_ptr_ty, i8_ptr directly)
       {"__tyna_str_equals", i32_ty, false, 2, {str_ty, str_ty}},
       {"__tyna_str_hash", i64_ty, false, 1, {str_ty}},
+      {"strlen", i64_ty, false, 1, {i8_ptr}},
       {"__tyna_as_c_ptr", i8_ptr, false, 1, {str_ty}},
       {"__tyna_str_len", i64_ty, false, 1, {str_ty}},
       {"__tyna_str_slice", str_ty, false, 3, {str_ty, i64_ty, i64_ty}},

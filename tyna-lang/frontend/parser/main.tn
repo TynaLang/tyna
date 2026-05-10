@@ -15,7 +15,7 @@ struct Parser {
 
 impl Parser {
     fn new(lexer: heap<Lexer>): heap<Parser> {
-        let p = *Parser {
+        let p = heap Parser {
             lexer: lexer,
             current: Token::empty(),
             previous: Token::empty(),
@@ -24,15 +24,15 @@ impl Parser {
         return p;
     }
 
-    fn advance(self: *Parser) {
+    fn advance(self: ref<Parser>) {
         self.previous = self.current;
         self.current = self.lexer.next_token();
     }
 
-    fn parse_program(self: *Parser, file_id: FileId): Program {
+    fn parse_program(self: ref<Parser>, file_id: FileId): Program {
         let stmts = List<heap<Stmt>>.new();
 
-        while self.current.kind != TokenKind.EOF {
+        while (self.current.kind != TokenKind.EOF) {
             let stmt = self.parse_statement();
             stmts.push(stmt);
         }
@@ -43,7 +43,7 @@ impl Parser {
         };
     }
 
-    fn parse_statement(self: *Parser): heap<Stmt> {
-        return *Stmt.Block { span: SourceSpan.empty(), stmts: List<heap<Stmt>>.new() };
+    fn parse_statement(self: ref<Parser>): heap<Stmt> {
+        return Stmt.Block { span: SourceSpan.empty(), stmts: List<heap<Stmt>>.new() };
     }
 }

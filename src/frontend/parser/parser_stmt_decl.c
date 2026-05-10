@@ -672,6 +672,17 @@ AstNode *parser_parse_union_decl(Parser *p, bool is_frozen, bool is_export) {
         parser_sync(p);
         continue;
       }
+    } else if (p->current_token.type == TOKEN_LPAREN) {
+      parser_token_advance(p);
+      variant_type = parser_parse_type_full(p);
+      if (!variant_type) {
+        parser_sync(p);
+        continue;
+      }
+      if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after variant type")) {
+        parser_sync(p);
+        continue;
+      }
     }
 
     if (p->current_token.type == TOKEN_SEMI ||

@@ -5,7 +5,8 @@
 typedef struct {
   void *data;
   int64_t len;
-  int64_t cap;
+  int64_t cap; // total bytes allocated
+  int64_t elem_size; // size of each element in bytes
 } TynaArray;
 
 void __tyna_array_new(TynaArray *out, int64_t elem_size) {
@@ -16,8 +17,9 @@ void __tyna_array_new(TynaArray *out, int64_t elem_size) {
     elem_size = 1;
 
   out->len = 0;
-  out->cap = 4;
-  out->data = malloc((size_t)(out->cap * elem_size));
+  out->elem_size = elem_size;
+  out->cap = 4 * elem_size;
+  out->data = malloc((size_t)(out->cap));
 }
 
 void __tyna_array_with_capacity(TynaArray *out, int64_t cap,
@@ -31,31 +33,39 @@ void __tyna_array_with_capacity(TynaArray *out, int64_t cap,
     elem_size = 1;
 
   out->len = 0;
-  out->cap = cap;
-  out->data = cap > 0 ? malloc((size_t)(cap * elem_size)) : NULL;
+  out->elem_size = elem_size;
+  out->cap = cap * elem_size;
+  out->data = cap > 0 ? malloc((size_t)(out->cap)) : NULL;
 }
 
 void __tyna_array_push(TynaArray *arr, void *element, int64_t elem_size) {
-  if (!arr || !element || elem_size <= 0)
+  (void)elem_size; // unused - elem_size is stored in arr->elem_size
+  if (!arr || !element)
     return;
 
+  int64_t es = arr->elem_size;
+  if (es <= 0)
+    es = 1;
+
   if (arr->cap <= 0) {
-    arr->cap = 4;
-    arr->data = malloc((size_t)(arr->cap * elem_size));
+    arr->cap = 4 * es;
+    arr->data = malloc((size_t)(arr->cap));
     if (!arr->data)
       return;
   }
 
-  if (arr->len >= arr->cap) {
-    arr->cap *= 2;
-    void *resized = realloc(arr->data, (size_t)(arr->cap * elem_size));
+  int64_t used_bytes = arr->len * es;
+  if (used_bytes + es > arr->cap) {
+    int64_t new_cap = arr->cap * 2;
+    void *resized = realloc(arr->data, (size_t)new_cap);
     if (!resized)
       return;
     arr->data = resized;
+    arr->cap = new_cap;
   }
 
-  int8_t *dest = (int8_t *)arr->data + (arr->len * elem_size);
-  memcpy(dest, element, (size_t)elem_size);
+  int8_t *dest = (int8_t *)arr->data + used_bytes;
+  memcpy(dest, element, (size_t)es);
   arr->len++;
 }
 

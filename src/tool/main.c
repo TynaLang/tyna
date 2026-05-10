@@ -56,6 +56,73 @@ static Module *module_find_by_name(Sema *sema, StringView name) {
   return NULL;
 }
 
+static bool path_ends_with(const char *path, const char *suffix) {
+  size_t path_len = strlen(path);
+  size_t suffix_len = strlen(suffix);
+  if (suffix_len > path_len)
+    return false;
+  return strcmp(path + (path_len - suffix_len), suffix) == 0;
+}
+
+static Module *module_find_by_import_path(Sema *sema, StringView import_path) {
+  char path_buf[PATH_MAX];
+  if (import_path.len + 1 >= sizeof(path_buf))
+    return NULL;
+
+  memcpy(path_buf, import_path.data, import_path.len);
+  path_buf[import_path.len] = '\0';
+
+  if (import_path.len > 0 && path_buf[import_path.len - 1] == ';') {
+    path_buf[import_path.len - 1] = '\0';
+  }
+
+  char *suffix = NULL;
+  if (strncmp(path_buf, "std.", 4) == 0) {
+    char *rest = path_buf + 4;
+    size_t rest_len = strlen(rest);
+    bool has_tn = rest_len >= 3 && strcmp(rest + rest_len - 3, ".tn") == 0;
+    for (char *p = rest; *p; ++p) {
+      if (*p == '.')
+        *p = '/';
+    }
+    const char *prefix = "/stdlib/";
+    size_t prefix_len = strlen(prefix);
+    size_t suffix_len = prefix_len + rest_len + (has_tn ? 0 : 3) + 1;
+    suffix = xmalloc(suffix_len);
+    if (has_tn) {
+      snprintf(suffix, suffix_len, "%s%s", prefix, rest);
+    } else {
+      snprintf(suffix, suffix_len, "%s%s.tn", prefix, rest);
+    }
+  } else {
+    size_t path_len = strlen(path_buf);
+    bool has_tn = path_len >= 3 && strcmp(path_buf + path_len - 3, ".tn") == 0;
+    for (char *p = path_buf; *p; ++p) {
+      if (*p == '.')
+        *p = '/';
+    }
+    size_t suffix_len = 1 + path_len + (has_tn ? 0 : 3) + 1;
+    suffix = xmalloc(suffix_len);
+    if (has_tn) {
+      snprintf(suffix, suffix_len, "/%s", path_buf);
+    } else {
+      snprintf(suffix, suffix_len, "/%s.tn", path_buf);
+    }
+  }
+
+  for (size_t i = 0; i < sema->modules.len; i++) {
+    Module *module = sema->modules.items[i];
+    if (module->abs_path && path_ends_with(module->abs_path, suffix)) {
+      free(suffix);
+      return module;
+    }
+  }
+
+  free(suffix);
+
+  return module_find_by_name(sema, import_path);
+}
+
 static bool module_is_visited(List *visited, Module *module) {
   for (size_t i = 0; i < visited->len; i++) {
     if (visited->items[i] == module)
@@ -75,10 +142,10 @@ static void codegen_module_recursive(Codegen *cg, Sema *sema, Module *module,
       AstNode *child = module->ast->ast_root.children.items[i];
       if (child->tag != NODE_IMPORT)
         continue;
-
-      Module *dep = module_find_by_name(sema, child->import.alias);
-      if (!dep)
+      Module *dep = module_find_by_import_path(sema, child->import.path);
+      if (!dep) {
         continue;
+      }
 
       codegen_module_recursive(cg, sema, dep, visited);
     }
@@ -274,6 +341,8 @@ int main(int argc, char **argv) {
   }
   List_free(&visited_modules, 0);
 
+  Codegen_emit_instantiated_functions(cg);
+
   Codegen_global(cg, user_ast);
   Codegen_program(cg, user_ast);
 
@@ -290,9 +359,19 @@ int main(int argc, char **argv) {
     printf("Emitted output.ll\n");
     break;
 
-  case MODE_JIT:
-    Runner_jit(cg);
+  case MODE_JIT: {
+    // Build argv with the program name as argv[0], followed by JIT args
+    int jit_argc = 1 + opts.jit_argc;
+    char **jit_argv = malloc(sizeof(char *) * (jit_argc + 1));
+    jit_argv[0] = (char *)opts.input_path;
+    for (int i = 0; i < opts.jit_argc; i++) {
+      jit_argv[1 + i] = opts.jit_argv[i];
+    }
+    jit_argv[jit_argc] = NULL;
+    Runner_jit_with_args(cg, jit_argc, jit_argv);
+    free(jit_argv);
     break;
+  }
 
   case MODE_COMPILE:
   default:

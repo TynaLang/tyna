@@ -9,7 +9,7 @@ choice DiagnosticConsumer {
 }
 
 impl DiagnosticConsumer {
-    fn emit(self: *DiagnosticConsumer, engine: *DiagEngine) {
+    fn emit(self: ref<DiagnosticConsumer>, engine: ref<DiagEngine>) {
         // Iterates and prints all diagnostics in the engine
     }
 }

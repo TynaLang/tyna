@@ -224,8 +224,58 @@ AstNode *parser_parse_primary(Parser *p) {
       return AstNode_new_sizeof_expr(target_type, t.loc);
     }
 
-    if (t.type == TOKEN_IDENT &&
-        (sv_eq_cstr(t.text, "heap") || sv_eq_cstr(t.text, "ref"))) {
+    if (t.type == TOKEN_IDENT && sv_eq_cstr(t.text, "heap")) {
+      // heap allocation: heap Type { ... } or heap Type(args)
+      // Parse the target type and create a heap<T> instance directly
+      Type *target_type = parser_parse_type_full(p);
+      if (!target_type)
+        return NULL;
+
+      // Create a heap<T> type for the target
+      Type *heap_template = type_get_template(p->type_ctx, sv_from_parts("heap", 4));
+      if (heap_template) {
+        List heap_args;
+        List_init(&heap_args);
+        List_push(&heap_args, target_type);
+        target_type = type_get_instance(p->type_ctx, heap_template, heap_args);
+        List_free(&heap_args, 0);
+      }
+
+      List args;
+      List_init(&args);
+      List field_inits;
+      List_init(&field_inits);
+
+      if (p->current_token.type == TOKEN_LPAREN) {
+        parser_token_advance(p);
+        if (p->current_token.type != TOKEN_RPAREN) {
+          while (1) {
+            AstNode *arg = parser_parse_expression(p, 0);
+            if (!arg)
+              return NULL;
+            List_push(&args, arg);
+            if (p->current_token.type == TOKEN_COMMA)
+              parser_token_advance(p);
+            else
+              break;
+          }
+        }
+        if (!parser_expect(p, TOKEN_RPAREN,
+                           "Expected ')' after constructor args"))
+          return NULL;
+      } else if (p->current_token.type == TOKEN_LBRACE) {
+        if (!parser_parse_struct_literal_fields(p, &field_inits))
+          return NULL;
+      } else {
+        ErrorHandler_report(p->eh, p->current_token.loc,
+                            "Expected '(' or '{' after heap allocation type");
+        return NULL;
+      }
+
+      return AstNode_new_new_expr(target_type, args, field_inits, t.loc);
+    }
+
+    if (t.type == TOKEN_IDENT && sv_eq_cstr(t.text, "ref")) {
       AstNode *expr = parser_parse_expression(p, 100);
       if (!expr)
         return NULL;
@@ -441,12 +491,23 @@ AstNode *parser_parse_primary(Parser *p) {
     return AstNode_new_unary(OP_ADDR_OF, expr, t.loc);
   }
 
-  case TOKEN_STAR: {
+  case TOKEN_STAR:
+  case TOKEN_POWER: {
     if (parser_peek_is_heap_allocation(p)) {
       Location loc = t.loc;
       Type *target_type = parser_parse_type_full(p);
       if (!target_type)
         return NULL;
+
+      // Create a heap<T> type for the target
+      Type *heap_template = type_get_template(p->type_ctx, sv_from_parts("heap", 4));
+      if (heap_template) {
+        List heap_args;
+        List_init(&heap_args);
+        List_push(&heap_args, target_type);
+        target_type = type_get_instance(p->type_ctx, heap_template, heap_args);
+        List_free(&heap_args, 0);
+      }
 
       List args;
       List_init(&args);
@@ -479,13 +540,7 @@ AstNode *parser_parse_primary(Parser *p) {
         return NULL;
       }
 
-      AstNode *inner =
-          AstNode_new_new_expr(target_type, args, field_inits, loc);
-      List call_args;
-      List_init(&call_args);
-      List_push(&call_args, inner);
-      return AstNode_new_call(AstNode_new_var(sv_from_cstr("heap"), loc),
-                              call_args, loc);
+      return AstNode_new_new_expr(target_type, args, field_inits, loc);
     }
 
     AstNode *expr = parser_parse_expression(p, 100);

@@ -23,8 +23,15 @@ static bool sema_try_instantiate_generic_method_call(Sema *s, AstNode *expr,
     return false;
   }
 
+  Type *owner_type = target;
+  if (symbol->kind == SYM_STATIC_METHOD && owner_type &&
+      type_is_heap_or_ref(owner_type) &&
+      owner_type->data.instance.generic_args.len > 0) {
+    owner_type = owner_type->data.instance.generic_args.items[0];
+  }
+
   Symbol *concrete_method =
-      sema_instantiate_method_symbol(s, target, symbol, expr->call.func);
+      sema_instantiate_method_symbol(s, owner_type, symbol, expr->call.func);
   if (!concrete_method || concrete_method == symbol) {
     return false;
   }

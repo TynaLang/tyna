@@ -3,10 +3,10 @@ import frontend.source.id;
 import frontend.source.location;
 
 choice Stmt {
-    Block {
+    Block ({
         span: SourceSpan,
         stmts: List<heap<Stmt>>,
-    }
+    })
 }
 
 struct Program {

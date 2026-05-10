@@ -1,15 +1,5 @@
 #include <llvm-c/Core.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "cg_internal.h"
-#include "tyna/ast.h"
-#include "tyna/codegen.h"
-#include "tyna/utils.h"
-
-#include <llvm-c/Core.h>
-#include <stdio.h>
+#include <llvm-c/Target.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -31,7 +21,8 @@ static void cg_declare_functions(Codegen *cg, AstNode *root) {
         }
       }
     } else if (node->tag == NODE_IMPL_DECL) {
-      if (type_is_concrete(node->impl_decl.type)) {
+      bool impl_concrete = type_is_concrete(node->impl_decl.type);
+      if (impl_concrete) {
         for (size_t j = 0; j < node->impl_decl.members.len; j++) {
           AstNode *member = node->impl_decl.members.items[j];
           if (member->tag == NODE_FUNC_DECL) {
@@ -63,7 +54,8 @@ static void cg_emit_functions(Codegen *cg, AstNode *root) {
         }
       }
     } else if (node->tag == NODE_IMPL_DECL) {
-      if (type_is_concrete(node->impl_decl.type)) {
+      bool impl_concrete = type_is_concrete(node->impl_decl.type);
+      if (impl_concrete) {
         for (size_t j = 0; j < node->impl_decl.members.len; j++) {
           AstNode *member = node->impl_decl.members.items[j];
           if (member->tag == NODE_FUNC_DECL) {
@@ -73,12 +65,15 @@ static void cg_emit_functions(Codegen *cg, AstNode *root) {
       }
     }
   }
+}
 
+void Codegen_emit_instantiated_functions(Codegen *cg) {
   for (size_t i = 0; i < cg->type_ctx->instantiated_functions.len; i++) {
     AstNode *node = cg->type_ctx->instantiated_functions.items[i];
-    if (node->tag == NODE_FUNC_DECL) {
-      cg_emit_function_body(cg, node);
+    if (node->tag != NODE_FUNC_DECL) {
+      continue;
     }
+    cg_emit_function_body(cg, node);
   }
 }
 
@@ -120,7 +115,10 @@ Codegen *Codegen_new(const char *module_name, TypeContext *type_ctx,
   cg_register_runtime_functions(cg);
 
   LLVMTypeRef i32_ty = LLVMInt32TypeInContext(cg->context);
-  LLVMTypeRef entry_ty = LLVMFunctionType(i32_ty, NULL, 0, 0);
+  LLVMTypeRef argv_ty = LLVMPointerType(
+      LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0), 0);
+  LLVMTypeRef entry_params[2] = {i32_ty, argv_ty};
+  LLVMTypeRef entry_ty = LLVMFunctionType(i32_ty, entry_params, 2, 0);
   LLVMValueRef entry_func = LLVMAddFunction(cg->module, "main", entry_ty);
 
   LLVMBasicBlockRef entry_bb =
@@ -199,8 +197,107 @@ void Codegen_program(Codegen *cg, AstNode *ast_root) {
 
     const char *call_name = is_void ? "" : "ret";
 
-    LLVMValueRef ret_val = LLVMBuildCall2(cg->builder, user_main->type,
-                                          user_main->value, NULL, 0, call_name);
+    LLVMValueRef argc_val = LLVMGetParam(entry_func, 0);
+    LLVMValueRef argv_val = LLVMGetParam(entry_func, 1);
+
+    Type *str_type = type_get_primitive(cg->type_ctx, PRIM_STRING);
+    Type *args_type = type_get_array(cg->type_ctx, str_type, 0);
+    LLVMTypeRef llvm_args_ty = cg_type_get_llvm(cg, args_type);
+    LLVMValueRef args_array =
+        LLVMBuildAlloca(cg->builder, llvm_args_ty, "args");
+    LLVMBuildStore(cg->builder, LLVMConstNull(llvm_args_ty), args_array);
+
+    CgFunc *array_new =
+        cg_find_system_function(cg, sv_from_cstr("__tyna_array_new"));
+    CgFunc *array_push =
+        cg_find_system_function(cg, sv_from_cstr("__tyna_array_push"));
+    CgFunc *strlen_fn = cg_find_system_function(cg, sv_from_cstr("strlen"));
+    if (!array_new || !array_push || !strlen_fn) {
+      panic("Internal error: required runtime helpers for argv conversion are "
+            "missing");
+    }
+
+    const char *data_layout = LLVMGetDataLayout(cg->module);
+    LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+    LLVMTypeRef str_llvm_ty = cg_type_get_llvm(cg, str_type);
+    unsigned long long str_size = LLVMABISizeOfType(td, str_llvm_ty);
+    LLVMDisposeTargetData(td);
+
+    LLVMBuildCall2(
+        cg->builder, array_new->type, array_new->value,
+        (LLVMValueRef[]){
+            args_array,
+            LLVMConstInt(LLVMInt64TypeInContext(cg->context), str_size, 0)},
+        2, "");
+
+    LLVMBasicBlockRef loop_bb =
+        LLVMAppendBasicBlockInContext(cg->context, entry_func, "argv_loop");
+    LLVMBasicBlockRef body_bb =
+        LLVMAppendBasicBlockInContext(cg->context, entry_func, "argv_body");
+    LLVMBasicBlockRef end_bb =
+        LLVMAppendBasicBlockInContext(cg->context, entry_func, "argv_end");
+
+    // Allocate the loop counter in the entry block, not in the loop body.
+    // This prevents the counter from being reset to 0 on every iteration.
+    LLVMValueRef index_ptr = LLVMBuildAlloca(
+        cg->builder, LLVMInt64TypeInContext(cg->context), "argv_i");
+    LLVMBuildStore(cg->builder,
+                   LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+                   index_ptr);
+
+    LLVMBuildBr(cg->builder, loop_bb);
+    LLVMPositionBuilderAtEnd(cg->builder, loop_bb);
+
+    LLVMValueRef idx =
+        LLVMBuildLoad2(cg->builder, LLVMInt64TypeInContext(cg->context),
+                       index_ptr, "argv_idx");
+    LLVMValueRef argc_i64 = LLVMBuildZExt(
+        cg->builder, argc_val, LLVMInt64TypeInContext(cg->context), "argc_i64");
+    LLVMValueRef cond =
+        LLVMBuildICmp(cg->builder, LLVMIntULT, idx, argc_i64, "argv_cond");
+    LLVMBuildCondBr(cg->builder, cond, body_bb, end_bb);
+
+    LLVMPositionBuilderAtEnd(cg->builder, body_bb);
+    LLVMTypeRef argv_elem_ty =
+        LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0);
+    LLVMValueRef argv_ptr = LLVMBuildGEP2(cg->builder, argv_elem_ty, argv_val,
+                                          (LLVMValueRef[]){idx}, 1, "argv_ptr");
+    LLVMValueRef cstr =
+        LLVMBuildLoad2(cg->builder, argv_elem_ty, argv_ptr, "argv_str_ptr");
+    LLVMValueRef len = LLVMBuildCall2(cg->builder, strlen_fn->type,
+                                      strlen_fn->value, &cstr, 1, "argv_len");
+
+    LLVMValueRef str_tmp =
+        LLVMBuildAlloca(cg->builder, str_llvm_ty, "argv_str");
+    LLVMValueRef str_data_ptr = LLVMBuildStructGEP2(
+        cg->builder, str_llvm_ty, str_tmp, 0, "argv_data_ptr");
+    LLVMBuildStore(cg->builder, cstr, str_data_ptr);
+    LLVMValueRef str_len_ptr = LLVMBuildStructGEP2(cg->builder, str_llvm_ty,
+                                                   str_tmp, 1, "argv_len_ptr");
+    LLVMBuildStore(cg->builder, len, str_len_ptr);
+
+    LLVMBuildCall2(
+        cg->builder, array_push->type, array_push->value,
+        (LLVMValueRef[]){
+            args_array, str_tmp,
+            LLVMConstInt(LLVMInt64TypeInContext(cg->context), str_size, 0)},
+        3, "");
+
+    LLVMValueRef next_idx = LLVMBuildAdd(
+        cg->builder, idx,
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), 1, 0), "argv_next");
+    LLVMBuildStore(cg->builder, next_idx, index_ptr);
+    LLVMBuildBr(cg->builder, loop_bb);
+
+    LLVMPositionBuilderAtEnd(cg->builder, end_bb);
+
+    LLVMValueRef args_value =
+        LLVMBuildLoad2(cg->builder, llvm_args_ty, args_array, "argv_array");
+    LLVMValueRef call_args[1] = {args_value};
+
+    LLVMValueRef ret_val =
+        LLVMBuildCall2(cg->builder, user_main->type, user_main->value,
+                       call_args, 1, call_name);
 
     if (!is_void) {
       exit_code = cg_cast_value(cg, ret_val, NULL, i32_ty);

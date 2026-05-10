@@ -53,25 +53,68 @@ Type *parser_parse_type_full(Parser *p) {
   Type *res = NULL;
   int pointer_depth = 0;
   bool saw_const = false;
+  bool saw_mut = false;
   Location const_loc = p->current_token.loc;
+  Location mut_loc = p->current_token.loc;
 
-  while (p->current_token.type == TOKEN_CONST) {
-    saw_const = true;
-    const_loc = p->current_token.loc;
+  while (p->current_token.type == TOKEN_CONST ||
+         (p->current_token.type == TOKEN_IDENT &&
+          sv_eq_cstr(p->current_token.text, "mut"))) {
+    if (p->current_token.type == TOKEN_CONST) {
+      saw_const = true;
+      const_loc = p->current_token.loc;
+    } else {
+      saw_mut = true;
+      mut_loc = p->current_token.loc;
+    }
     parser_token_advance(p);
   }
 
   while (p->current_token.type == TOKEN_STAR) {
     pointer_depth++;
     parser_token_advance(p);
-    while (p->current_token.type == TOKEN_CONST) {
-      saw_const = true;
-      const_loc = p->current_token.loc;
+    while (p->current_token.type == TOKEN_CONST ||
+           (p->current_token.type == TOKEN_IDENT &&
+            sv_eq_cstr(p->current_token.text, "mut"))) {
+      if (p->current_token.type == TOKEN_CONST) {
+        saw_const = true;
+        const_loc = p->current_token.loc;
+      } else {
+        saw_mut = true;
+        mut_loc = p->current_token.loc;
+      }
       parser_token_advance(p);
     }
   }
 
-  if (p->current_token.type == TOKEN_LBRACKET) {
+  if (p->current_token.type == TOKEN_BIT_AND) {
+    parser_token_advance(p);
+    Type *inner_type = parser_parse_type_full(p);
+    if (!inner_type)
+      return NULL;
+
+    Type *ref_template =
+        type_get_template(p->type_ctx, sv_from_parts("ref", 3));
+    if (!ref_template) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Internal error: 'ref' type unavailable");
+      return NULL;
+    }
+
+    List args;
+    List_init(&args);
+    List_push(&args, inner_type);
+    res = type_get_instance(p->type_ctx, ref_template, args);
+    List_free(&args, 0);
+  } else if (p->current_token.type == TOKEN_LPAREN) {
+    parser_token_advance(p);
+    Type *inner_type = parser_parse_type_full(p);
+    if (!inner_type)
+      return NULL;
+    if (!parser_expect(p, TOKEN_RPAREN, "Expected ')' after type"))
+      return NULL;
+    res = inner_type;
+  } else if (p->current_token.type == TOKEN_LBRACKET) {
     parser_token_advance(p);
     Type *elementType = parser_parse_type_full(p);
     if (!elementType)
@@ -234,8 +277,8 @@ Type *parser_parse_type_full(Parser *p) {
           Type *template_type = type_get_template(p->type_ctx, name);
           if (!template_type) {
             Type *named = parser_resolve_named_type(p, name, false);
-            if (named && named->kind == KIND_STRUCT && named->members.len == 0 &&
-                !named->is_intrinsic) {
+            if (named && named->kind == KIND_STRUCT &&
+                named->members.len == 0 && !named->is_intrinsic) {
               named->kind = KIND_TEMPLATE;
               List_init(&named->methods);
               List_init(&named->data.template.placeholders);
@@ -287,6 +330,21 @@ Type *parser_parse_type_full(Parser *p) {
     if (!error_set)
       return NULL;
     res = type_get_result(p->type_ctx, res, error_set);
+  }
+
+  if (saw_mut && res) {
+    Type *mut_template =
+        type_get_template(p->type_ctx, sv_from_parts("mut", 3));
+    if (!mut_template) {
+      ErrorHandler_report(p->eh, p->current_token.loc,
+                          "Internal error: 'mut' type unavailable");
+      return NULL;
+    }
+    List mut_args;
+    List_init(&mut_args);
+    List_push(&mut_args, res);
+    res = type_get_instance(p->type_ctx, mut_template, mut_args);
+    List_free(&mut_args, 0);
   }
 
   if (p->current_token.type == TOKEN_BIT_OR) {

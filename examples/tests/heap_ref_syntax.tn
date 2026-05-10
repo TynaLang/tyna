@@ -1,0 +1,20 @@
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    const a = heap Point { x: 1, y: 2 };
+    const b = ^Point { x: 3, y: 4 };
+
+    let r: ref<Point> = &a;
+    let s: ref<Point> = &b;
+
+    print(a.x);
+    print(a.y);
+    print(b.x);
+    print(b.y);
+
+    print(r.x);
+    print(s.y);
+}

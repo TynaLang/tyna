@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <execinfo.h>
 #include <llvm-c/Core.h>
+#include <llvm-c/Target.h>
 #include <stdlib.h>
 
 #include "cg_internal.h"
@@ -168,6 +169,7 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
     // and cache them. Error payloads are structurally equivalent to structs.
     char buf[512];
     cg_get_struct_name(t, buf, sizeof(buf));
+
     LLVMTypeRef struct_ty = LLVMGetTypeByName2(cg->context, buf);
     if (!struct_ty) {
       struct_ty = LLVMStructCreateNamed(cg->context, buf);
@@ -184,16 +186,78 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
       }
 
       List_push(&cg->struct_types_in_progress, t);
+      
+      // If this struct instance has template placeholders in its generic args
+      // (e.g., MapEntry<K, V>), look for a concrete instance with the same
+      // template and use its members for the LLVM type body. This ensures
+      // correct GEP offsets even when the codegen uses the generic type.
       unsigned count = t->members.len;
-      LLVMTypeRef *fields =
-          xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
-      for (size_t i = 0; i < count; i++) {
-        Member *m = t->members.items[i];
-        fields[i] = cg_type_get_llvm(cg, m->type);
+      LLVMTypeRef *fields = NULL;
+      
+      if (t->data.instance.from_template &&
+          t->data.instance.generic_args.len > 0) {
+        bool has_placeholder = false;
+        for (size_t gi = 0; gi < t->data.instance.generic_args.len; gi++) {
+          Type *arg = (Type *)t->data.instance.generic_args.items[gi];
+          if (arg->kind == KIND_TEMPLATE) { has_placeholder = true; break; }
+        }
+        if (has_placeholder) {
+          // Look for a concrete instance with the same template.
+          // Use the one with the largest size to ensure correct GEP offsets.
+          Type *best_inst = NULL;
+          for (size_t ii = 0; ii < cg->type_ctx->instances.len; ii++) {
+            Type *inst = (Type *)cg->type_ctx->instances.items[ii];
+            if (inst->kind != KIND_STRUCT) continue;
+            if (inst->data.instance.from_template != t->data.instance.from_template) continue;
+            if (inst->data.instance.generic_args.len != t->data.instance.generic_args.len) continue;
+            bool all_concrete = true;
+            for (size_t gi = 0; gi < inst->data.instance.generic_args.len; gi++) {
+              Type *ia = (Type *)inst->data.instance.generic_args.items[gi];
+              if (ia->kind == KIND_TEMPLATE) { all_concrete = false; break; }
+            }
+            if (all_concrete && inst->members.len > 0) {
+              if (!best_inst || inst->size > best_inst->size) {
+                best_inst = inst;
+              }
+            }
+          }
+          if (best_inst) {
+            count = best_inst->members.len;
+            fields = xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
+            for (size_t mi = 0; mi < count; mi++) {
+              Member *m = best_inst->members.items[mi];
+              fields[mi] = cg_type_get_llvm(cg, m->type);
+            }
+          }
+        }
       }
+      
+      if (!fields) {
+        fields = xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
+        for (size_t i = 0; i < count; i++) {
+          Member *m = t->members.items[i];
+          fields[i] = cg_type_get_llvm(cg, m->type);
+        }
+      }
+      
       LLVMStructSetBody(struct_ty, fields, count, false);
       free(fields);
       List_pop(&cg->struct_types_in_progress);
+    } else {
+      // If the struct type already exists but has fewer fields than expected,
+      // it was created before all members were added. Recreate the body.
+      unsigned existing_count = LLVMCountStructElementTypes(struct_ty);
+      if (existing_count < t->members.len) {
+        unsigned count = t->members.len;
+        LLVMTypeRef *fields =
+            xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
+        for (size_t i = 0; i < count; i++) {
+          Member *m = t->members.items[i];
+          fields[i] = cg_type_get_llvm(cg, m->type);
+        }
+        LLVMStructSetBody(struct_ty, fields, count, false);
+        free(fields);
+      }
     }
     return struct_ty;
   }
@@ -383,26 +447,21 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
     }
 
     if (from_kind == LLVMStructTypeKind) {
-      bool is_string_like = false;
       if (from_t && from_t->kind == KIND_PRIMITIVE &&
           from_t->data.primitive == PRIM_STRING) {
-        is_string_like = true;
-      } else if (from_t && from_t->kind == KIND_STRING_BUFFER) {
-        is_string_like = true;
-      } else {
-        unsigned field_count = LLVMCountStructElementTypes(from_ty);
-        if (field_count >= 2) {
-          LLVMTypeRef *fields = malloc(sizeof(LLVMTypeRef) * field_count);
-          LLVMGetStructElementTypes(from_ty, fields);
-          is_string_like = LLVMGetTypeKind(fields[0]) == LLVMPointerTypeKind &&
-                           LLVMGetTypeKind(fields[1]) == LLVMIntegerTypeKind;
-          free(fields);
-        }
-      }
-
-      if (is_string_like) {
         return LLVMBuildExtractValue(cg->builder, value, 0, "string_data_ptr");
       }
+
+      if (from_t && from_t->kind == KIND_STRING_BUFFER) {
+        return LLVMBuildExtractValue(cg->builder, value, 0, "string_data_ptr");
+      }
+
+      // For struct-to-pointer casts, use alloca + bitcast instead of
+      // direct bitcast (which LLVM doesn't allow for struct types).
+      LLVMValueRef tmp =
+          LLVMBuildAlloca(cg->builder, from_ty, "struct_to_ptr_tmp");
+      LLVMBuildStore(cg->builder, value, tmp);
+      return LLVMBuildBitCast(cg->builder, tmp, to_ty, "struct_to_ptr");
     }
 
     return LLVMBuildBitCast(cg->builder, value, to_ty, "bitcasttmp");
@@ -433,7 +492,31 @@ LLVMValueRef cg_cast_value(Codegen *cg, LLVMValueRef value, Type *from_t,
   }
 
   if (from_kind == LLVMStructTypeKind && to_kind == LLVMStructTypeKind) {
-    return LLVMBuildBitCast(cg->builder, value, to_ty, "structbitcasttmp");
+    // Instead of bitcasting (which LLVM doesn't allow between different
+    // struct types), use memcpy to copy the bytes.
+    // Use the LARGER of the two sizes to ensure all data is preserved
+    // when casting between generic and concrete types.
+    LLVMValueRef tmp = LLVMBuildAlloca(cg->builder, to_ty, "structcast_tmp");
+    LLVMBuildStore(cg->builder, LLVMConstNull(to_ty), tmp);
+    LLVMValueRef src = LLVMBuildBitCast(
+        cg->builder,
+        LLVMBuildAlloca(cg->builder, LLVMTypeOf(value), "structcast_src"),
+        LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0), "cast_src");
+    LLVMBuildStore(cg->builder, value, src);
+    LLVMValueRef dst = LLVMBuildBitCast(
+        cg->builder, tmp,
+        LLVMPointerType(LLVMInt8TypeInContext(cg->context), 0), "cast_dst");
+    const char *data_layout = LLVMGetDataLayout(cg->module);
+    LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+    unsigned long long src_size = LLVMABISizeOfType(td, LLVMTypeOf(value));
+    unsigned long long dst_size = LLVMABISizeOfType(td, to_ty);
+    LLVMDisposeTargetData(td);
+    // Use the larger size to ensure all data is preserved
+    unsigned long long copy_size = src_size > dst_size ? src_size : dst_size;
+    LLVMValueRef size_val =
+        LLVMConstInt(LLVMInt64TypeInContext(cg->context), copy_size, 0);
+    LLVMBuildMemCpy(cg->builder, dst, 1, src, 1, size_val);
+    return LLVMBuildLoad2(cg->builder, to_ty, tmp, "structcast_load");
   }
 
   return value;

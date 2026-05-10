@@ -1,5 +1,5 @@
 impl SemaContext {
-    fn check_stmt(self: *SemaContext, stmt: *Stmt) {
+    fn check_stmt(self: ref<SemaContext>, stmt: ref<Stmt>) {
         switch (stmt) {
             Stmt.Return(r) => self.check_return(r),
             Stmt.If(i) => self.check_if(i),

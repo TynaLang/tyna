@@ -60,6 +60,18 @@ LLVMValueRef cg_equality_expr(Codegen *cg, LLVMValueRef lhs, LLVMValueRef rhs,
     return LLVMBuildICmp(cg->builder, pred, res, one, "str_is_eq");
   }
 
+  // Handle tagged union comparison: extract the tag field (i64 at index 0)
+  // from both sides and compare those instead of the full struct.
+  if (lt && lt->kind == KIND_UNION && lt->is_tagged_union &&
+      rt && rt->kind == KIND_UNION && rt->is_tagged_union) {
+    LLVMValueRef lhs_tag =
+        LLVMBuildExtractValue(cg->builder, lhs, 0, "lhs_union_tag");
+    LLVMValueRef rhs_tag =
+        LLVMBuildExtractValue(cg->builder, rhs, 0, "rhs_union_tag");
+    LLVMIntPredicate pred = (op == OP_EQ) ? LLVMIntEQ : LLVMIntNE;
+    return LLVMBuildICmp(cg->builder, pred, lhs_tag, rhs_tag, "union_tag_cmp");
+  }
+
   LLVMTypeRef type = LLVMTypeOf(lhs);
   LLVMTypeKind kind = LLVMGetTypeKind(type);
   bool is_float = (kind == LLVMDoubleTypeKind || kind == LLVMFloatTypeKind);

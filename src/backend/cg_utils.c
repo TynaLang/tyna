@@ -56,6 +56,53 @@ LLVMValueRef cg_alloca_in_entry_uninitialized(Codegen *cg, Type *type,
   return alloca;
 }
 
+static bool cg_unwrap_value_wrapper(Codegen *cg, LLVMValueRef *obj_ptr,
+                                    Type **obj_type) {
+  if (!obj_ptr || !obj_type || !*obj_type)
+    return false;
+
+  Type *type = *obj_type;
+  if (!type_is_mut_type(type) && !type_is_heap_or_ref(type))
+    return false;
+
+  LLVMTypeRef obj_ptr_ty = LLVMTypeOf(*obj_ptr);
+
+  if (type_is_heap_or_ref(type)) {
+    Type *inner = type->data.instance.generic_args.items[0];
+    LLVMTypeRef wrapper_ty = cg_type_get_llvm(cg, type);
+    LLVMTypeRef expected_addr_ty = LLVMPointerType(wrapper_ty, 0);
+    if (obj_ptr_ty != expected_addr_ty)
+      return false;
+
+    *obj_ptr =
+        LLVMBuildLoad2(cg->builder, wrapper_ty, *obj_ptr, "wrapper_value");
+    *obj_type = inner;
+    return true;
+  }
+
+  if (type_is_mut_type(type)) {
+    LLVMTypeRef expected_addr_ty =
+        LLVMPointerType(cg_type_get_llvm(cg, type), 0);
+    if (obj_ptr_ty != expected_addr_ty)
+      return false;
+
+    Member *value_member = type_get_member(type, sv_from_parts("value", 5));
+    if (!value_member || !value_member->type)
+      return false;
+
+    LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+        cg->builder, cg_type_get_llvm(cg, type), *obj_ptr,
+        (unsigned)value_member->index, "wrapper_value_addr");
+    *obj_ptr =
+        LLVMBuildLoad2(cg->builder, cg_type_get_llvm(cg, value_member->type),
+                       field_ptr, "wrapper_value");
+    *obj_type = value_member->type;
+    return true;
+  }
+
+  return false;
+}
+
 LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
   if (!node)
     return NULL;
@@ -64,11 +111,6 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
   case NODE_VAR: {
     CgSym *sym = CGSymbolTable_find(cg->current_scope, node->var.value);
     if (!sym) {
-      fprintf(stderr,
-              "[DEBUG] cg_get_address: undefined variable '%.*s' during "
-              "address-of\n",
-              (int)node->var.value.len, node->var.value.data);
-      CGSymbolTable_debug_dump(cg->current_scope);
       panic("Undefined variable '" SV_FMT "' during address-of",
             SV_ARG(node->var.value));
     }
@@ -136,13 +178,19 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     }
     LLVMTypeRef llvm_obj_type = cg_type_get_llvm(cg, obj_type);
     (void)llvm_obj_type;
+    while (cg_unwrap_value_wrapper(cg, &obj_ptr, &obj_type)) {
+    }
+
     if (obj_type->kind == KIND_POINTER) {
       if (!obj_type->data.pointer_to) {
         panic("Pointer object has no target type");
       }
       Type *target = obj_type->data.pointer_to;
-      LLVMTypeRef load_ty = cg_type_get_llvm(cg, obj_type);
-      obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
+      LLVMTypeRef expected_ptr_ty = cg_type_get_llvm(cg, obj_type);
+      if (LLVMTypeOf(obj_ptr) != expected_ptr_ty) {
+        LLVMTypeRef load_ty = cg_type_get_llvm(cg, obj_type);
+        obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
+      }
       obj_type = target;
     }
     if (obj_type->kind != KIND_STRUCT && obj_type->kind != KIND_UNION) {

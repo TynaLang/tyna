@@ -1,8 +1,8 @@
 import std.list;
 import driver;
 
-fn main(args: List<str>) {
-    if (args.len() < 2) {
+fn main(args: Array<str>) {
+    if (args.len < 2) {
         print("Usage: tyna <file.tn>");
         return;
     }

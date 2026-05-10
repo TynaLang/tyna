@@ -4,6 +4,7 @@ pub struct List<T> {
     data: ptr<T>;
     len: i64;
     cap: i64;
+    elem_size: i64;
 }
 
 impl List<T> {

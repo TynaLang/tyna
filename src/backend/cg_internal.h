@@ -70,7 +70,6 @@ void CGSymbolTable_add(CgSymtab *t, StringView name, Type *type,
 void CGSymbolTable_add_direct(CgSymtab *t, StringView name, Type *type,
                               LLVMValueRef value);
 CgSym *CGSymbolTable_find(CgSymtab *t, StringView name);
-void CGSymbolTable_debug_dump(CgSymtab *t);
 
 CgSymtab *cg_push_scope(Codegen *cg);
 void cg_pop_scope(Codegen *cg);

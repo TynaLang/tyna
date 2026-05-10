@@ -40,14 +40,14 @@ struct SourceManager {
 
 impl SourceManager {
     fn new(): heap<SourceManager> {
-        return *SourceManager {
+        return heap SourceManager {
             files: Map<u32, FileInfo>.new(),
             file_map: Map<str, FileId>.new(),
             next_id: 0,
         };
     }
 
-    fn get_line_col(self: *SourceManager, span: SourceSpan): LineCol {
+    fn get_line_col(self: ref<SourceManager>, span: SourceSpan): LineCol {
         let info_opt: Option<FileInfo> = self.files.get(span.start.file.id);
         if (info_opt.tag == 1) {
             let info: FileInfo = info_opt.value;
@@ -80,7 +80,7 @@ impl SourceManager {
         return result;
     }
 
-    fn load_file(self: *SourceManager, path: str, module_path: str): FileId {
+    fn load_file(self: ref<SourceManager>, path: str, module_path: str): FileId {
         let existing: Option<FileId> = self.file_map.get(path);
         if (existing.tag == 1) {
             return existing.value;

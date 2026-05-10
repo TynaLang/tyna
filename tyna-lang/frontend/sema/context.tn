@@ -1,6 +1,6 @@
 struct SemaContext {
-    source_mgr: *SourceManager,
-    diag: *DiagEngine,      
-    global_scope: *Scope,
-    current_scope: *Scope,
+    source_mgr: ref<SourceManager>,
+    diag: ref<DiagEngine>,      
+    global_scope: ref<Scope>,
+    current_scope: ref<Scope>,
 }

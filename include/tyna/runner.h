@@ -10,5 +10,6 @@ void Runner_emit_object(Codegen *cg, const char *filename);
 void Runner_link_executable(const char *obj, const char *out);
 
 void Runner_jit(Codegen *cg);
+void Runner_jit_with_args(Codegen *cg, int argc, char **argv);
 
 #endif

@@ -53,6 +53,19 @@ bool sema_is_writable_address(Sema *s, AstNode *node) {
       return false;
 
     Type *obj_type = object_info.type;
+    bool saw_mut = false;
+    if (obj_type) {
+      Type *unwrapped = type_unwrap_mut_type(obj_type);
+      saw_mut = unwrapped != obj_type;
+      obj_type = unwrapped;
+    }
+
+    if (!obj_type)
+      return false;
+
+    if ((type_is_ref_type(obj_type) || type_is_heap_type(obj_type)) && !saw_mut)
+      return false;
+
     while (obj_type && obj_type->kind == KIND_POINTER) {
       obj_type = obj_type->data.pointer_to;
     }

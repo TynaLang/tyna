@@ -3,6 +3,7 @@ pub struct Array<T> {
     data: ptr<T>;
     len: i64;
     cap: i64;
+    elem_size: i64;
 }
 
 // Non-owning view
@@ -31,7 +32,11 @@ impl Array<T> {
     }
 
     pub fn push(self: ptr<Array<T>>, val: T): void {
-        __tyna_array_push(self as ptr<Array<u8>>, &val as ptr<void>, sizeof(T));
+        __tyna_array_push(self as ptr<Array<u8>>, &val as ptr<void>, self.elem_size);
+    }
+
+    pub fn push_raw(self: ptr<Array<T>>, val: ptr<T>, elem_size: i64): void {
+        __tyna_array_push(self as ptr<Array<u8>>, val as ptr<void>, elem_size);
     }
 
     pub fn slice(self: Array<T>, start: i64, end: i64): Slice<T> {

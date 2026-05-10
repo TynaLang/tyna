@@ -1,4 +1,5 @@
 import frontend.source.location;
+import std.string;
 
 pub choice TokenKind {
     // Literals
@@ -31,4 +32,14 @@ pub struct Token {
     kind: TokenKind,    
     lexeme: String,     
     span: SourceSpan, 
+}
+
+impl Token {
+    fn empty(): Token {
+        return Token {
+            kind: TokenKind.EOF,
+            lexeme: String.new(),
+            span: SourceSpan.empty(),
+        };
+    }
 }

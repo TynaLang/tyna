@@ -19,6 +19,8 @@ typedef struct {
   bool show_help;
   const char *ast_output_path;
   const char *input_path;
+  int jit_argc;
+  char **jit_argv;
 } CliOptions;
 
 void cli_init_options(CliOptions *opts);

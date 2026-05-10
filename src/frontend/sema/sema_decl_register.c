@@ -2,6 +2,20 @@
 #include "tyna/sema.h"
 #include "tyna/utils.h"
 
+static bool sema_function_decl_has_self_param(AstNode *fn_decl) {
+  if (!fn_decl || fn_decl->tag != NODE_FUNC_DECL ||
+      fn_decl->func_decl.params.len == 0) {
+    return false;
+  }
+
+  AstNode *first_param = fn_decl->func_decl.params.items[0];
+  if (!first_param || first_param->tag != NODE_PARAM)
+    return false;
+  if (!first_param->param.name || first_param->param.name->tag != NODE_VAR)
+    return false;
+  return sv_eq_cstr(first_param->param.name->var.value, "self");
+}
+
 static StringView sema_mangle_module_symbol(const char *module_name,
                                             StringView original_name) {
   if (!module_name || module_name[0] == '\0')
@@ -71,7 +85,10 @@ void sema_register_method_signature(Sema *s, AstNode *node,
     sym->original_name = original_name;
     sym->func_status = node->func_decl.body ? FUNC_IMPLEMENTATION : FUNC_NONE;
     sym->value = node;
-    sym->kind = node->func_decl.is_static ? SYM_STATIC_METHOD : SYM_METHOD;
+    bool has_self_param = sema_function_decl_has_self_param(node);
+    sym->kind = (node->func_decl.is_static || !has_self_param)
+                    ? SYM_STATIC_METHOD
+                    : SYM_METHOD;
     sym->is_export = is_exported_method;
     sym->is_pub_module = node->func_decl.is_pub_module;
 

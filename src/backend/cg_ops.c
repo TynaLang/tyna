@@ -61,6 +61,111 @@ static bool cg_is_dynamic_array_target(Type *t) {
   return type_is_array_struct(t) || cg_is_list_struct(t);
 }
 
+static Type *cg_resolve_expr_type(Codegen *cg, AstNode *node) {
+  if (!node)
+    return NULL;
+
+  if (node->resolved_type)
+    return node->resolved_type;
+
+  if (node->tag == NODE_VAR) {
+    CgSym *sym = CGSymbolTable_find(cg->current_scope, node->var.value);
+    if (sym && sym->type)
+      return sym->type;
+  }
+
+  if (node->tag == NODE_FIELD) {
+    Type *base_type = cg_resolve_expr_type(cg, node->field.object);
+    if (!base_type)
+      return NULL;
+
+    while (base_type && base_type->kind == KIND_POINTER) {
+      base_type = base_type->data.pointer_to;
+    }
+
+    if (!base_type)
+      return NULL;
+
+    Member *member = type_get_member(base_type, node->field.field);
+    if (!member && base_type->kind == KIND_UNION) {
+      Type *owner = base_type;
+      member = type_find_union_field(base_type, node->field.field, &owner);
+    }
+
+    if (member && member->type)
+      return member->type;
+  }
+
+  if (node->tag == NODE_INDEX) {
+    Type *array_type = cg_resolve_expr_type(cg, node->index.array);
+    if (!array_type)
+      return NULL;
+
+    while (array_type && array_type->kind == KIND_POINTER) {
+      array_type = array_type->data.pointer_to;
+    }
+
+    if (!array_type)
+      return NULL;
+
+    if (type_is_array_struct(array_type) &&
+        array_type->data.instance.generic_args.len > 0) {
+      return array_type->data.instance.generic_args.items[0];
+    }
+  }
+
+  if (node->tag == NODE_CALL) {
+    if (node->call.func && node->call.func->tag == NODE_VAR) {
+      CgSym *sym =
+          CGSymbolTable_find(cg->current_scope, node->call.func->var.value);
+      if (sym && sym->type)
+        return sym->type;
+    }
+  }
+
+  if (node->tag == NODE_CAST_EXPR) {
+    return node->cast_expr.target_type;
+  }
+
+  if (node->tag == NODE_TERNARY) {
+    return node->resolved_type
+               ? node->resolved_type
+               : cg_resolve_expr_type(cg, node->ternary.true_expr);
+  }
+
+  if (node->tag == NODE_BINARY_ARITH || node->tag == NODE_BINARY_COMPARE ||
+      node->tag == NODE_BINARY_EQUALITY || node->tag == NODE_BINARY_LOGICAL) {
+    if (node->resolved_type)
+      return node->resolved_type;
+
+    AstNode *left = NULL;
+    AstNode *right = NULL;
+    if (node->tag == NODE_BINARY_ARITH) {
+      left = node->binary_arith.left;
+      right = node->binary_arith.right;
+    } else if (node->tag == NODE_BINARY_COMPARE) {
+      left = node->binary_compare.left;
+      right = node->binary_compare.right;
+    } else if (node->tag == NODE_BINARY_EQUALITY) {
+      left = node->binary_equality.left;
+      right = node->binary_equality.right;
+    } else {
+      left = node->binary_logical.left;
+      right = node->binary_logical.right;
+    }
+
+    Type *left_type = cg_resolve_expr_type(cg, left);
+    Type *right_type = cg_resolve_expr_type(cg, right);
+    if (node->tag == NODE_BINARY_COMPARE || node->tag == NODE_BINARY_EQUALITY ||
+        node->tag == NODE_BINARY_LOGICAL) {
+      return type_get_primitive(cg->type_ctx, PRIM_BOOL);
+    }
+    return left_type ? left_type : right_type;
+  }
+
+  return NULL;
+}
+
 static LLVMValueRef cg_block_expr(Codegen *cg, AstNode *node) {
   if (!node || node->tag != NODE_BLOCK)
     return NULL;
@@ -256,7 +361,13 @@ LLVMValueRef cg_binary_expr(Codegen *cg, AstNode *node) {
     return NULL;
 
   if (node->tag == NODE_BINARY_ARITH) {
-    LLVMTypeRef target_ty = cg_type_get_llvm(cg, node->resolved_type);
+    Type *result_type = node->resolved_type;
+    if (!result_type) {
+      result_type = left_node->resolved_type ? left_node->resolved_type
+                                             : right_node->resolved_type;
+    }
+    LLVMTypeRef target_ty =
+        result_type ? cg_type_get_llvm(cg, result_type) : LLVMTypeOf(lhs);
 
     LLVMTypeKind lhs_kind = LLVMGetTypeKind(LLVMTypeOf(lhs));
     LLVMTypeKind rhs_kind = LLVMGetTypeKind(LLVMTypeOf(rhs));
@@ -521,16 +632,31 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
     LLVMValueRef block_val = cg_expression(cg, node->binary_else.right);
     bool error_terminated =
         LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(cg->builder)) != NULL;
+    // If the error block was not terminated and has no meaningful value
+    // (e.g. it only contains a panic() call), emit unreachable instead of
+    // branching to merge. This prevents the PHI node from having a <badref>
+    // predecessor.
+    // A block value is meaningful if it's non-NULL and not a void call result
+    // (which means the block's last expression was a void call like panic()).
+    bool block_has_value = (block_val != NULL);
+    if (block_has_value && node->resolved_type) {
+      // Check if the value is a void call instruction (like panic()).
+      // A void call has no type (LLVMVoidTypeKind).
+      LLVMTypeRef val_ty = LLVMTypeOf(block_val);
+      block_has_value = (LLVMGetTypeKind(val_ty) != LLVMVoidTypeKind);
+    }
     if (!error_terminated) {
-      if (block_val && node->resolved_type) {
+      if (block_has_value && node->resolved_type) {
         block_val =
             cg_cast_value(cg, block_val, node->binary_else.right->resolved_type,
                           cg_type_get_llvm(cg, node->resolved_type));
       }
-      if (!block_val && node->resolved_type) {
-        block_val = LLVMConstNull(cg_type_get_llvm(cg, node->resolved_type));
+      if (!block_has_value && node->resolved_type) {
+        LLVMBuildUnreachable(cg->builder);
+        error_terminated = true;
+      } else {
+        LLVMBuildBr(cg->builder, merge_bb);
       }
-      LLVMBuildBr(cg->builder, merge_bb);
     }
 
     LLVMPositionBuilderAtEnd(cg->builder, success_bb);
@@ -545,14 +671,16 @@ LLVMValueRef cg_binary_else_expr(Codegen *cg, AstNode *node) {
       LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
       LLVMTypeRef out_ty = cg_type_get_llvm(cg, node->resolved_type);
       LLVMValueRef phi = LLVMBuildPhi(cg->builder, out_ty, "else_val_block");
-      if (!error_terminated) {
+      if (!error_terminated && block_has_value) {
         LLVMAddIncoming(phi, &block_val, &error_bb, 1);
       }
       LLVMAddIncoming(phi, &success_val, &success_bb, 1);
       return phi;
     }
 
-    LLVMBuildBr(cg->builder, merge_bb);
+    if (!error_terminated) {
+      LLVMBuildBr(cg->builder, merge_bb);
+    }
     LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
     return NULL;
   }
@@ -605,6 +733,9 @@ LLVMValueRef cg_unary_expr(Codegen *cg, AstNode *node) {
   }
 
   if (op == OP_ADDR_OF) {
+    if (expr->resolved_type && type_is_heap_or_ref(expr->resolved_type)) {
+      return cg_expression(cg, expr);
+    }
     return cg_get_address(cg, expr);
   }
 
@@ -679,7 +810,7 @@ LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
     panic("Invalid assignment target");
   LLVMValueRef val = cg_expression(cg, node->assign_expr.value);
 
-  Type *target_type = node->assign_expr.target->resolved_type;
+  Type *target_type = cg_resolve_expr_type(cg, node->assign_expr.target);
   if (!target_type) {
     AstNode *target = node->assign_expr.target;
     if (target->tag == NODE_VAR) {
@@ -719,15 +850,15 @@ LLVMValueRef cg_assign_expr(Codegen *cg, AstNode *node) {
   }
 
   if (!target_type) {
-    target_type = node->assign_expr.target->resolved_type;
-  }
-  if (!target_type) {
     panic("Assignment target has no resolved type");
   }
-  if (!node->assign_expr.value->resolved_type) {
-    panic("Assignment RHS has no resolved type");
+  Type *source_type = cg_resolve_expr_type(cg, node->assign_expr.value);
+  if (!source_type && node->assign_expr.value) {
+    source_type = node->assign_expr.value->resolved_type;
   }
-  Type *source_type = node->assign_expr.value->resolved_type;
+  if (!source_type) {
+    source_type = target_type;
+  }
   LLVMTypeRef target_ty = cg_type_get_llvm(cg, target_type);
   LLVMTypeRef source_llvm_ty = LLVMTypeOf(val);
 
@@ -999,6 +1130,21 @@ LLVMValueRef cg_expression(Codegen *cg, AstNode *node) {
     Type *target = node->sizeof_expr.target_type;
     if (!target) {
       panic("sizeof target type is missing");
+    }
+    // Always use the LLVM ABI size for struct types. The semantic size
+    // may be incorrect for generic instances where placeholder members
+    // have size 0, leading to an underestimation of the actual size.
+    if (target->kind == KIND_STRUCT) {
+      LLVMTypeRef llvm_ty = cg_type_get_llvm(cg, target);
+      if (llvm_ty && LLVMGetTypeKind(llvm_ty) == LLVMStructTypeKind &&
+          !LLVMIsOpaqueStruct(llvm_ty)) {
+        const char *data_layout = LLVMGetDataLayout(cg->module);
+        LLVMTargetDataRef td = LLVMCreateTargetData(data_layout);
+        unsigned long long abi_size = LLVMABISizeOfType(td, llvm_ty);
+        LLVMDisposeTargetData(td);
+        target->size = abi_size;
+        return LLVMConstInt(LLVMInt64TypeInContext(cg->context), abi_size, false);
+      }
     }
     return LLVMConstInt(LLVMInt64TypeInContext(cg->context),
                         (uint64_t)target->size, false);

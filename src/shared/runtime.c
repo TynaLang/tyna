@@ -516,6 +516,18 @@ String __tyna_str_slice(String src, int64_t start, int64_t end) {
     return (String){NULL, 0};
   }
 
+  // Handle SSO strings: extract the actual data first, then slice
+  if (tyna_str_is_sso(src)) {
+    int64_t real_len = tyna_str_sso_len(src);
+    if (start > real_len || end > real_len) {
+      return (String){NULL, 0};
+    }
+    // For SSO strings, create a new SSO string from the sliced data
+    char tmp[TYNA_SSO_MAX_LEN + 1];
+    tyna_str_sso_copy(src, tmp);
+    return tyna_str_from_buffer(tmp + start, end - start);
+  }
+
   char *new_ptr = src.ptr + start;
   int64_t new_len = end - start;
   return (String){new_ptr, new_len};

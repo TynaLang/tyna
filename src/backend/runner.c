@@ -79,7 +79,7 @@ void Runner_link_executable(const char *obj, const char *out) {
   }
 }
 
-void Runner_jit(Codegen *cg) {
+void Runner_jit_with_args(Codegen *cg, int argc, char **argv) {
   LLVMInitializeNativeTarget();
   LLVMInitializeNativeAsmPrinter();
   LLVMInitializeNativeAsmParser();
@@ -126,9 +126,13 @@ void Runner_jit(Codegen *cg) {
     exit(1);
   }
 
-  int (*entry_func)() = (int (*)())(uintptr_t)entry_addr;
-  int exit_code = entry_func();
+  int (*entry_func)(int, char **) = (int (*)(int, char **))(uintptr_t)entry_addr;
+  int exit_code = entry_func(argc, argv);
 
   LLVMOrcDisposeLLJIT(lljit);
   LLVMOrcDisposeThreadSafeContext(ts_ctx);
+}
+
+void Runner_jit(Codegen *cg) {
+  Runner_jit_with_args(cg, 0, NULL);
 }

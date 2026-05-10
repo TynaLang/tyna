@@ -87,7 +87,7 @@ static void sema_mark_current_function_requires_arena(Sema *s, AstNode *node,
 ExprInfo sema_check_expr_cache(Sema *s, AstNode *node) {
   if (!node)
     return ExprInfo_rvalue(type_get_primitive(s->types, PRIM_UNKNOWN));
-  if (node->resolved_type) {
+  if (node->resolved_type && !s->ignore_cached_types) {
     return expr_info_for_cached_node(s, node, node->resolved_type);
   }
 

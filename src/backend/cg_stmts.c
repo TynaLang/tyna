@@ -503,9 +503,19 @@ LLVMValueRef cg_build_result_value(Codegen *cg, AstNode *expr,
 
   LLVMValueRef result = LLVMGetUndef(result_ty);
   if (expr_type->kind != KIND_ERROR) {
-    LLVMValueRef success_val =
-        cg_cast_value(cg, expr_val, expr_type,
-                      cg_type_get_llvm(cg, result_type->data.result.success));
+    LLVMValueRef success_val = expr_val;
+    // If the success value is a pointer to an alloca but the result type
+    // expects a value type, load the value first.
+    LLVMTypeRef success_ty = cg_type_get_llvm(cg, result_type->data.result.success);
+    if (LLVMGetTypeKind(LLVMTypeOf(success_val)) == LLVMPointerTypeKind &&
+        LLVMGetTypeKind(success_ty) == LLVMStructTypeKind) {
+      LLVMTypeRef pointee = LLVMGetAllocatedType(success_val);
+      if (pointee && pointee == success_ty) {
+        success_val = LLVMBuildLoad2(cg->builder, pointee, success_val, "result_success_load");
+      }
+    }
+    success_val =
+        cg_cast_value(cg, success_val, expr_type, success_ty);
     result = LLVMBuildInsertValue(cg->builder, result, success_val, 0,
                                   "result_success");
   }
@@ -590,6 +600,16 @@ void cg_statement(Codegen *cg, AstNode *node) {
             cg->current_function_ref->decl->func_decl.return_type);
       } else {
         val = cg_expression(cg, node->return_stmt.expr);
+        // If the return value is a pointer to an alloca but the function
+        // returns a value type, load the value from the pointer.
+        if (val && fn_ret_ty && LLVMGetTypeKind(LLVMTypeOf(val)) == LLVMPointerTypeKind &&
+            LLVMGetTypeKind(fn_ret_ty) == LLVMStructTypeKind) {
+          // With opaque pointers, get the allocated type from the alloca.
+          LLVMTypeRef pointee = LLVMGetAllocatedType(val);
+          if (pointee && pointee == fn_ret_ty) {
+            val = LLVMBuildLoad2(cg->builder, pointee, val, "ret_load");
+          }
+        }
       }
     } else if (has_value && fn_returns_void) {
       cg_expression(cg, node->return_stmt.expr);

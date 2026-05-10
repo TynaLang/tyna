@@ -150,6 +150,9 @@ Type *type_get_option_payload(Type *t);
 bool type_is_heap_type(Type *t);
 bool type_is_ref_type(Type *t);
 bool type_is_heap_or_ref(Type *t);
+bool type_is_mut_type(Type *t);
+Type *type_get_mut_payload(Type *t);
+Type *type_unwrap_mut_type(Type *t);
 bool type_is_list_struct(Type *type);
 
 #endif // TYNA_TYPE_H

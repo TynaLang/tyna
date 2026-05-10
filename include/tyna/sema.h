@@ -93,6 +93,7 @@ struct Sema {
   Type *ret_type;
   AstNode *fn_node;
   Type *generic_context_type;
+  bool ignore_cached_types;
   SemaPass pass;
 
   List modules; // List<Module*>

@@ -21,6 +21,10 @@ static Symbol *sema_resolve_module_path_symbol(Sema *s, AstNode *node) {
 }
 
 static Type *sema_unwrap_heap_or_ref_type(Type *type) {
+  if (!type)
+    return type;
+
+  type = type_unwrap_mut_type(type);
   if (!type || !type_is_heap_or_ref(type))
     return type;
 
@@ -32,6 +36,14 @@ static Type *sema_unwrap_heap_or_ref_type(Type *type) {
     return value_member->type->data.pointer_to;
 
   return type;
+}
+
+static Type *sema_unwrap_member_access_type(Type *type) {
+  if (!type)
+    return NULL;
+
+  type = type_unwrap_mut_type(type);
+  return sema_unwrap_heap_or_ref_type(type);
 }
 
 ExprInfo sema_check_field(Sema *s, AstNode *node) {
@@ -80,7 +92,7 @@ ExprInfo sema_check_field(Sema *s, AstNode *node) {
     };
   }
 
-  obj_type = sema_unwrap_heap_or_ref_type(obj_type);
+  obj_type = sema_unwrap_member_access_type(obj_type);
   while (obj_type && obj_type->kind == KIND_POINTER) {
     obj_type = obj_type->data.pointer_to;
     if (!obj_type) {

@@ -1,6 +1,10 @@
 #include "sema_internal.h"
 
 static Type *sema_unwrap_heap_or_ref_type(Type *type) {
+  if (!type)
+    return type;
+
+  type = type_unwrap_mut_type(type);
   if (!type || !type_is_heap_or_ref(type))
     return type;
 
@@ -279,13 +283,6 @@ bool sema_try_resolve_method_call(Sema *s, AstNode *node) {
       orig_obj_type = type_get_primitive(s->types, PRIM_UNKNOWN);
     }
     Type *obj_type = orig_obj_type;
-    if (field_node->field.object && field_node->field.object->tag == NODE_VAR) {
-      fprintf(stderr,
-              "[SEMA DEBUG] method call object '%.*s' -> type '%s'\n",
-              (int)field_node->field.object->var.value.len,
-              field_node->field.object->var.value.data,
-              type_to_name(obj_type));
-    }
 
     obj_type = sema_unwrap_heap_or_ref_type(obj_type);
     while (obj_type && obj_type->kind == KIND_POINTER) {

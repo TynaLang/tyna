@@ -154,6 +154,29 @@ static LLVMValueRef cg_typeof_string(Codegen *cg, Type *type) {
   return LLVMConstNamedStruct(string_ty, fields, 2);
 }
 
+static bool cg_unwrap_wrapper_value(Codegen *cg, LLVMValueRef *obj_ptr,
+                                    Type **obj_type) {
+  if (!obj_ptr || !obj_type || !*obj_type)
+    return false;
+
+  Type *type = *obj_type;
+  if (!type_is_mut_type(type) && !type_is_heap_or_ref(type))
+    return false;
+
+  Member *value_member = type_get_member(type, sv_from_parts("value", 5));
+  if (!value_member || !value_member->type)
+    return false;
+
+  LLVMValueRef field_ptr =
+      LLVMBuildStructGEP2(cg->builder, cg_type_get_llvm(cg, type), *obj_ptr,
+                          (unsigned)value_member->index, "wrapper_value_addr");
+  *obj_ptr =
+      LLVMBuildLoad2(cg->builder, cg_type_get_llvm(cg, value_member->type),
+                     field_ptr, "wrapper_value");
+  *obj_type = value_member->type;
+  return true;
+}
+
 LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
   switch (node->tag) {
   case NODE_VAR: {
@@ -168,6 +191,9 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
   case NODE_FIELD: {
     LLVMValueRef obj_ptr = cg_expression_addr(cg, node->field.object);
     Type *obj_type = node->field.object->resolved_type;
+
+    while (cg_unwrap_wrapper_value(cg, &obj_ptr, &obj_type)) {
+    }
 
     if (obj_type && obj_type->kind == KIND_POINTER) {
       if (!obj_type->data.pointer_to) {
@@ -197,7 +223,7 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
   }
 
   case NODE_INDEX: {
-    if (!node->resolved_type) {
+    if (!node->resolved_type || node->resolved_type->kind == KIND_TEMPLATE) {
       Type *array_type = node->index.array->resolved_type;
       if (array_type) {
         if (array_type->kind == KIND_POINTER) {
@@ -399,9 +425,47 @@ LLVMValueRef cg_var_expr(Codegen *cg, AstNode *node) {
   return LLVMBuildLoad2(cg->builder, type, ptr, "var_load");
 }
 
+static Type *cg_resolve_expr_type(Codegen *cg, AstNode *node) {
+  if (!node)
+    return NULL;
+
+  if (node->resolved_type)
+    return node->resolved_type;
+
+  if (node->tag == NODE_VAR) {
+    CgSym *sym = CGSymbolTable_find(cg->current_scope, node->var.value);
+    if (sym && sym->type)
+      return sym->type;
+  }
+
+  if (node->tag == NODE_FIELD) {
+    Type *base_type = cg_resolve_expr_type(cg, node->field.object);
+    if (!base_type)
+      return NULL;
+
+    while (base_type && base_type->kind == KIND_POINTER) {
+      base_type = base_type->data.pointer_to;
+    }
+
+    if (!base_type)
+      return NULL;
+
+    Member *member = type_get_member(base_type, node->field.field);
+    if (!member && base_type->kind == KIND_UNION) {
+      Type *owner = base_type;
+      member = type_find_union_field(base_type, node->field.field, &owner);
+    }
+
+    if (member && member->type)
+      return member->type;
+  }
+
+  return NULL;
+}
+
 LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
   AstNode *obj_node = node->field.object;
-  Type *obj_type = obj_node->resolved_type;
+  Type *obj_type = cg_resolve_expr_type(cg, obj_node);
   while (obj_type && obj_type->kind == KIND_POINTER) {
     obj_type = obj_type->data.pointer_to;
   }
@@ -414,7 +478,7 @@ LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
   // such as `TokenKind.EOF` where `TokenKind` is a tagged union type name.
   if (obj_node->tag == NODE_VAR &&
       !CGSymbolTable_find(cg->current_scope, obj_node->var.value)) {
-    Type *parent_type = obj_node->resolved_type;
+    Type *parent_type = cg_resolve_expr_type(cg, obj_node);
     if (parent_type && parent_type->kind == KIND_UNION &&
         parent_type->is_tagged_union) {
       Member *variant = type_get_member(parent_type, node->field.field);
@@ -442,18 +506,6 @@ LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
     }
   }
 
-  Type *owner = obj_type;
-  Member *m = type_get_member(obj_type, node->field.field);
-  if (!m && obj_type->kind == KIND_UNION) {
-    m = type_find_union_field(obj_type, node->field.field, &owner);
-  }
-  if (!m)
-    panic("Field '%.*s' not found on type %s", (int)node->field.field.len,
-          node->field.field.data, type_to_name(obj_type));
-  if (!m->type) {
-    panic("Field member has no type");
-  }
-
   LLVMValueRef obj_ptr = cg_get_address(cg, obj_node);
   if (!obj_ptr) {
     LLVMValueRef obj_val = cg_expression(cg, obj_node);
@@ -467,6 +519,46 @@ LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
       obj_ptr = LLVMBuildLoad2(cg->builder, load_ty, obj_ptr, "deref_ptr");
       resolved = resolved->data.pointer_to;
     }
+  }
+
+  while (obj_type &&
+         (type_is_heap_or_ref(obj_type) || type_is_mut_type(obj_type))) {
+    if (type_is_heap_or_ref(obj_type)) {
+      Type *inner = obj_type->data.instance.generic_args.items[0];
+      LLVMTypeRef wrapper_ty = cg_type_get_llvm(cg, obj_type);
+      obj_ptr =
+          LLVMBuildLoad2(cg->builder, wrapper_ty, obj_ptr, "wrapper_value");
+      obj_type = inner;
+      continue;
+    }
+
+    Member *value_member = type_get_member(obj_type, sv_from_parts("value", 5));
+    if (!value_member || !value_member->type)
+      break;
+
+    LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+        cg->builder, cg_type_get_llvm(cg, obj_type), obj_ptr,
+        (unsigned)value_member->index, "mut_value_addr");
+    obj_ptr =
+        LLVMBuildLoad2(cg->builder, cg_type_get_llvm(cg, value_member->type),
+                       field_ptr, "mut_value");
+    obj_type = value_member->type;
+  }
+
+  while (obj_type && obj_type->kind == KIND_POINTER) {
+    obj_type = obj_type->data.pointer_to;
+  }
+
+  Type *owner = obj_type;
+  Member *m = type_get_member(obj_type, node->field.field);
+  if (!m && obj_type->kind == KIND_UNION) {
+    m = type_find_union_field(obj_type, node->field.field, &owner);
+  }
+  if (!m)
+    panic("Field '%.*s' not found on type %s", (int)node->field.field.len,
+          node->field.field.data, type_to_name(obj_type));
+  if (!m->type) {
+    panic("Field member has no type");
   }
 
   if (obj_type->kind == KIND_UNION) {

@@ -17,19 +17,19 @@ struct Diagnostic {
 struct DiagEngine {
     diagnostics: List<Diagnostic>,
     error_count: u32,
-    source_mgr: *SourceManager, 
+    source_mgr: ref<SourceManager>, 
 }
 
 impl DiagEngine {
-    fn new(source_mgr: *SourceManager): heap<DiagEngine> {
-        return *DiagEngine {
-            diagnostics: List.new(),
+    fn new(source_mgr: ref<SourceManager>): heap<DiagEngine> {
+        return heap DiagEngine {
+            diagnostics: List<Diagnostic>.new(),
             error_count: 0,
             source_mgr: source_mgr,
         };
     }
 
-    fn err(self: *DiagEngine, span: SourceSpan, message: str) {
+    fn err(self: ref<DiagEngine>, span: SourceSpan, message: str) {
         self.diagnostics.push(Diagnostic {
             span: span,
             severity: Severity.Error,
@@ -38,7 +38,7 @@ impl DiagEngine {
         self.error_count = self.error_count + 1;
     }
 
-    fn warn(self: *DiagEngine, span: SourceSpan, message: str) {
+    fn warn(self: ref<DiagEngine>, span: SourceSpan, message: str) {
         self.diagnostics.push(Diagnostic {
             span: span,
             severity: Severity.Warning,
@@ -46,7 +46,7 @@ impl DiagEngine {
         });
     }
     
-    fn has_errors(self: *DiagEngine): bool {
+    fn has_errors(self: ref<DiagEngine>): bool {
         return self.error_count > 0;
     }
 }

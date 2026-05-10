@@ -1,5 +1,5 @@
 impl SemaContext {
-    fn check_expr(self: *SemaContext, expr: *Expr): TypeInfo {
+    fn check_expr(self: ref<SemaContext>, expr: ref<Expr>): TypeInfo {
         switch (expr) {
             Expr.Binary(b) => self.check_binary(b),
             Expr.Call(c) => self.check_call(c),
@@ -7,7 +7,7 @@ impl SemaContext {
         }
     }
     
-    fn check_binary(self: *SemaContext, b: *ExprBinary): TypeInfo {
+    fn check_binary(self: ref<SemaContext>, b: ref<ExprBinary>): TypeInfo {
         let left_type = self.check_expr(b.left);
         let right_type = self.check_expr(b.right);
         

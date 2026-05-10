@@ -1,7 +1,11 @@
 fn main() {
-    let x: i32 = 10;
-    let px: *i32 = &x;
-    print(*px);
-    *px = 20;
-    print(x);
+    let p: ptr<i32> = malloc(8);
+    *p = 10;
+    print(*p);
+
+    let q: *i32 = p;
+    *q = 20;
+    print(*q);
+
+    free(p);
 }

@@ -13,6 +13,15 @@ LLVMValueRef cg_extract_tagged_union_payload(Codegen *cg,
                                              LLVMValueRef union_val,
                                              Type *union_t, Type *variant_type);
 
+static bool cg_is_list_struct(Type *t) {
+  if (!t || t->kind != KIND_STRUCT)
+    return false;
+  if (t->data.instance.from_template &&
+      sv_eq(t->data.instance.from_template->name, sv_from_parts("List", 4)))
+    return true;
+  return false;
+}
+
 static bool cg_if_is_pattern_binder(AstNode *cond, StringView *out_name,
                                     Type **out_type, TypeContext *type_ctx) {
   if (!cond || cond->tag != NODE_BINARY_IS || !out_name || !out_type)
@@ -416,8 +425,9 @@ void cg_control_flow_statement(Codegen *cg, AstNode *node) {
       len_val = str_len_val;
     } else if (iter_type->kind == KIND_STRUCT &&
                iter_type->data.instance.generic_args.len > 0 &&
-               sv_eq(iter_type->data.instance.from_template->name,
-                     sv_from_cstr("Array"))) {
+               (sv_eq(iter_type->data.instance.from_template->name,
+                      sv_from_cstr("Array")) ||
+                cg_is_list_struct(iter_type))) {
       LLVMValueRef array_alloca =
           cg_alloca_in_entry(cg, iter_type, sv_from_cstr("for_in_array"));
       LLVMBuildStore(cg->builder, iterable_val, array_alloca);

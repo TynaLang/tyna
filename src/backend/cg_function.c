@@ -71,7 +71,6 @@ void cg_define_function(Codegen *cg, AstNode *node) {
   CgFunc *f = malloc(sizeof(CgFunc));
   cg_init_CGFunction(f, name, func, func_type, false, node);
   List_push(&cg->functions, f);
-
   free(llvm_name);
 }
 
@@ -167,13 +166,15 @@ void cg_emit_function_body(Codegen *cg, AstNode *node) {
 CgFunc *cg_find_function(Codegen *cg, StringView name) {
   for (size_t i = 0; i < cg->functions.len; i++) {
     CgFunc *f = cg->functions.items[i];
-    if (sv_eq(f->name, name))
+    if (sv_eq(f->name, name)) {
       return f;
+    }
   }
   for (size_t i = 0; i < cg->system_functions.len; i++) {
     CgFunc *f = cg->system_functions.items[i];
-    if (sv_eq(f->name, name))
+    if (sv_eq(f->name, name)) {
       return f;
+    }
   }
   return NULL;
 };

@@ -22,7 +22,14 @@ ExprInfo sema_check_var(Sema *s, AstNode *node) {
     };
   }
 
-  node->resolved_type = sym->type;
+  // Preserve concrete types set by ast_substitute_type during template
+  // instantiation. The symbol table may still hold generic template types
+  // (e.g., ptr<Map<K, V>>) while the cloned AST already has the correct
+  // concrete types (e.g., ptr<Map<str, FileId>>). Overwriting would cause
+  // the codegen to use generic LLVM types with wrong sizes for GEP.
+  if (!node->resolved_type || node->resolved_type->kind == KIND_TEMPLATE) {
+    node->resolved_type = sym->type;
+  }
   bool is_lvalue = sym->kind == SYM_VAR || sym->kind == SYM_FIELD;
   if (sym->is_moved && is_lvalue) {
     sema_error(s, node, "Use of moved value '%.*s'", (int)node->var.value.len,
