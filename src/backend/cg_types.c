@@ -33,14 +33,6 @@ static void cg_get_struct_name(Type *t, char *buf, size_t buf_size) {
 
 LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
   if (!t) {
-    void *bt[16];
-    int bt_size = backtrace(bt, 16);
-    char **bt_syms = backtrace_symbols(bt, bt_size);
-    fprintf(stderr, "[DEBUG cg_type_get_llvm] NULL type call stack:\n");
-    for (int i = 0; i < bt_size; i++) {
-      fprintf(stderr, "  %s\n", bt_syms[i]);
-    }
-    free(bt_syms);
     panic("cg_type_get_llvm received NULL type");
   }
 
@@ -186,20 +178,23 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
       }
 
       List_push(&cg->struct_types_in_progress, t);
-      
+
       // If this struct instance has template placeholders in its generic args
       // (e.g., MapEntry<K, V>), look for a concrete instance with the same
       // template and use its members for the LLVM type body. This ensures
       // correct GEP offsets even when the codegen uses the generic type.
       unsigned count = t->members.len;
       LLVMTypeRef *fields = NULL;
-      
+
       if (t->data.instance.from_template &&
           t->data.instance.generic_args.len > 0) {
         bool has_placeholder = false;
         for (size_t gi = 0; gi < t->data.instance.generic_args.len; gi++) {
           Type *arg = (Type *)t->data.instance.generic_args.items[gi];
-          if (arg->kind == KIND_TEMPLATE) { has_placeholder = true; break; }
+          if (arg->kind == KIND_TEMPLATE) {
+            has_placeholder = true;
+            break;
+          }
         }
         if (has_placeholder) {
           // Look for a concrete instance with the same template.
@@ -207,13 +202,22 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
           Type *best_inst = NULL;
           for (size_t ii = 0; ii < cg->type_ctx->instances.len; ii++) {
             Type *inst = (Type *)cg->type_ctx->instances.items[ii];
-            if (inst->kind != KIND_STRUCT) continue;
-            if (inst->data.instance.from_template != t->data.instance.from_template) continue;
-            if (inst->data.instance.generic_args.len != t->data.instance.generic_args.len) continue;
+            if (inst->kind != KIND_STRUCT)
+              continue;
+            if (inst->data.instance.from_template !=
+                t->data.instance.from_template)
+              continue;
+            if (inst->data.instance.generic_args.len !=
+                t->data.instance.generic_args.len)
+              continue;
             bool all_concrete = true;
-            for (size_t gi = 0; gi < inst->data.instance.generic_args.len; gi++) {
+            for (size_t gi = 0; gi < inst->data.instance.generic_args.len;
+                 gi++) {
               Type *ia = (Type *)inst->data.instance.generic_args.items[gi];
-              if (ia->kind == KIND_TEMPLATE) { all_concrete = false; break; }
+              if (ia->kind == KIND_TEMPLATE) {
+                all_concrete = false;
+                break;
+              }
             }
             if (all_concrete && inst->members.len > 0) {
               if (!best_inst || inst->size > best_inst->size) {
@@ -231,7 +235,7 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
           }
         }
       }
-      
+
       if (!fields) {
         fields = xmalloc(sizeof(LLVMTypeRef) * (count > 0 ? count : 1));
         for (size_t i = 0; i < count; i++) {
@@ -239,7 +243,7 @@ LLVMTypeRef cg_type_get_llvm(Codegen *cg, Type *t) {
           fields[i] = cg_type_get_llvm(cg, m->type);
         }
       }
-      
+
       LLVMStructSetBody(struct_ty, fields, count, false);
       free(fields);
       List_pop(&cg->struct_types_in_progress);

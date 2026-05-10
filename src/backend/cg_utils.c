@@ -227,6 +227,19 @@ LLVMValueRef cg_get_address(Codegen *cg, AstNode *node) {
     }
 
     LLVMTypeRef struct_ty = cg_type_get_llvm(cg, obj_type);
+    // With opaque pointers, LLVMTypeOf returns the same opaque ptr type for
+    // all pointers, so we can't rely on type comparison. Instead, check if
+    // obj_ptr is an alloca whose allocated type is a pointer (meaning it
+    // holds a pointer to the struct rather than being a pointer to the struct
+    // itself). If so, load the pointer first before GEPing.
+    if (LLVMIsAAllocaInst(obj_ptr)) {
+      LLVMValueRef allocated = LLVMGetAllocatedType(obj_ptr);
+      if (allocated && LLVMGetTypeKind(allocated) == LLVMPointerTypeKind) {
+        // obj_ptr is an alloca holding a pointer — dereference it
+        LLVMTypeRef ptr_ty = LLVMPointerType(struct_ty, 0);
+        obj_ptr = LLVMBuildLoad2(cg->builder, ptr_ty, obj_ptr, "deref_field_obj");
+      }
+    }
     Member *m = type_get_member(obj_type, node->field.field);
     if (!m)
       return NULL;

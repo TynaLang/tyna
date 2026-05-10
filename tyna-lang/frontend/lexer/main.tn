@@ -21,6 +21,6 @@ impl Lexer {
 
     fn next_token(self: ref<Lexer>): Token {
         // ... lexing logic ...
-        return Token { kind: TokenKind.EOF, lexeme: String.new(), span: SourceSpan.empty() };
+        return Token { kind: TokenKind.EOF, lexeme: String.from("EOF"), span: SourceSpan.empty() };
     }
 }

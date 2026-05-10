@@ -10,13 +10,6 @@ static Type *ast_substitute_type(Type *type, TypeContext *ctx,
   if (template_type && template_type->kind == KIND_TEMPLATE) {
     Type *old_type = type;
     type = type_resolve_placeholders(ctx, type, template_type, args);
-    if (type != old_type) {
-      fprintf(stderr, "DEBUG ast_substitute_type: resolved %s -> %s\n",
-              type_to_name(old_type), type_to_name(type));
-    }
-  } else if (template_type) {
-    fprintf(stderr, "DEBUG ast_substitute_type: template_type=%s kind=%d NOT a template\n",
-            type_to_name(template_type), template_type->kind);
   }
 
   // Handle pointer types that point to struct instances with from_template.
@@ -24,8 +17,8 @@ static Type *ast_substitute_type(Type *type, TypeContext *ctx,
   if (type && type->kind == KIND_POINTER && type->data.pointer_to &&
       type->data.pointer_to->kind == KIND_STRUCT &&
       type->data.pointer_to->data.instance.from_template) {
-    Type *inner = ast_substitute_type(type->data.pointer_to, ctx,
-                                      template_type, args);
+    Type *inner =
+        ast_substitute_type(type->data.pointer_to, ctx, template_type, args);
     if (inner != type->data.pointer_to) {
       type = type_get_pointer(ctx, inner);
     }
@@ -480,7 +473,7 @@ AstNode *ast_clone_node(AstNode *node, TypeContext *ctx, Type *template_type,
 // This is used after sema_check_func_decl to fix types that were
 // overwritten with generic template types from the symbol table.
 static void ast_substitute_types_inplace(AstNode *node, TypeContext *ctx,
-                                          Type *template_type, List args) {
+                                         Type *template_type, List args) {
   if (!node)
     return;
 
@@ -490,72 +483,92 @@ static void ast_substitute_types_inplace(AstNode *node, TypeContext *ctx,
   switch (node->tag) {
   case NODE_AST_ROOT:
     for (size_t i = 0; i < node->ast_root.children.len; i++)
-      ast_substitute_types_inplace(node->ast_root.children.items[i], ctx, template_type, args);
+      ast_substitute_types_inplace(node->ast_root.children.items[i], ctx,
+                                   template_type, args);
     break;
   case NODE_VAR_DECL:
     ast_substitute_types_inplace(node->var_decl.name, ctx, template_type, args);
-    ast_substitute_types_inplace(node->var_decl.value, ctx, template_type, args);
-    node->var_decl.declared_type =
-        ast_substitute_type(node->var_decl.declared_type, ctx, template_type, args);
+    ast_substitute_types_inplace(node->var_decl.value, ctx, template_type,
+                                 args);
+    node->var_decl.declared_type = ast_substitute_type(
+        node->var_decl.declared_type, ctx, template_type, args);
     break;
   case NODE_PRINT_STMT:
     for (size_t i = 0; i < node->print_stmt.values.len; i++)
-      ast_substitute_types_inplace(node->print_stmt.values.items[i], ctx, template_type, args);
+      ast_substitute_types_inplace(node->print_stmt.values.items[i], ctx,
+                                   template_type, args);
     break;
   case NODE_BINARY_ARITH:
   case NODE_BINARY_COMPARE:
   case NODE_BINARY_EQUALITY:
   case NODE_BINARY_LOGICAL:
-    ast_substitute_types_inplace(node->binary_arith.left, ctx, template_type, args);
-    ast_substitute_types_inplace(node->binary_arith.right, ctx, template_type, args);
+    ast_substitute_types_inplace(node->binary_arith.left, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->binary_arith.right, ctx, template_type,
+                                 args);
     break;
   case NODE_BINARY_IS:
-    ast_substitute_types_inplace(node->binary_is.left, ctx, template_type, args);
-    ast_substitute_types_inplace(node->binary_is.right, ctx, template_type, args);
+    ast_substitute_types_inplace(node->binary_is.left, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->binary_is.right, ctx, template_type,
+                                 args);
     break;
   case NODE_BINARY_ELSE:
-    ast_substitute_types_inplace(node->binary_else.left, ctx, template_type, args);
-    ast_substitute_types_inplace(node->binary_else.right, ctx, template_type, args);
+    ast_substitute_types_inplace(node->binary_else.left, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->binary_else.right, ctx, template_type,
+                                 args);
     break;
   case NODE_UNARY:
     ast_substitute_types_inplace(node->unary.expr, ctx, template_type, args);
     break;
   case NODE_CAST_EXPR:
-    ast_substitute_types_inplace(node->cast_expr.expr, ctx, template_type, args);
-    node->cast_expr.target_type =
-        ast_substitute_type(node->cast_expr.target_type, ctx, template_type, args);
+    ast_substitute_types_inplace(node->cast_expr.expr, ctx, template_type,
+                                 args);
+    node->cast_expr.target_type = ast_substitute_type(
+        node->cast_expr.target_type, ctx, template_type, args);
     break;
   case NODE_SIZEOF_EXPR:
-    node->sizeof_expr.target_type =
-        ast_substitute_type(node->sizeof_expr.target_type, ctx, template_type, args);
+    node->sizeof_expr.target_type = ast_substitute_type(
+        node->sizeof_expr.target_type, ctx, template_type, args);
     break;
   case NODE_ASSIGN_EXPR:
-    ast_substitute_types_inplace(node->assign_expr.target, ctx, template_type, args);
-    ast_substitute_types_inplace(node->assign_expr.value, ctx, template_type, args);
+    ast_substitute_types_inplace(node->assign_expr.target, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->assign_expr.value, ctx, template_type,
+                                 args);
     break;
   case NODE_EXPR_STMT:
-    ast_substitute_types_inplace(node->expr_stmt.expr, ctx, template_type, args);
+    ast_substitute_types_inplace(node->expr_stmt.expr, ctx, template_type,
+                                 args);
     break;
   case NODE_TERNARY:
-    ast_substitute_types_inplace(node->ternary.condition, ctx, template_type, args);
-    ast_substitute_types_inplace(node->ternary.true_expr, ctx, template_type, args);
-    ast_substitute_types_inplace(node->ternary.false_expr, ctx, template_type, args);
+    ast_substitute_types_inplace(node->ternary.condition, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->ternary.true_expr, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->ternary.false_expr, ctx, template_type,
+                                 args);
     break;
   case NODE_CALL:
     ast_substitute_types_inplace(node->call.func, ctx, template_type, args);
     for (size_t i = 0; i < node->call.args.len; i++)
-      ast_substitute_types_inplace(node->call.args.items[i], ctx, template_type, args);
+      ast_substitute_types_inplace(node->call.args.items[i], ctx, template_type,
+                                   args);
     break;
   case NODE_NEW_EXPR:
-    node->new_expr.target_type =
-        ast_substitute_type(node->new_expr.target_type, ctx, template_type, args);
+    node->new_expr.target_type = ast_substitute_type(node->new_expr.target_type,
+                                                     ctx, template_type, args);
     for (size_t i = 0; i < node->new_expr.args.len; i++)
-      ast_substitute_types_inplace(node->new_expr.args.items[i], ctx, template_type, args);
+      ast_substitute_types_inplace(node->new_expr.args.items[i], ctx,
+                                   template_type, args);
     for (size_t i = 0; i < node->new_expr.field_inits.len; i++)
-      ast_substitute_types_inplace(node->new_expr.field_inits.items[i], ctx, template_type, args);
+      ast_substitute_types_inplace(node->new_expr.field_inits.items[i], ctx,
+                                   template_type, args);
     break;
   case NODE_RETURN_STMT:
-    ast_substitute_types_inplace(node->return_stmt.expr, ctx, template_type, args);
+    ast_substitute_types_inplace(node->return_stmt.expr, ctx, template_type,
+                                 args);
     break;
   case NODE_PARAM:
     ast_substitute_types_inplace(node->param.name, ctx, template_type, args);
@@ -564,7 +577,8 @@ static void ast_substitute_types_inplace(AstNode *node, TypeContext *ctx,
     break;
   case NODE_BLOCK:
     for (size_t i = 0; i < node->block.statements.len; i++)
-      ast_substitute_types_inplace(node->block.statements.items[i], ctx, template_type, args);
+      ast_substitute_types_inplace(node->block.statements.items[i], ctx,
+                                   template_type, args);
     break;
   case NODE_FIELD:
     ast_substitute_types_inplace(node->field.object, ctx, template_type, args);
@@ -574,26 +588,36 @@ static void ast_substitute_types_inplace(AstNode *node, TypeContext *ctx,
     ast_substitute_types_inplace(node->index.index, ctx, template_type, args);
     break;
   case NODE_FUNC_DECL:
-    ast_substitute_types_inplace(node->func_decl.name, ctx, template_type, args);
+    ast_substitute_types_inplace(node->func_decl.name, ctx, template_type,
+                                 args);
     for (size_t i = 0; i < node->func_decl.params.len; i++)
-      ast_substitute_types_inplace(node->func_decl.params.items[i], ctx, template_type, args);
-    ast_substitute_types_inplace(node->func_decl.body, ctx, template_type, args);
-    node->func_decl.return_type =
-        ast_substitute_type(node->func_decl.return_type, ctx, template_type, args);
+      ast_substitute_types_inplace(node->func_decl.params.items[i], ctx,
+                                   template_type, args);
+    ast_substitute_types_inplace(node->func_decl.body, ctx, template_type,
+                                 args);
+    node->func_decl.return_type = ast_substitute_type(
+        node->func_decl.return_type, ctx, template_type, args);
     break;
   case NODE_IF_STMT:
-    ast_substitute_types_inplace(node->if_stmt.condition, ctx, template_type, args);
-    ast_substitute_types_inplace(node->if_stmt.then_branch, ctx, template_type, args);
-    ast_substitute_types_inplace(node->if_stmt.else_branch, ctx, template_type, args);
+    ast_substitute_types_inplace(node->if_stmt.condition, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->if_stmt.then_branch, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->if_stmt.else_branch, ctx, template_type,
+                                 args);
     break;
   case NODE_SWITCH_STMT:
-    ast_substitute_types_inplace(node->switch_stmt.expr, ctx, template_type, args);
+    ast_substitute_types_inplace(node->switch_stmt.expr, ctx, template_type,
+                                 args);
     for (size_t i = 0; i < node->switch_stmt.cases.len; i++)
-      ast_substitute_types_inplace(node->switch_stmt.cases.items[i], ctx, template_type, args);
+      ast_substitute_types_inplace(node->switch_stmt.cases.items[i], ctx,
+                                   template_type, args);
     break;
   case NODE_CASE:
-    ast_substitute_types_inplace(node->case_stmt.pattern, ctx, template_type, args);
-    ast_substitute_types_inplace(node->case_stmt.body, ctx, template_type, args);
+    ast_substitute_types_inplace(node->case_stmt.pattern, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->case_stmt.body, ctx, template_type,
+                                 args);
     break;
   case NODE_DEFER:
     ast_substitute_types_inplace(node->defer.expr, ctx, template_type, args);
@@ -602,31 +626,43 @@ static void ast_substitute_types_inplace(AstNode *node, TypeContext *ctx,
     ast_substitute_types_inplace(node->loop.expr, ctx, template_type, args);
     break;
   case NODE_WHILE_STMT:
-    ast_substitute_types_inplace(node->while_stmt.condition, ctx, template_type, args);
-    ast_substitute_types_inplace(node->while_stmt.body, ctx, template_type, args);
+    ast_substitute_types_inplace(node->while_stmt.condition, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->while_stmt.body, ctx, template_type,
+                                 args);
     break;
   case NODE_FOR_STMT:
     ast_substitute_types_inplace(node->for_stmt.init, ctx, template_type, args);
-    ast_substitute_types_inplace(node->for_stmt.condition, ctx, template_type, args);
-    ast_substitute_types_inplace(node->for_stmt.increment, ctx, template_type, args);
+    ast_substitute_types_inplace(node->for_stmt.condition, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->for_stmt.increment, ctx, template_type,
+                                 args);
     ast_substitute_types_inplace(node->for_stmt.body, ctx, template_type, args);
     break;
   case NODE_FOR_IN_STMT:
-    ast_substitute_types_inplace(node->for_in_stmt.var, ctx, template_type, args);
-    ast_substitute_types_inplace(node->for_in_stmt.iterable, ctx, template_type, args);
-    ast_substitute_types_inplace(node->for_in_stmt.body, ctx, template_type, args);
+    ast_substitute_types_inplace(node->for_in_stmt.var, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->for_in_stmt.iterable, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->for_in_stmt.body, ctx, template_type,
+                                 args);
     break;
   case NODE_ARRAY_LITERAL:
     for (size_t i = 0; i < node->array_literal.items.len; i++)
-      ast_substitute_types_inplace(node->array_literal.items.items[i], ctx, template_type, args);
+      ast_substitute_types_inplace(node->array_literal.items.items[i], ctx,
+                                   template_type, args);
     break;
   case NODE_ARRAY_REPEAT:
-    ast_substitute_types_inplace(node->array_repeat.value, ctx, template_type, args);
-    ast_substitute_types_inplace(node->array_repeat.count, ctx, template_type, args);
+    ast_substitute_types_inplace(node->array_repeat.value, ctx, template_type,
+                                 args);
+    ast_substitute_types_inplace(node->array_repeat.count, ctx, template_type,
+                                 args);
     break;
   case NODE_INTRINSIC_COMPARE:
-    ast_substitute_types_inplace(node->intrinsic_compare.left, ctx, template_type, args);
-    ast_substitute_types_inplace(node->intrinsic_compare.right, ctx, template_type, args);
+    ast_substitute_types_inplace(node->intrinsic_compare.left, ctx,
+                                 template_type, args);
+    ast_substitute_types_inplace(node->intrinsic_compare.right, ctx,
+                                 template_type, args);
     break;
   default:
     break;
@@ -643,6 +679,7 @@ Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
   Type *template_type = obj_type->data.instance.from_template;
   StringView original_name =
       method->original_name.len ? method->original_name : method->name;
+
   StringView concrete_name = sema_mangle_method_name(
       sv_from_cstr(type_to_name(obj_type)), original_name);
 
@@ -714,23 +751,12 @@ Symbol *sema_instantiate_method_symbol(Sema *s, Type *obj_type, Symbol *method,
       // from the symbol table (e.g., ptr<Map<K, V>> instead of
       // ptr<Map<str, FileId>>). This ensures the codegen uses concrete
       // LLVM types with correct sizes for GEP.
-      ast_substitute_types_inplace(concrete_fn, s->types,
-                                   template_type,
+      ast_substitute_types_inplace(concrete_fn, s->types, template_type,
                                    obj_type->data.instance.generic_args);
 
       // Debug: check if the self parameter type was properly substituted
       if (concrete_fn->func_decl.params.len > 0) {
         AstNode *self_param = concrete_fn->func_decl.params.items[0];
-        if (self_param && self_param->resolved_type) {
-          fprintf(stderr, "DEBUG self param resolved_type: %s (kind=%d)\n",
-                  type_to_name(self_param->resolved_type),
-                  self_param->resolved_type->kind);
-        }
-        if (self_param && self_param->param.type) {
-          fprintf(stderr, "DEBUG self param declared_type: %s (kind=%d)\n",
-                  type_to_name(self_param->param.type),
-                  self_param->param.type->kind);
-        }
       }
     }
 

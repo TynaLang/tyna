@@ -188,7 +188,8 @@ static void register_array_template(TypeContext *ctx) {
   type_add_member(array_tmpl, "cap", type_get_primitive(ctx, PRIM_I64), 16);
 
   // elem_size: i64
-  type_add_member(array_tmpl, "elem_size", type_get_primitive(ctx, PRIM_I64), 24);
+  type_add_member(array_tmpl, "elem_size", type_get_primitive(ctx, PRIM_I64),
+                  24);
 
   array_tmpl->size = 32;
 
@@ -227,7 +228,8 @@ static void register_slice_template(TypeContext *ctx) {
 }
 
 static void register_heap_ref_templates(TypeContext *ctx) {
-  // Register the "heap" template: heap<T> is a struct with one member: value: ptr<T>
+  // Register the "heap" template: heap<T> is a struct with one member: value:
+  // ptr<T>
   Type *heap_tmpl = xcalloc(1, sizeof(Type));
   heap_tmpl->kind = KIND_TEMPLATE;
   heap_tmpl->name = sv_from_parts("heap", 4);
@@ -250,7 +252,8 @@ static void register_heap_ref_templates(TypeContext *ctx) {
   heap_tmpl->size = 8;
   List_push(&ctx->templates, heap_tmpl);
 
-  // Register the "ref" template: ref<T> is a struct with one member: value: ptr<T>
+  // Register the "ref" template: ref<T> is a struct with one member: value:
+  // ptr<T>
   Type *ref_tmpl = xcalloc(1, sizeof(Type));
   ref_tmpl->kind = KIND_TEMPLATE;
   ref_tmpl->name = sv_from_parts("ref", 3);
@@ -576,32 +579,27 @@ static Type *resolve_placeholder(TypeContext *ctx, Type *blueprint,
   if (!blueprint)
     return NULL;
 
-  fprintf(stderr, "DEBUG resolve_placeholder: blueprint=%s kind=%d\n",
-          type_to_name(blueprint), blueprint->kind);
-
   // 1. Base Case: If the blueprint IS a placeholder (e.g., "T")
   if (blueprint->kind == KIND_TEMPLATE) {
     for (size_t i = 0; i < placeholders.len; i++) {
       StringView p_name = *(StringView *)placeholders.items[i];
       if (sv_eq(blueprint->name, p_name)) {
-        fprintf(stderr, "DEBUG resolve_placeholder: matched placeholder %.*s -> %s\n",
-                (int)p_name.len, p_name.data, type_to_name(args.items[i]));
         return args.items[i]; // Return the concrete type (e.g., i32)
       }
     }
-    fprintf(stderr, "DEBUG resolve_placeholder: KIND_TEMPLATE %s not matched, placeholders.len=%zu, own_placeholders.len=%zu\n",
-            type_to_name(blueprint), placeholders.len, blueprint->data.template.placeholders.len);
 
-    // If the blueprint is a template with its own placeholders (e.g., Map<K, V>),
-    // try to instantiate it by resolving its own placeholders using the outer
-    // placeholders. This handles cases like Map<K, V> appearing as a type in a
-    // function body that's being instantiated with K=str, V=FileId.
+    // If the blueprint is a template with its own placeholders (e.g., Map<K,
+    // V>), try to instantiate it by resolving its own placeholders using the
+    // outer placeholders. This handles cases like Map<K, V> appearing as a type
+    // in a function body that's being instantiated with K=str, V=FileId.
     if (blueprint->data.template.placeholders.len > 0) {
       // Check if any of this template's own placeholders can be resolved using
       // the outer placeholders. If so, we need to create a concrete instance.
       bool can_resolve = false;
-      for (size_t i = 0; i < blueprint->data.template.placeholders.len && !can_resolve; i++) {
-        StringView inner_p = *(StringView *)blueprint->data.template.placeholders.items[i];
+      for (size_t i = 0;
+           i < blueprint->data.template.placeholders.len && !can_resolve; i++) {
+        StringView inner_p =
+            *(StringView *)blueprint->data.template.placeholders.items[i];
         for (size_t j = 0; j < placeholders.len; j++) {
           StringView outer_p = *(StringView *)placeholders.items[j];
           if (sv_eq(inner_p, outer_p)) {
@@ -615,7 +613,8 @@ static Type *resolve_placeholder(TypeContext *ctx, Type *blueprint,
         List resolved_args;
         List_init(&resolved_args);
         for (size_t i = 0; i < blueprint->data.template.placeholders.len; i++) {
-          StringView inner_p = *(StringView *)blueprint->data.template.placeholders.items[i];
+          StringView inner_p =
+              *(StringView *)blueprint->data.template.placeholders.items[i];
           Type *resolved = NULL;
           for (size_t j = 0; j < placeholders.len; j++) {
             StringView outer_p = *(StringView *)placeholders.items[j];
@@ -650,24 +649,13 @@ static Type *resolve_placeholder(TypeContext *ctx, Type *blueprint,
   // Array<Array<T>>)
   if (blueprint->kind == KIND_STRUCT &&
       blueprint->data.instance.from_template) {
-    fprintf(stderr, "DEBUG step3: %s from_template=%s args=[",
-            type_to_name(blueprint), type_to_name(blueprint->data.instance.from_template));
-    for (size_t i = 0; i < blueprint->data.instance.generic_args.len; i++) {
-      Type *arg = blueprint->data.instance.generic_args.items[i];
-      fprintf(stderr, "%s%s", i > 0 ? "," : "", type_to_name(arg));
-    }
-    fprintf(stderr, "]\n");
     bool changed = false;
     List resolved_args;
     List_init(&resolved_args);
     for (size_t i = 0; i < blueprint->data.instance.generic_args.len; i++) {
       Type *arg = blueprint->data.instance.generic_args.items[i];
       Type *resolved = resolve_placeholder(ctx, arg, placeholders, args);
-      if (resolved != arg) {
-        fprintf(stderr, "DEBUG step3 arg %zu CHANGED: %s -> %s\n",
-                i, type_to_name(arg), type_to_name(resolved));
-      }
-      
+
       // If the arg is a KIND_TEMPLATE that didn't match any placeholder,
       // check if it's a placeholder from the struct instance's own template.
       // If so, look up the concrete value from the struct instance's own
@@ -676,37 +664,33 @@ static Type *resolve_placeholder(TypeContext *ctx, Type *blueprint,
       if (resolved == arg && arg->kind == KIND_TEMPLATE &&
           blueprint->data.instance.from_template->kind == KIND_TEMPLATE) {
         Type *inner_tmpl = blueprint->data.instance.from_template;
-        for (size_t j = 0; j < inner_tmpl->data.template.placeholders.len; j++) {
-          StringView p_name = *(StringView *)inner_tmpl->data.template.placeholders.items[j];
+        for (size_t j = 0; j < inner_tmpl->data.template.placeholders.len;
+             j++) {
+          StringView p_name =
+              *(StringView *)inner_tmpl->data.template.placeholders.items[j];
           if (sv_eq(arg->name, p_name)) {
             // This placeholder belongs to the inner template. Try to resolve
             // it using the inner template's own placeholders and the struct
             // instance's generic args (which may be the placeholders themselves
             // or may have been partially resolved).
-            resolved = resolve_placeholder(ctx, arg,
-              inner_tmpl->data.template.placeholders,
-              blueprint->data.instance.generic_args);
+            resolved = resolve_placeholder(
+                ctx, arg, inner_tmpl->data.template.placeholders,
+                blueprint->data.instance.generic_args);
             break;
           }
         }
       }
-      
+
       List_push(&resolved_args, resolved);
       if (resolved != arg)
         changed = true;
     }
     if (changed) {
-      fprintf(stderr, "DEBUG step3 CHANGED: %s -> ", type_to_name(blueprint));
-      for (size_t i = 0; i < resolved_args.len; i++) {
-        fprintf(stderr, "%s%s", i > 0 ? "," : "", type_to_name(resolved_args.items[i]));
-      }
-      fprintf(stderr, "\n");
       Type *result = type_get_instance(
           ctx, blueprint->data.instance.from_template, resolved_args);
       List_free(&resolved_args, 0);
       return result;
     }
-    fprintf(stderr, "DEBUG step3 UNCHANGED: %s\n", type_to_name(blueprint));
     List_free(&resolved_args, 0);
   }
 
@@ -809,12 +793,6 @@ Type *type_get_array(TypeContext *ctx, Type *element_type,
 
 Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
                               uint64_t fixed_array_len) {
-  fprintf(stderr, "DEBUG type_get_instance_fixed: template=%s kind=%d args=[",
-          type_to_name(template_type), template_type ? template_type->kind : -1);
-  for (size_t i = 0; i < args.len; i++) {
-    fprintf(stderr, "%s%s", i > 0 ? "," : "", type_to_name(args.items[i]));
-  }
-  fprintf(stderr, "]\n");
   // Check if instance already exists
   for (size_t i = 0; i < ctx->instances.len; i++) {
     Type *inst = ctx->instances.items[i];
@@ -832,8 +810,7 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
       if (inst->data.instance.from_template->kind != KIND_TEMPLATE ||
           template_type->kind != KIND_TEMPLATE)
         continue;
-      if (!sv_eq(inst->data.instance.from_template->name,
-                 template_type->name))
+      if (!sv_eq(inst->data.instance.from_template->name, template_type->name))
         continue;
     }
     if (inst->data.instance.generic_args.len == args.len) {
@@ -846,11 +823,6 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
         }
       }
       if (match) {
-        fprintf(stderr, "DEBUG type_get_instance_fixed: FOUND EXISTING %s (from_template=%s, from_template_ptr=%p, template_type_ptr=%p, from_template_name=" SV_FMT ", template_type_name=" SV_FMT ")\n",
-                type_to_name(inst), type_to_name(inst->data.instance.from_template),
-                (void*)inst->data.instance.from_template, (void*)template_type,
-                SV_ARG(inst->data.instance.from_template ? inst->data.instance.from_template->name : sv_from_parts("NULL", 4)),
-                SV_ARG(template_type ? template_type->name : sv_from_parts("NULL", 4)));
         type_materialize_struct_instance(ctx, inst);
         return inst;
       }
@@ -872,10 +844,6 @@ Type *type_get_instance_fixed(TypeContext *ctx, Type *template_type, List args,
   inst->name = template_type->name; // In a real impl, concat names
   inst->fixed_array_len = fixed_array_len;
   inst->data.instance.from_template = template_type;
-  fprintf(stderr, "DEBUG type_get_instance_fixed: CREATING NEW %s (from_template=%s, template_type_ptr=%p, from_template_ptr=%p, template_type_name=" SV_FMT ")\n",
-          type_to_name(inst), type_to_name(inst->data.instance.from_template),
-          (void*)template_type, (void*)inst->data.instance.from_template,
-          SV_ARG(template_type ? template_type->name : sv_from_parts("NULL", 4)));
   List_init(&inst->data.instance.generic_args);
   for (size_t i = 0; i < args.len; i++) {
     List_push(&inst->data.instance.generic_args, args.items[i]);

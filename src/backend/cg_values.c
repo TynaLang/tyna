@@ -218,8 +218,14 @@ LLVMValueRef cg_expression_addr(Codegen *cg, AstNode *node) {
             node->field.field.data, type_to_name(obj_type));
     }
 
-    return LLVMBuildStructGEP2(cg->builder, cg_type_get_llvm(cg, obj_type),
-                               obj_ptr, (unsigned)index, "field_addr");
+    LLVMTypeRef struct_ty = cg_type_get_llvm(cg, obj_type);
+    LLVMTypeRef expected_addr_ty = LLVMPointerType(struct_ty, 0);
+    if (LLVMTypeOf(obj_ptr) != expected_addr_ty) {
+      obj_ptr = LLVMBuildLoad2(cg->builder, expected_addr_ty, obj_ptr,
+                               "deref_field_obj");
+    }
+    return LLVMBuildStructGEP2(cg->builder, struct_ty, obj_ptr, (unsigned)index,
+                               "field_addr");
   }
 
   case NODE_INDEX: {
@@ -581,6 +587,17 @@ LLVMValueRef cg_field_expr(Codegen *cg, AstNode *node) {
 
   LLVMTypeRef obj_type_llvm = cg_type_get_llvm(cg, obj_type);
   LLVMTypeRef field_type_llvm = cg_type_get_llvm(cg, m->type);
+  /* If `obj_ptr` is an address-of storage (e.g. an alloca holding a
+   * pointer for a `ref<T>` or parameter), load the pointer first so that
+   * the subsequent GEP operates on the actual struct pointer instead of
+   * the alloca slot. This avoids GEPing into the alloca's stack slot.
+   */
+  LLVMTypeRef expected_addr_ty = LLVMPointerType(obj_type_llvm, 0);
+  if (LLVMTypeOf(obj_ptr) != expected_addr_ty) {
+    obj_ptr = LLVMBuildLoad2(cg->builder, expected_addr_ty, obj_ptr,
+                             "deref_field_obj");
+  }
+
   LLVMValueRef field_ptr = LLVMBuildStructGEP2(cg->builder, obj_type_llvm,
                                                obj_ptr, m->index, "field_gep");
   LLVMValueRef field_val =
